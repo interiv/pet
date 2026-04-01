@@ -1,0 +1,282 @@
+import React, { useEffect, useState } from 'react';
+import { Card, Button, Input, List, Avatar, message, Modal, Form, Spin, Row, Col, Statistic } from 'antd';
+import { UserAddOutlined, TeamOutlined, HeartFilled } from '@ant-design/icons';
+import { friendAPI, petAPI } from '../utils/api';
+
+import { useAuthStore } from '../store/authStore';
+
+const Friends: React.FC = () => {
+  const { isAuthenticated } = useAuthStore();
+  const [friends, setFriends] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [form] = Form.useForm();
+  const [petModalVisible, setPetModalVisible] = useState(false);
+  const [selectedPet, setSelectedPet] = useState<any>(null);
+  const [loadingPetDetail, setLoadingPetDetail] = useState(false);
+  const [petEquipments, setPetEquipments] = useState<any[]>([]);
+  const [petBonus, setPetBonus] = useState<any>(null);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadFriends();
+    }
+  }, [isAuthenticated]);
+
+  const loadFriends = async () => {
+    if (!isAuthenticated) return;
+    try {
+      setLoading(true);
+      const res = await friendAPI.getFriends();
+      setFriends(res.data.friends || []);
+    } catch (error) {
+      console.error('加载好友失败:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddFriend = async (values: any) => {
+    try {
+      setLoading(true);
+      await friendAPI.addFriend({ friend_username: values.username });
+      message.success('好友添加成功！');
+      setIsModalVisible(false);
+      form.resetForm();
+      loadFriends();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '添加好友失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleViewFriendPet = async (friend: any) => {
+    try {
+      setLoadingPetDetail(true);
+      setPetModalVisible(true);
+      
+      const response = await petAPI.getUserPet(friend.friend_id);
+      setSelectedPet(response.data.pet);
+      setPetEquipments(response.data.equipments || []);
+      setPetBonus(response.data.bonus || null);
+    } catch (error) {
+      console.error('加载宠物详情失败:', error);
+      message.error('加载宠物详情失败');
+    } finally {
+      setLoadingPetDetail(false);
+    }
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <Card style={{ borderRadius: '12px', textAlign: 'center', padding: '40px' }}>
+        <h3 style={{ color: '#999', marginBottom: 20 }}>未登录无法查看好友信息</h3>
+        <Button type="primary" onClick={() => window.location.href = '/login'}>前往登录</Button>
+      </Card>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <TeamOutlined style={{ fontSize: 24, color: '#1890ff' }} />
+          <h2 style={{ margin: 0 }}>我的好友</h2>
+        </div>
+        <Button 
+          type="primary" 
+          icon={<UserAddOutlined />} 
+          onClick={() => setIsModalVisible(true)}
+        >
+          添加好友
+        </Button>
+      </div>
+
+      <Card style={{ borderRadius: '12px' }}>
+        <List
+          itemLayout="horizontal"
+          dataSource={friends}
+          loading={loading}
+          renderItem={(item: any) => (
+            <List.Item
+              actions={[
+                <Button type="link" onClick={() => handleViewFriendPet(item)}>访问宠物</Button>
+              ]}
+            >
+              <List.Item.Meta
+                avatar={<Avatar src={item.avatar} style={{ backgroundColor: '#1890ff' }}>{item.username[0]}</Avatar>}
+                title={<span style={{ fontSize: 16, fontWeight: 'bold' }}>{item.username}</span>}
+                description={
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                    <HeartFilled style={{ color: '#eb2f96' }} /> 
+                    <span>亲密度: {item.friendship_level || 0}</span>
+                  </div>
+                }
+              />
+            </List.Item>
+          )}
+        />
+        {friends.length === 0 && !loading && (
+          <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
+            你还没有添加任何好友哦~
+          </div>
+        )}
+      </Card>
+
+      <Modal
+        title="添加好友"
+        open={isModalVisible}
+        onOk={() => form.submit()}
+        onCancel={() => setIsModalVisible(false)}
+        confirmLoading={loading}
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical" onFinish={handleAddFriend}>
+          <Form.Item 
+            name="username" 
+            label="好友用户名" 
+            rules={[{ required: true, message: '请输入好友的用户名' }]}
+          >
+            <Input prefix={<UserAddOutlined />} placeholder="输入同学的用户名" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={selectedPet ? `${selectedPet.owner_name}的宠物 - ${selectedPet.name}` : '宠物详情'}
+        open={petModalVisible}
+        onCancel={() => setPetModalVisible(false)}
+        footer={null}
+        width={900}
+      >
+        <Spin spinning={loadingPetDetail}>
+          {selectedPet && (
+            <div>
+              <Row gutter={[24, 24]}>
+                <Col xs={24} md={8}>
+                  <div style={{ 
+                    height: 300, 
+                    display: 'flex', 
+                    justifyContent: 'center', 
+                    alignItems: 'center', 
+                    background: 'linear-gradient(to bottom, #f5f7fa 0%, #c3cfe2 100%)', 
+                    borderRadius: 12,
+                    padding: 20
+                  }}>
+                    <img 
+                      alt={selectedPet.name} 
+                      src={(() => {
+                        try {
+                          const urls = typeof selectedPet.image_urls === 'string' ? JSON.parse(selectedPet.image_urls) : selectedPet.image_urls;
+                          return urls[selectedPet.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
+                        } catch (e) {
+                          return selectedPet.image_urls;
+                        }
+                      })()} 
+                      style={{ 
+                        maxHeight: '100%', 
+                        maxWidth: '100%', 
+                        objectFit: 'contain', 
+                        filter: 'drop-shadow(0 10px 8px rgba(0,0,0,0.2))' 
+                      }} 
+                    />
+                  </div>
+                  <div style={{ textAlign: 'center', marginTop: 16 }}>
+                    <h3 style={{ margin: 0 }}>{selectedPet.name}</h3>
+                    <p style={{ color: '#8c8c8c', margin: '4px 0' }}>
+                      {selectedPet.species_name} · {selectedPet.growth_stage}
+                    </p>
+                  </div>
+                </Col>
+                <Col xs={24} md={16}>
+                  <Row gutter={[16, 16]}>
+                    <Col xs={12}>
+                      <Card size="small" style={{ borderRadius: 8 }}>
+                        <Statistic 
+                          title="等级" 
+                          value={selectedPet.level} 
+                          suffix="级"
+                          valueStyle={{ color: '#1890ff', fontSize: 24, fontWeight: 'bold' }}
+                        />
+                      </Card>
+                    </Col>
+                    <Col xs={12}>
+                      <Card size="small" style={{ borderRadius: 8 }}>
+                        <Statistic 
+                          title="经验值" 
+                          value={selectedPet.exp} 
+                          suffix="EXP"
+                          valueStyle={{ color: '#52c41a', fontSize: 24, fontWeight: 'bold' }}
+                        />
+                      </Card>
+                    </Col>
+                    <Col xs={8}>
+                      <Card size="small" style={{ borderRadius: 8 }}>
+                        <Statistic 
+                          title="攻击力" 
+                          value={selectedPet.attack} 
+                          valueStyle={{ color: '#ff4d4f', fontSize: 20, fontWeight: 'bold' }}
+                        />
+                        {petBonus?.attack > 0 && (
+                          <div style={{ fontSize: 12, color: '#52c41a', marginTop: 4 }}>+{petBonus.attack} 装备加成</div>
+                        )}
+                      </Card>
+                    </Col>
+                    <Col xs={8}>
+                      <Card size="small" style={{ borderRadius: 8 }}>
+                        <Statistic 
+                          title="防御力" 
+                          value={selectedPet.defense} 
+                          valueStyle={{ color: '#1890ff', fontSize: 20, fontWeight: 'bold' }}
+                        />
+                        {petBonus?.defense > 0 && (
+                          <div style={{ fontSize: 12, color: '#52c41a', marginTop: 4 }}>+{petBonus.defense} 装备加成</div>
+                        )}
+                      </Card>
+                    </Col>
+                    <Col xs={8}>
+                      <Card size="small" style={{ borderRadius: 8 }}>
+                        <Statistic 
+                          title="速度" 
+                          value={selectedPet.speed} 
+                          valueStyle={{ color: '#faad14', fontSize: 20, fontWeight: 'bold' }}
+                        />
+                        {petBonus?.speed > 0 && (
+                          <div style={{ fontSize: 12, color: '#52c41a', marginTop: 4 }}>+{petBonus.speed} 装备加成</div>
+                        )}
+                      </Card>
+                    </Col>
+                  </Row>
+
+                  {petEquipments.length > 0 && (
+                    <div style={{ marginTop: 24 }}>
+                      <h4 style={{ marginBottom: 12 }}>当前穿戴</h4>
+                      <Row gutter={[12, 12]}>
+                        {petEquipments.map((eq, idx) => (
+                          <Col xs={12} key={idx}>
+                            <Card 
+                              size="small" 
+                              style={{ borderRadius: 8, background: '#fafafa' }}
+                            >
+                              <div style={{ fontWeight: 'bold' }}>{eq.name}</div>
+                              <div style={{ fontSize: 12, color: '#8c8c8c' }}>
+                                {eq.rarity === 'common' ? '普通' : eq.rarity === 'rare' ? '稀有' : eq.rarity === 'epic' ? '史诗' : eq.rarity} · Lv.{eq.level}
+                              </div>
+                            </Card>
+                          </Col>
+                        ))}
+                      </Row>
+                    </div>
+                  )}
+                </Col>
+              </Row>
+            </div>
+          )}
+        </Spin>
+      </Modal>
+    </div>
+  );
+};
+
+export default Friends;

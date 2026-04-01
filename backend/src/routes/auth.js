@@ -1,0 +1,205 @@
+const express = require('express');
+const router = express.Router();
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { db } = require('../config/database');
+const { authenticateToken } = require('../middleware/auth');
+
+// 用户注册
+router.post('/register', async (req, res) => {
+  try {
+    const { username, password, email, role = 'student', class_id } = req.body;
+
+    // 验证必填字段
+    if (!username || !password) {
+      return res.status(400).json({ error: '用户名和密码为必填项' });
+    }
+
+    // 检查用户名是否已存在
+    const existingUser = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+    if (existingUser) {
+      return res.status(400).json({ error: '用户名已存在' });
+    }
+
+    // 密码加密
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // 默认状态
+    let status = 'active';
+    if (role === 'teacher') {
+      status = 'pending_approval';
+    }
+
+    // 插入新用户
+    const result = db.prepare(`
+      INSERT INTO users (username, password_hash, email, role, class_id, status)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(username, passwordHash, email, role, class_id, status);
+
+    // 生成 JWT token
+    const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
+    const token = jwt.sign(
+      { userId: result.lastInsertRowid, username, role },
+      jwtSecret,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    if (status === 'pending_approval') {
+      return res.status(201).json({
+        message: '注册成功，您的教师账号正在审核中，请联系管理员。',
+        pending: true
+      });
+    }
+
+    res.status(201).json({
+      message: '注册成功',
+      token,
+      user: {
+        id: result.lastInsertRowid,
+        username,
+        email,
+        role,
+        class_id
+      }
+    });
+  } catch (error) {
+    console.error('注册错误:', error);
+    res.status(500).json({ error: '注册失败' });
+  }
+});
+
+// 用户登录
+router.post('/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    // 验证必填字段
+    if (!username || !password) {
+      return res.status(400).json({ error: '用户名和密码为必填项' });
+    }
+
+    // 查找用户
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    if (!user) {
+      return res.status(401).json({ error: '用户名或密码错误' });
+    }
+
+    // 验证密码
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+    if (!validPassword) {
+      return res.status(401).json({ error: '用户名或密码错误' });
+    }
+
+    // 检查状态
+    if (user.status === 'pending_approval') {
+      return res.status(403).json({ error: '您的账号正在审核中，请联系管理员。' });
+    } else if (user.status !== 'active') {
+      return res.status(403).json({ error: '您的账号已被禁用或状态异常。' });
+    }
+
+    // 更新最后登录时间
+    db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
+
+    // 生成 JWT token
+    const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
+    const token = jwt.sign(
+      { userId: user.id, username: user.username, role: user.role },
+      jwtSecret,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    res.json({
+      message: '登录成功',
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        class_id: user.class_id,
+        avatar: user.avatar
+      }
+    });
+  } catch (error) {
+    console.error('登录错误:', error);
+    res.status(500).json({ error: '登录失败' });
+  }
+});
+
+// 获取当前用户信息
+router.get('/me', authenticateToken, (req, res) => {
+  try {
+    const user = db.prepare(`
+      SELECT id, username, email, role, class_id, avatar, created_at, last_login
+      FROM users
+      WHERE id = ?
+    `).get(req.user.userId);
+
+    if (!user) {
+      return res.status(404).json({ error: '用户不存在' });
+    }
+
+    res.json({ user });
+  } catch (error) {
+    console.error('获取用户信息错误:', error);
+    res.status(500).json({ error: '获取用户信息失败' });
+  }
+});
+
+// 更新用户信息
+router.put('/me', authenticateToken, (req, res) => {
+  try {
+    const { email, avatar } = req.body;
+    const updates = [];
+    const values = [];
+
+    if (email !== undefined) {
+      updates.push('email = ?');
+      values.push(email);
+    }
+    if (avatar !== undefined) {
+      updates.push('avatar = ?');
+      values.push(avatar);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: '没有要更新的字段' });
+    }
+
+    values.push(req.user.userId);
+    db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+
+    res.json({ message: '更新成功' });
+  } catch (error) {
+    console.error('更新用户信息错误:', error);
+    res.status(500).json({ error: '更新失败' });
+  }
+});
+
+// 修改密码
+router.put('/change-password', authenticateToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: '请填写当前密码和新密码' });
+    }
+
+    const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.userId);
+    const validPassword = await bcrypt.compare(currentPassword, user.password_hash);
+
+    if (!validPassword) {
+      return res.status(401).json({ error: '当前密码错误' });
+    }
+
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newPasswordHash, req.user.userId);
+
+    res.json({ message: '密码修改成功' });
+  } catch (error) {
+    console.error('修改密码错误:', error);
+    res.status(500).json({ error: '修改密码失败' });
+  }
+});
+
+module.exports = router;
