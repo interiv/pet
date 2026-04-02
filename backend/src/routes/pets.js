@@ -89,7 +89,7 @@ router.get('/my-pet', authenticateToken, (req, res) => {
     }
 
     const equipments = db.prepare(`
-      SELECT e.stats_bonus, e.set_name, ue.level
+      SELECT e.stats_bonus, e.set_id, ue.level
       FROM user_equipment ue
       JOIN equipment e ON ue.equipment_id = e.id
       WHERE ue.user_id = ? AND ue.equipped = 1
@@ -110,8 +110,8 @@ router.get('/my-pet', authenticateToken, (req, res) => {
         if (stats.attack) bonusAttack += Math.floor(stats.attack * multiplier);
         if (stats.defense) bonusDefense += Math.floor(stats.defense * multiplier);
         if (stats.speed) bonusSpeed += Math.floor(stats.speed * multiplier);
-        if (eq.set_name) {
-          setCounts[eq.set_name] = (setCounts[eq.set_name] || 0) + 1;
+        if (eq.set_id) {
+          setCounts[eq.set_id] = (setCounts[eq.set_id] || 0) + 1;
         }
       } catch (e) {}
     }

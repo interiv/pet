@@ -6,10 +6,10 @@ const { authenticateToken } = require('../middleware/auth');
 // 计算套装效果
 function calculateSetBonus(userId) {
   const equipped = db.prepare(`
-    SELECT e.set_name
+    SELECT e.set_id
     FROM user_equipment ue
     JOIN equipment e ON ue.equipment_id = e.id
-    WHERE ue.user_id = ? AND ue.equipped = 1 AND e.set_name IS NOT NULL
+    WHERE ue.user_id = ? AND ue.equipped = 1 AND e.set_id IS NOT NULL
   `).all(userId);
 
   if (!equipped || equipped.length === 0) {
@@ -18,23 +18,23 @@ function calculateSetBonus(userId) {
 
   const setCounts = {};
   equipped.forEach(e => {
-    if (e.set_name) {
-      setCounts[e.set_name] = (setCounts[e.set_name] || 0) + 1;
+    if (e.set_id) {
+      setCounts[e.set_id] = (setCounts[e.set_id] || 0) + 1;
     }
   });
 
   let totalBonus = { attack: 0, defense: 0, speed: 0 };
   const activeSets = [];
 
-  for (const [setName, count] of Object.entries(setCounts)) {
+  for (const [setId, count] of Object.entries(setCounts)) {
     if (count >= 2) {
-      activeSets.push({ name: setName, pieces: count, tier: 'basic' });
+      activeSets.push({ name: `套装${setId}`, pieces: count, tier: 'basic' });
       totalBonus.attack += 5;
       totalBonus.defense += 5;
       totalBonus.speed += 5;
     }
     if (count >= 4) {
-      activeSets.push({ name: setName, pieces: count, tier: 'complete' });
+      activeSets.push({ name: `套装${setId}`, pieces: count, tier: 'complete' });
       totalBonus.attack += 10;
       totalBonus.defense += 10;
       totalBonus.speed += 10;
