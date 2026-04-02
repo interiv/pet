@@ -287,17 +287,233 @@ router.delete('/students/:id', authenticateToken, requireAdmin, (req, res) => {
 // ==================== 班级管理 ====================
 
 // 获取所有班级列表
-router.get('/classes', authenticateToken, requireAdmin, (req, res) => {
+router.get('/classes', authenticateToken, (req, res) => {
   try {
-    const classes = db.prepare(`
-      SELECT c.*, u.username as teacher_name
-      FROM classes c LEFT JOIN users u ON c.teacher_id = u.id
-      ORDER BY c.created_at DESC
-    `).all();
-    res.json({ classes });
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    
+    let classes;
+    if (userRole === 'admin') {
+      classes = db.prepare(`
+        SELECT c.*, u.username as teacher_name
+        FROM classes c LEFT JOIN users u ON c.teacher_id = u.id
+        ORDER BY c.created_at DESC
+      `).all();
+    } else {
+      classes = db.prepare(`
+        SELECT c.*, u.username as teacher_name
+        FROM classes c 
+        LEFT JOIN users u ON c.teacher_id = u.id
+        INNER JOIN class_teachers ct ON c.id = ct.class_id
+        WHERE ct.teacher_id = ?
+        ORDER BY c.created_at DESC
+      `).all(userId);
+    }
+
+    const classesWithTeachers = classes.map(cls => {
+      const teachers = db.prepare(`
+        SELECT ct.id as class_teacher_id, ct.role, u.id as teacher_id, u.username
+        FROM class_teachers ct
+        JOIN users u ON ct.teacher_id = u.id
+        WHERE ct.class_id = ?
+      `).all(cls.id);
+      return { ...cls, teachers };
+    });
+
+    res.json({ classes: classesWithTeachers });
   } catch (error) {
     console.error('获取班级列表失败:', error);
     res.status(500).json({ error: '获取班级列表失败' });
+  }
+});
+
+// 为班级添加老师
+router.post('/classes/:id/teachers', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { teacher_id, role } = req.body;
+
+    const cls = db.prepare(`SELECT id FROM classes WHERE id = ?`).get(id);
+    if (!cls) {
+      return res.status(404).json({ error: '班级不存在' });
+    }
+
+    if (!teacher_id) {
+      return res.status(400).json({ error: '请指定教师' });
+    }
+
+    const teacher = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher' AND status = 'active'`).get(teacher_id);
+    if (!teacher) {
+      return res.status(400).json({ error: '指定的教师不存在或未激活' });
+    }
+
+    const existing = db.prepare(`SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ?`).get(id, teacher_id);
+    if (existing) {
+      return res.status(400).json({ error: '该教师已在班级中' });
+    }
+
+    const result = db.prepare(`
+      INSERT INTO class_teachers (class_id, teacher_id, role)
+      VALUES (?, ?, ?)
+    `).run(id, teacher_id, role || 'teacher');
+
+    res.json({ message: '教师已添加到班级', class_teacher_id: result.lastInsertRowid });
+  } catch (error) {
+    console.error('添加教师到班级失败:', error);
+    res.status(500).json({ error: '添加教师到班级失败' });
+  }
+});
+
+// 从班级移除老师
+router.delete('/classes/:id/teachers/:teacherId', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const { id, teacherId } = req.params;
+
+    const result = db.prepare(`DELETE FROM class_teachers WHERE class_id = ? AND teacher_id = ?`).run(id, teacherId);
+    if (result.changes === 0) {
+      return res.status(404).json({ error: '该教师不在班级中' });
+    }
+
+    res.json({ message: '教师已从班级移除' });
+  } catch (error) {
+    console.error('从班级移除教师失败:', error);
+    res.status(500).json({ error: '从班级移除教师失败' });
+  }
+});
+
+// ==================== 班级申请审批（班主任） ====================
+
+// 获取班级的申请列表（班主任查看本班申请）
+router.get('/class-applications', authenticateToken, (req, res) => {
+  try {
+    const { class_id, status } = req.query;
+
+    let sql = `
+      SELECT ca.*, u.username, u.email, c.name as class_name
+      FROM class_applications ca
+      JOIN users u ON ca.user_id = u.id
+      JOIN classes c ON ca.class_id = c.id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    // 权限检查：班主任只能查看本班申请
+    if (req.user.role === 'teacher') {
+      const teacherClasses = db.prepare(`
+        SELECT class_id FROM class_teachers WHERE teacher_id = ? AND role = 'head_teacher'
+      `).all(req.user.userId);
+      if (teacherClasses.length === 0) {
+        return res.status(403).json({ error: '只有班主任才能审批申请' });
+      }
+      const classIds = teacherClasses.map(tc => tc.class_id);
+      if (class_id) {
+        if (!classIds.includes(parseInt(class_id))) {
+          return res.status(403).json({ error: '只能查看本班的申请' });
+        }
+        sql += ` AND ca.class_id = ?`;
+        params.push(parseInt(class_id));
+      } else {
+        sql += ` AND ca.class_id IN (${classIds.map(() => '?').join(',')})`;
+        params.push(...classIds);
+      }
+    } else if (req.user.role === 'student') {
+      return res.status(403).json({ error: '学生无法查看申请列表' });
+    } else if (req.user.role === 'admin') {
+      if (class_id) {
+        sql += ` AND ca.class_id = ?`;
+        params.push(parseInt(class_id));
+      }
+    }
+
+    if (status) {
+      sql += ` AND ca.status = ?`;
+      params.push(status);
+    }
+
+    sql += ` ORDER BY ca.created_at DESC`;
+
+    const applications = db.prepare(sql).all(...params);
+    res.json({ applications });
+  } catch (error) {
+    console.error('获取申请列表失败:', error);
+    res.status(500).json({ error: '获取申请列表失败' });
+  }
+});
+
+// 审批申请
+router.put('/class-applications/:id/review', authenticateToken, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: '无效的审批状态' });
+    }
+
+    // 获取申请信息
+    const application = db.prepare(`
+      SELECT ca.*, c.teacher_id as head_teacher_id
+      FROM class_applications ca
+      JOIN classes c ON ca.class_id = c.id
+      WHERE ca.id = ?
+    `).get(id);
+
+    if (!application) {
+      return res.status(404).json({ error: '申请不存在' });
+    }
+
+    // 权限检查：只有班主任或管理员可以审批
+    if (req.user.role === 'teacher') {
+      const isHeadTeacher = db.prepare(`
+        SELECT id FROM class_teachers
+        WHERE class_id = ? AND teacher_id = ? AND role = 'head_teacher'
+      `).get(application.class_id, req.user.userId);
+      if (!isHeadTeacher) {
+        return res.status(403).json({ error: '只有班主任才能审批申请' });
+      }
+    } else if (req.user.role === 'student') {
+      return res.status(403).json({ error: '学生无法审批申请' });
+    }
+
+    // 更新申请状态
+    db.prepare(`
+      UPDATE class_applications
+      SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(status, req.user.userId, id);
+
+    // 如果批准，将用户分配到班级
+    if (status === 'approved') {
+      if (application.role === 'student') {
+        db.prepare('UPDATE users SET class_id = ?, status = ? WHERE id = ?')
+          .run(application.class_id, 'active', application.user_id);
+        // 更新班级学生数
+        db.prepare('UPDATE classes SET student_count = student_count + 1 WHERE id = ?')
+          .run(application.class_id);
+      } else if (application.role === 'teacher') {
+        // 将老师添加到班级老师列表
+        const existing = db.prepare('SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ?')
+          .get(application.class_id, application.user_id);
+        if (!existing) {
+          db.prepare('INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, ?)')
+            .run(application.class_id, application.user_id, 'teacher');
+        }
+        // 检查是否所有申请都通过了
+        const pendingApps = db.prepare(`
+          SELECT id FROM class_applications
+          WHERE user_id = ? AND status = 'pending'
+        `).all(application.user_id);
+        if (pendingApps.length === 0) {
+          db.prepare('UPDATE users SET status = ? WHERE id = ?')
+            .run('active', application.user_id);
+        }
+      }
+    }
+
+    res.json({ message: status === 'approved' ? '已批准申请' : '已拒绝申请' });
+  } catch (error) {
+    console.error('审批申请失败:', error);
+    res.status(500).json({ error: '审批申请失败' });
   }
 });
 
@@ -482,48 +698,77 @@ router.delete('/announcements/:id', authenticateToken, requireAdmin, (req, res) 
 // ==================== 数据统计 ====================
 
 // 获取系统统计信息
-router.get('/statistics', authenticateToken, requireAdmin, (req, res) => {
+router.get('/statistics', authenticateToken, (req, res) => {
   try {
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    
     const totalUsers = db.prepare(`SELECT COUNT(*) as count FROM users`).get().count;
     const totalTeachers = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'teacher'`).get().count;
     const totalStudents = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'student'`).get().count;
-    const totalClasses = db.prepare(`SELECT COUNT(*) as count FROM classes`).get().count;
-    const totalPets = db.prepare(`SELECT COUNT(*) as count FROM pets`).get().count;
-    const totalBattles = db.prepare(`SELECT COUNT(*) as count FROM battles`).get().count;
-    
-    const activeTeachers = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'teacher' AND status = 'active'`).get().count;
-    const pendingTeachers = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'teacher' AND status = 'pending_approval'`).get().count;
-    const activeStudents = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'student' AND status = 'active'`).get().count;
-    
     const totalGold = db.prepare(`SELECT SUM(gold) as total FROM users`).get().total || 0;
-    const totalExp = db.prepare(`SELECT SUM(exp) as total FROM pets`).get().total || 0;
     
-    const topClasses = db.prepare(`
-      SELECT c.name, c.total_exp, c.student_count, u.username as teacher_name
-      FROM classes c LEFT JOIN users u ON c.teacher_id = u.id
-      ORDER BY c.total_exp DESC LIMIT 5
-    `).all();
+    let statistics = {
+      users: { total: totalUsers, teachers: totalTeachers, students: totalStudents },
+      totals: { gold: totalGold }
+    };
     
-    const recentRegistrations = db.prepare(`
-      SELECT id, username, role, created_at FROM users ORDER BY created_at DESC LIMIT 10
-    `).all();
-    
-    res.json({
-      statistics: {
-        users: { total: totalUsers, teachers: totalTeachers, students: totalStudents },
+    if (userRole === 'admin') {
+      const totalClasses = db.prepare(`SELECT COUNT(*) as count FROM classes`).get().count;
+      const totalPets = db.prepare(`SELECT COUNT(*) as count FROM pets`).get().count;
+      const totalBattles = db.prepare(`SELECT COUNT(*) as count FROM battles`).get().count;
+      const activeTeachers = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'teacher' AND status = 'active'`).get().count;
+      const pendingTeachers = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'teacher' AND status = 'pending_approval'`).get().count;
+      const totalExp = db.prepare(`SELECT SUM(exp) as total FROM pets`).get().total || 0;
+      
+      const topClasses = db.prepare(`
+        SELECT c.name, c.total_exp, c.student_count, u.username as teacher_name
+        FROM classes c LEFT JOIN users u ON c.teacher_id = u.id
+        ORDER BY c.total_exp DESC LIMIT 5
+      `).all();
+      
+      const recentRegistrations = db.prepare(`
+        SELECT id, username, role, created_at FROM users ORDER BY created_at DESC LIMIT 10
+      `).all();
+      
+      statistics = {
+        ...statistics,
         classes: { total: totalClasses },
         pets: { total: totalPets },
         battles: { total: totalBattles },
+        totals: { gold: totalGold, exp: totalExp },
         status: {
           active_teachers: activeTeachers,
-          pending_teachers: pendingTeachers,
-          active_students: activeStudents
+          pending_teachers: pendingTeachers
         },
-        totals: { gold: totalGold, exp: totalExp },
         top_classes: topClasses,
         recent_registrations: recentRegistrations
+      };
+    } else if (userRole === 'teacher') {
+      const myClasses = db.prepare(`
+        SELECT COUNT(*) as count FROM class_teachers WHERE teacher_id = ?
+      `).get(userId).count;
+      
+      const myClassIds = db.prepare(`
+        SELECT class_id FROM class_teachers WHERE teacher_id = ?
+      `).all(userId).map(row => row.class_id);
+      
+      let studentCount = 0;
+      if (myClassIds.length > 0) {
+        const placeholders = myClassIds.map(() => '?').join(',');
+        studentCount = db.prepare(`
+          SELECT COUNT(*) as count FROM users WHERE role = 'student' AND class_id IN (${placeholders})
+        `).get(...myClassIds).count;
       }
-    });
+      
+      statistics = {
+        ...statistics,
+        classes: { total: myClasses },
+        users: { students: studentCount }
+      };
+    }
+    
+    res.json({ statistics });
   } catch (error) {
     console.error('获取统计信息失败:', error);
     res.status(500).json({ error: '获取统计信息失败' });

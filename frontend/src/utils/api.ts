@@ -89,7 +89,7 @@ export const petAPI = {
 
 // 作业相关 API
 export const assignmentAPI = {
-  getAssignments: () => api.get('/assignments'),
+  getAssignments: (params?: { class_id?: number }) => api.get('/assignments', { params }),
   
   getAssignment: (id: number) => api.get(`/assignments/${id}`),
   
@@ -138,7 +138,7 @@ export const friendAPI = {
     api.post('/friends/friend-battle', data),
 
   removeFriend: (data: { friend_id: number }) =>
-    api.delete('/friends/remove', data),
+    api.delete('/friends/remove', { data }),
 };
 
 // 成就相关 API
@@ -199,6 +199,12 @@ export const adminAPI = {
   createClass: (data: { name: string; grade?: string; teacher_id?: number }) => api.post('/admin/classes', data),
   updateClass: (id: number, data: any) => api.put(`/admin/classes/${id}`, data),
   deleteClass: (id: number) => api.delete(`/admin/classes/${id}`),
+  addTeacherToClass: (classId: number, data: { teacher_id: number; role?: string }) => api.post(`/admin/classes/${classId}/teachers`, data),
+  removeTeacherFromClass: (classId: number, teacherId: number) => api.delete(`/admin/classes/${classId}/teachers/${teacherId}`),
+
+  // 班级申请审批
+  getClassApplications: (params?: { class_id?: number; status?: string }) => api.get('/admin/class-applications', { params }),
+  reviewClassApplication: (id: number, data: { status: 'approved' | 'rejected' }) => api.put(`/admin/class-applications/${id}/review`, data),
 
   // 公告管理
   getAnnouncements: () => api.get('/admin/announcements'),

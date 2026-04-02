@@ -8,7 +8,7 @@ const { authenticateToken } = require('../middleware/auth');
 // 用户注册
 router.post('/register', async (req, res) => {
   try {
-    const { username, password, email, role = 'student', class_id } = req.body;
+    const { username, password, email, role = 'student', requested_class_id, requested_class_ids } = req.body;
 
     // 验证必填字段
     if (!username || !password) {
@@ -24,43 +24,63 @@ router.post('/register', async (req, res) => {
     // 密码加密
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // 默认状态
-    let status = 'active';
-    if (role === 'teacher') {
-      status = 'pending_approval';
+    // 确定要申请的班级
+    let applyClassIds = [];
+    if (role === 'student' && requested_class_id) {
+      applyClassIds = [parseInt(requested_class_id)];
+    } else if (role === 'teacher' && requested_class_ids && requested_class_ids.length > 0) {
+      applyClassIds = requested_class_ids.map((id) => parseInt(id));
     }
+
+    // 如果是学生或教师，需要有班级申请
+    if ((role === 'student' || role === 'teacher') && applyClassIds.length === 0) {
+      return res.status(400).json({ error: '请选择要加入的班级' });
+    }
+
+    // 验证班级是否存在
+    for (const classId of applyClassIds) {
+      const cls = db.prepare('SELECT id FROM classes WHERE id = ?').get(classId);
+      if (!cls) {
+        return res.status(400).json({ error: `班级 ID ${classId} 不存在` });
+      }
+    }
+
+    // 默认状态：学生和教师都需要等待审批
+    let status = 'pending_approval';
 
     // 插入新用户
     const result = db.prepare(`
-      INSERT INTO users (username, password_hash, email, role, class_id, status)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(username, passwordHash, email, role, class_id, status);
+      INSERT INTO users (username, password_hash, email, role, status)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(username, passwordHash, email, role, status);
+
+    const userId = result.lastInsertRowid;
+
+    // 创建班级申请记录
+    for (const classId of applyClassIds) {
+      try {
+        db.prepare(`
+          INSERT INTO class_applications (user_id, class_id, role, status)
+          VALUES (?, ?, ?, 'pending')
+        `).run(userId, classId, role);
+      } catch (e) {
+        console.error('创建班级申请失败:', e);
+      }
+    }
 
     // 生成 JWT token
     const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
     const token = jwt.sign(
-      { userId: result.lastInsertRowid, username, role },
+      { userId, username, role },
       jwtSecret,
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
-    if (status === 'pending_approval') {
-      return res.status(201).json({
-        message: '注册成功，您的教师账号正在审核中，请联系管理员。',
-        pending: true
-      });
-    }
-
-    res.status(201).json({
-      message: '注册成功',
-      token,
-      user: {
-        id: result.lastInsertRowid,
-        username,
-        email,
-        role,
-        class_id
-      }
+    return res.status(201).json({
+      message: role === 'teacher'
+        ? '注册成功！您的教师账号正在等待班级班主任审批，请耐心等待。'
+        : '注册成功！您的账号正在等待班级班主任审批，请耐心等待。',
+      pending: true
     });
   } catch (error) {
     console.error('注册错误:', error);

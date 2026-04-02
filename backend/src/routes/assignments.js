@@ -65,12 +65,24 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
 // 创建作业（仅教师）
 router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
   try {
-    const { title, description, subject, question_type, questions, max_exp, due_date, ai_config } = req.body;
+    const { title, description, subject, question_type, questions, max_exp, due_date, ai_config, class_id } = req.body;
+
+    let targetClassId = class_id;
+
+    // 如果是老师创建作业，没有指定班级，则使用老师所在的班级
+    if (!targetClassId && req.user.role === 'teacher') {
+      const teacherClasses = db.prepare(`
+        SELECT class_id FROM class_teachers WHERE teacher_id = ? LIMIT 1
+      `).all(req.user.userId);
+      if (teacherClasses.length > 0) {
+        targetClassId = teacherClasses[0].class_id;
+      }
+    }
 
     const result = db.prepare(`
-      INSERT INTO assignments (teacher_id, title, description, subject, question_type, questions, max_exp, due_date, ai_config)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(req.user.userId, title, description, subject, question_type, JSON.stringify(questions), max_exp, due_date, JSON.stringify(ai_config));
+      INSERT INTO assignments (teacher_id, title, description, subject, question_type, questions, max_exp, due_date, ai_config, class_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(req.user.userId, title, description, subject, question_type, JSON.stringify(questions), max_exp, due_date, JSON.stringify(ai_config), targetClassId);
 
     res.status(201).json({
       message: '作业创建成功',
@@ -81,7 +93,8 @@ router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res
         subject,
         question_type,
         max_exp,
-        due_date
+        due_date,
+        class_id: targetClassId
       }
     });
   } catch (error) {
@@ -90,15 +103,90 @@ router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res
   }
 });
 
-// 获取作业列表
+// 获取作业列表（按角色和班级筛选）
 router.get('/', authenticateToken, (req, res) => {
   try {
-    const assignments = db.prepare(`
-      SELECT a.*, u.username as teacher_name
-      FROM assignments a
-      JOIN users u ON a.teacher_id = u.id
-      ORDER BY a.created_at DESC
-    `).all();
+    let assignments;
+    const { class_id } = req.query;
+
+    if (req.user.role === 'admin') {
+      // 管理员可以看到所有作业，或者指定班级的作业
+      if (class_id) {
+        assignments = db.prepare(`
+          SELECT a.*, u.username as teacher_name, c.name as class_name
+          FROM assignments a
+          JOIN users u ON a.teacher_id = u.id
+          LEFT JOIN classes c ON a.class_id = c.id
+          WHERE a.class_id = ?
+          ORDER BY a.created_at DESC
+        `).all(class_id);
+      } else {
+        assignments = db.prepare(`
+          SELECT a.*, u.username as teacher_name, c.name as class_name
+          FROM assignments a
+          JOIN users u ON a.teacher_id = u.id
+          LEFT JOIN classes c ON a.class_id = c.id
+          ORDER BY a.created_at DESC
+        `).all();
+      }
+    } else if (req.user.role === 'teacher') {
+      // 老师可以看到自己班级的作业
+      const teacherClasses = db.prepare(`
+        SELECT class_id FROM class_teachers WHERE teacher_id = ?
+      `).all(req.user.userId);
+      const classIds = teacherClasses.map(tc => tc.class_id);
+
+      if (classIds.length === 0) {
+        return res.json({ assignments: [] });
+      }
+
+      const placeholders = classIds.map(() => '?').join(',');
+      if (class_id && classIds.includes(parseInt(class_id))) {
+        assignments = db.prepare(`
+          SELECT a.*, u.username as teacher_name, c.name as class_name
+          FROM assignments a
+          JOIN users u ON a.teacher_id = u.id
+          LEFT JOIN classes c ON a.class_id = c.id
+          WHERE a.class_id IN (${placeholders}) AND a.class_id = ?
+          ORDER BY a.created_at DESC
+        `).all(...classIds, parseInt(class_id));
+      } else {
+        assignments = db.prepare(`
+          SELECT a.*, u.username as teacher_name, c.name as class_name
+          FROM assignments a
+          JOIN users u ON a.teacher_id = u.id
+          LEFT JOIN classes c ON a.class_id = c.id
+          WHERE a.class_id IN (${placeholders})
+          ORDER BY a.created_at DESC
+        `).all(...classIds);
+      }
+    } else {
+      // 学生只能看到自己班级的作业
+      const student = db.prepare('SELECT class_id FROM users WHERE id = ?').get(req.user.userId);
+      if (!student || !student.class_id) {
+        return res.json({ assignments: [] });
+      }
+
+      if (class_id && parseInt(class_id) === student.class_id) {
+        assignments = db.prepare(`
+          SELECT a.*, u.username as teacher_name, c.name as class_name
+          FROM assignments a
+          JOIN users u ON a.teacher_id = u.id
+          LEFT JOIN classes c ON a.class_id = c.id
+          WHERE a.class_id = ?
+          ORDER BY a.created_at DESC
+        `).all(student.class_id);
+      } else {
+        assignments = db.prepare(`
+          SELECT a.*, u.username as teacher_name, c.name as class_name
+          FROM assignments a
+          JOIN users u ON a.teacher_id = u.id
+          LEFT JOIN classes c ON a.class_id = c.id
+          WHERE a.class_id = ?
+          ORDER BY a.created_at DESC
+        `).all(student.class_id);
+      }
+    }
 
     res.json({ assignments });
   } catch (error) {
@@ -111,14 +199,31 @@ router.get('/', authenticateToken, (req, res) => {
 router.get('/:id', authenticateToken, (req, res) => {
   try {
     const assignment = db.prepare(`
-      SELECT a.*, u.username as teacher_name
+      SELECT a.*, u.username as teacher_name, c.name as class_name
       FROM assignments a
       JOIN users u ON a.teacher_id = u.id
+      LEFT JOIN classes c ON a.class_id = c.id
       WHERE a.id = ?
     `).get(req.params.id);
 
     if (!assignment) {
       return res.status(404).json({ error: '作业不存在' });
+    }
+
+    // 权限检查
+    if (req.user.role === 'student') {
+      const student = db.prepare('SELECT class_id FROM users WHERE id = ?').get(req.user.userId);
+      if (!student || student.class_id !== assignment.class_id) {
+        return res.status(403).json({ error: '无法访问其他班级的作业' });
+      }
+    } else if (req.user.role === 'teacher') {
+      const teacherClasses = db.prepare(`
+        SELECT class_id FROM class_teachers WHERE teacher_id = ?
+      `).all(req.user.userId);
+      const classIds = teacherClasses.map(tc => tc.class_id);
+      if (!classIds.includes(assignment.class_id)) {
+        return res.status(403).json({ error: '无法访问其他班级的作业' });
+      }
     }
 
     res.json({ assignment });
@@ -137,6 +242,22 @@ router.post('/:id/submit', authenticateToken, (req, res) => {
     const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
     if (!assignment) {
       return res.status(404).json({ error: '作业不存在' });
+    }
+
+    // 学生只能提交自己班级的作业
+    if (req.user.role === 'student') {
+      const student = db.prepare('SELECT class_id FROM users WHERE id = ?').get(req.user.userId);
+      if (!student || student.class_id !== assignment.class_id) {
+        return res.status(403).json({ error: '无法提交其他班级的作业' });
+      }
+    } else if (req.user.role === 'teacher') {
+      const teacherClasses = db.prepare(`
+        SELECT class_id FROM class_teachers WHERE teacher_id = ?
+      `).all(req.user.userId);
+      const classIds = teacherClasses.map(tc => tc.class_id);
+      if (!classIds.includes(assignment.class_id)) {
+        return res.status(403).json({ error: '无法提交其他班级的作业' });
+      }
     }
 
     // 检查是否已提交

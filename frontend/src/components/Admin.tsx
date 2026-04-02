@@ -2,42 +2,69 @@ import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge } from 'antd';
 import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, SettingOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import { adminAPI } from '../utils/api';
+import { useAuthStore } from '../store/authStore';
 
 const { TabPane } = Tabs;
 
-const Admin: React.FC = () => {
-  const [activeTab, setActiveTab] = useState('dashboard');
+interface AdminProps {
+  defaultTab?: string;
+}
+
+const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
+  const { user } = useAuthStore();
+  const [activeTab, setActiveTab] = useState(defaultTab || 'dashboard');
+
+  useEffect(() => {
+    if (defaultTab) {
+      setActiveTab(defaultTab);
+    }
+  }, [defaultTab]);
+
+  const isAdmin = user?.role === 'admin';
+  const isTeacher = user?.role === 'teacher';
+
+  const renderTabs = () => {
+    const tabs = [];
+
+    if (isAdmin) {
+      tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 总览</span>} key="dashboard"><Dashboard /></Tabs.TabPane>);
+      tabs.push(<Tabs.TabPane tab={<span><UserOutlined /> 教师管理</span>} key="teachers"><TeacherManagement /></Tabs.TabPane>);
+      tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 学生管理</span>} key="students"><StudentManagement /></Tabs.TabPane>);
+      tabs.push(<Tabs.TabPane tab={<span><FolderOutlined /> 班级管理</span>} key="classes"><ClassManagement /></Tabs.TabPane>);
+      tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 入学申请</span>} key="applications"><ApplicationManagement /></Tabs.TabPane>);
+      tabs.push(<Tabs.TabPane tab={<span><NotificationOutlined /> 公告管理</span>} key="announcements"><AnnouncementManagement /></Tabs.TabPane>);
+      tabs.push(<Tabs.TabPane tab={<span><SettingOutlined /> AI设置</span>} key="settings"><AISettings /></Tabs.TabPane>);
+    } else if (isTeacher) {
+      tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 总览</span>} key="dashboard"><Dashboard /></Tabs.TabPane>);
+      tabs.push(<Tabs.TabPane tab={<span><FolderOutlined /> 班级管理</span>} key="classes"><ClassManagement /></Tabs.TabPane>);
+      tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 入学申请</span>} key="applications"><ApplicationManagement /></Tabs.TabPane>);
+    }
+
+    return tabs;
+  };
+
+  const getTitle = () => {
+    if (isAdmin) return '管理控制台';
+    if (isTeacher) return '教师工作台';
+    return '控制台';
+  };
 
   return (
     <div style={{ padding: 24 }}>
-      <h2 style={{ marginBottom: 24 }}>管理控制台</h2>
+      <h2 style={{ marginBottom: 24 }}>{getTitle()}</h2>
       <Tabs activeKey={activeTab} onChange={setActiveTab}>
-        <Tabs.TabPane tab={<span><TeamOutlined /> 总览</span>} key="dashboard">
-          <Dashboard />
-        </Tabs.TabPane>
-        <Tabs.TabPane tab={<span><UserOutlined /> 教师管理</span>} key="teachers">
-          <TeacherManagement />
-        </Tabs.TabPane>
-        <Tabs.TabPane tab={<span><TeamOutlined /> 学生管理</span>} key="students">
-          <StudentManagement />
-        </Tabs.TabPane>
-        <Tabs.TabPane tab={<span><FolderOutlined /> 班级管理</span>} key="classes">
-          <ClassManagement />
-        </Tabs.TabPane>
-        <Tabs.TabPane tab={<span><NotificationOutlined /> 公告管理</span>} key="announcements">
-          <AnnouncementManagement />
-        </Tabs.TabPane>
-        <Tabs.TabPane tab={<span><SettingOutlined /> AI设置</span>} key="settings">
-          <AISettings />
-        </Tabs.TabPane>
+        {renderTabs()}
       </Tabs>
     </div>
   );
 };
 
 const Dashboard: React.FC = () => {
+  const { user } = useAuthStore();
   const [statistics, setStatistics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+
+  const isAdmin = user?.role === 'admin';
 
   useEffect(() => {
     loadStatistics();
@@ -56,6 +83,28 @@ const Dashboard: React.FC = () => {
   };
 
   if (!statistics) return null;
+
+  if (!isAdmin) {
+    return (
+      <div>
+        <Row gutter={16} style={{ marginBottom: 24 }}>
+          <Col span={12}>
+            <Card><Statistic title="我的班级" value={statistics.classes.total || 0} prefix={<FolderOutlined />} /></Card>
+          </Col>
+          <Col span={12}>
+            <Card><Statistic title="班级学生数" value={statistics.users.students || 0} prefix={<TeamOutlined />} /></Card>
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col span={24}>
+            <Card title="班级概况">
+              <p>欢迎来到教师工作台！您可以管理您的班级和入学申请。</p>
+            </Card>
+          </Col>
+        </Row>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -133,6 +182,123 @@ const Dashboard: React.FC = () => {
           </Card>
         </Col>
       </Row>
+    </div>
+  );
+};
+
+const ApplicationManagement: React.FC = () => {
+  const { user } = useAuthStore();
+  const [applications, setApplications] = useState<any[]>([]);
+  const [classes, setClasses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [classFilter, setClassFilter] = useState<number | null>(null);
+
+  const isAdmin = user?.role === 'admin';
+  const isTeacher = user?.role === 'teacher';
+
+  useEffect(() => {
+    loadApplications();
+    loadClasses();
+  }, [statusFilter, classFilter]);
+
+  const loadClasses = async () => {
+    try {
+      const res = await adminAPI.getClasses();
+      let allClasses = res.data.classes || [];
+      if (isTeacher && !isAdmin) {
+        allClasses = allClasses.filter((c: any) =>
+          c.teachers?.some((t: any) => t.teacher_id === user?.id)
+        );
+      }
+      setClasses(allClasses);
+    } catch (error) {
+      console.error('加载班级列表失败');
+    }
+  };
+
+  const loadApplications = async () => {
+    setLoading(true);
+    try {
+      const params: any = {};
+      if (statusFilter) params.status = statusFilter;
+      if (classFilter) params.class_id = classFilter;
+      const res = await adminAPI.getClassApplications(params);
+      setApplications(res.data.applications || []);
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '加载申请列表失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReview = async (id: number, status: 'approved' | 'rejected') => {
+    try {
+      await adminAPI.reviewClassApplication(id, { status });
+      message.success(status === 'approved' ? '已批准该申请' : '已拒绝该申请');
+      loadApplications();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '操作失败');
+    }
+  };
+
+  const getStatusTag = (status: string) => {
+    switch (status) {
+      case 'pending': return <Tag color="orange">待审批</Tag>;
+      case 'approved': return <Tag color="green">已批准</Tag>;
+      case 'rejected': return <Tag color="red">已拒绝</Tag>;
+      default: return <Tag>{status}</Tag>;
+    }
+  };
+
+  const columns = [
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
+    { title: '班级', dataIndex: 'class_name', key: 'class_name', render: (name: string) => <Tag color="blue">{name}</Tag> },
+    { title: '用户名', dataIndex: 'username', key: 'username' },
+    { title: '角色', dataIndex: 'role', key: 'role', render: (r: string) => r === 'student' ? <Tag>学生</Tag> : <Tag color="purple">教师</Tag> },
+    { title: '状态', dataIndex: 'status', key: 'status', render: getStatusTag },
+    { title: '申请时间', dataIndex: 'created_at', key: 'created_at', render: (t: string) => new Date(t).toLocaleString() },
+    {
+      title: '操作',
+      key: 'action',
+      render: (_: any, record: any) => (
+        record.status === 'pending' ? (
+          <Space>
+            <Button type="primary" size="small" onClick={() => handleReview(record.id, 'approved')}>批准</Button>
+            <Button danger size="small" onClick={() => handleReview(record.id, 'rejected')}>拒绝</Button>
+          </Space>
+        ) : getStatusTag(record.status)
+      ),
+    },
+  ];
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16, display: 'flex', gap: 16 }}>
+        <Select
+          placeholder="筛选班级"
+          allowClear
+          style={{ width: 200 }}
+          onChange={(value) => setClassFilter(value)}
+          value={classFilter}
+        >
+          {classes.map(c => (
+            <Select.Option key={c.id} value={c.id}>{c.name}</Select.Option>
+          ))}
+        </Select>
+        <Select
+          placeholder="筛选状态"
+          allowClear
+          style={{ width: 120 }}
+          onChange={(value) => setStatusFilter(value)}
+          value={statusFilter}
+        >
+          <Select.Option value="pending">待审批</Select.Option>
+          <Select.Option value="approved">已批准</Select.Option>
+          <Select.Option value="rejected">已拒绝</Select.Option>
+        </Select>
+      </div>
+      <Table columns={columns} dataSource={applications} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
     </div>
   );
 };
@@ -479,14 +645,20 @@ const StudentManagement: React.FC = () => {
 };
 
 const ClassManagement: React.FC = () => {
+  const { user } = useAuthStore();
   const [classes, setClasses] = useState<any[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
-  const [editingClass, setEditingClass] = useState<any>(null);
+  const [addTeacherModalVisible, setAddTeacherModalVisible] = useState(false);
+  const [selectedClass, setSelectedClass] = useState<any>(null);
   const [form] = Form.useForm();
   const [editForm] = Form.useForm();
+  const [addTeacherForm] = Form.useForm();
+
+  const isAdmin = user?.role === 'admin';
+  const isTeacher = user?.role === 'teacher';
 
   useEffect(() => {
     loadClasses();
@@ -497,7 +669,13 @@ const ClassManagement: React.FC = () => {
     setLoading(true);
     try {
       const res = await adminAPI.getClasses();
-      setClasses(res.data.classes || []);
+      let allClasses = res.data.classes || [];
+      if (isTeacher && !isAdmin) {
+        allClasses = allClasses.filter((c: any) =>
+          c.teachers?.some((t: any) => t.teacher_id === user?.id)
+        );
+      }
+      setClasses(allClasses);
     } catch (error) {
       message.error('加载班级列表失败');
     } finally {
@@ -528,15 +706,15 @@ const ClassManagement: React.FC = () => {
   };
 
   const handleEdit = (record: any) => {
-    setEditingClass(record);
-    editForm.setFieldsValue(record);
+    setSelectedClass(record);
+    editForm.setFieldsValue({ name: record.name, grade: record.grade });
     setEditModalVisible(true);
   };
 
   const handleUpdate = async () => {
     try {
       const values = await editForm.validateFields();
-      await adminAPI.updateClass(editingClass.id, values);
+      await adminAPI.updateClass(selectedClass.id, values);
       message.success('班级更新成功');
       setEditModalVisible(false);
       loadClasses();
@@ -555,16 +733,62 @@ const ClassManagement: React.FC = () => {
     }
   };
 
+  const handleAddTeacher = async () => {
+    try {
+      const values = await addTeacherForm.validateFields();
+      await adminAPI.addTeacherToClass(selectedClass.id, values);
+      message.success('教师已添加到班级');
+      setAddTeacherModalVisible(false);
+      addTeacherForm.resetFields();
+      loadClasses();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '添加失败');
+    }
+  };
+
+  const handleRemoveTeacher = async (classId: number, teacherId: number) => {
+    try {
+      await adminAPI.removeTeacherFromClass(classId, teacherId);
+      message.success('教师已从班级移除');
+      loadClasses();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '移除失败');
+    }
+  };
+
+  const openAddTeacherModal = (cls: any) => {
+    setSelectedClass(cls);
+    setAddTeacherModalVisible(true);
+  };
+
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     { title: '班级名称', dataIndex: 'name', key: 'name' },
     { title: '年级', dataIndex: 'grade', key: 'grade', render: (v: string) => v || '-' },
-    { title: '班主任', dataIndex: 'teacher_name', key: 'teacher_name', render: (v: string) => v || <Tag>未分配</Tag> },
+    {
+      title: '教师',
+      key: 'teachers',
+      render: (_: any, record: any) => (
+        <div>
+          {(record.teachers || []).map((t: any) => (
+            <Tag
+              key={t.teacher_id}
+              closable={isAdmin}
+              onClose={() => isAdmin ? handleRemoveTeacher(record.id, t.teacher_id) : undefined}
+              color={t.role === 'head_teacher' ? 'blue' : 'default'}
+            >
+              {t.username} {t.role === 'head_teacher' ? '(班主任)' : ''}
+            </Tag>
+          ))}
+          <Button type="link" size="small" onClick={() => openAddTeacherModal(record)}>+ 添加教师</Button>
+        </div>
+      )
+    },
     { title: '学生数', dataIndex: 'student_count', key: 'student_count' },
     { title: '总经验', dataIndex: 'total_exp', key: 'total_exp' },
-    {
-      title: '操作',
-      key: 'action',
+    ...(isAdmin ? [{
+      title: '操作' as const,
+      key: 'action' as const,
       render: (_: any, record: any) => (
         <Space>
           <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
@@ -573,14 +797,16 @@ const ClassManagement: React.FC = () => {
           </Popconfirm>
         </Space>
       ),
-    },
+    }] : []),
   ];
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>创建班级</Button>
-      </div>
+      {isAdmin && (
+        <div style={{ marginBottom: 16 }}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>创建班级</Button>
+        </div>
+      )}
       <Table columns={columns} dataSource={classes} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
 
       <Modal title="创建班级" open={modalVisible} onOk={handleCreate} onCancel={() => setModalVisible(false)}>
@@ -590,11 +816,6 @@ const ClassManagement: React.FC = () => {
           </Form.Item>
           <Form.Item name="grade" label="年级">
             <Input placeholder="如：高一(1)班" />
-          </Form.Item>
-          <Form.Item name="teacher_id" label="班主任">
-            <Select allowClear placeholder="选择班主任">
-              {teachers.map(t => <Select.Option key={t.id} value={t.id}>{t.username}</Select.Option>)}
-            </Select>
           </Form.Item>
         </Form>
       </Modal>
@@ -607,9 +828,23 @@ const ClassManagement: React.FC = () => {
           <Form.Item name="grade" label="年级">
             <Input />
           </Form.Item>
-          <Form.Item name="teacher_id" label="班主任">
-            <Select allowClear placeholder="选择班主任">
-              {teachers.map(t => <Select.Option key={t.id} value={t.id}>{t.username}</Select.Option>)}
+        </Form>
+      </Modal>
+
+      <Modal title={`为班级「${selectedClass?.name}」添加教师`} open={addTeacherModalVisible} onOk={handleAddTeacher} onCancel={() => setAddTeacherModalVisible(false)}>
+        <Form form={addTeacherForm} layout="vertical">
+          <Form.Item name="teacher_id" label="选择教师" rules={[{ required: true, message: '请选择教师' }]}>
+            <Select placeholder="选择要添加的教师" filterOption={(input, option) => String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())}>
+              {teachers
+                .filter(t => !selectedClass?.teachers?.some((ct: any) => ct.teacher_id === t.id))
+                .map(t => <Select.Option key={t.id} value={t.id} label={t.username}>{t.username}</Select.Option>)
+              }
+            </Select>
+          </Form.Item>
+          <Form.Item name="role" label="角色">
+            <Select defaultValue="teacher">
+              <Select.Option value="head_teacher">班主任</Select.Option>
+              <Select.Option value="teacher">任课教师</Select.Option>
             </Select>
           </Form.Item>
         </Form>

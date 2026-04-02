@@ -1,14 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, TabsProps, Modal, Spin } from 'antd';
-import { 
-  HomeOutlined, 
-  BookOutlined, 
-  TrophyOutlined, 
+import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, TabsProps, Modal, Spin, Table, Tag, Segmented, Space } from 'antd';
+import {
+  HomeOutlined,
+  BookOutlined,
+  TrophyOutlined,
   UserOutlined,
   LogoutOutlined,
   DashboardOutlined,
-  SettingOutlined
+  SettingOutlined,
+  TeamOutlined
 } from '@ant-design/icons';
 import { petAPI, leaderboardAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
@@ -38,6 +39,7 @@ const Home: React.FC = () => {
   const [loadingPetDetail, setLoadingPetDetail] = useState(false);
   const [petEquipments, setPetEquipments] = useState<any[]>([]);
   const [petBonus, setPetBonus] = useState<any>(null);
+  const [leaderboardView, setLeaderboardView] = useState<'card' | 'list'>('card');
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -141,6 +143,14 @@ const Home: React.FC = () => {
     });
   }
 
+  if (user?.role === 'teacher') {
+    menuItems.push({
+      key: 'applications',
+      icon: <TeamOutlined />,
+      label: '入学申请',
+    });
+  }
+
   const userMenu = {
     items: [
       {
@@ -208,55 +218,92 @@ const Home: React.FC = () => {
     </Row>
   );
 
+  const getLeaderboardTitle = () => {
+    if (user?.role === 'admin') return '全校宠物排行榜';
+    return '全班宠物排行榜';
+  };
+
+  const leaderboardColumns = [
+    { title: '排名', key: 'rank', width: 60, render: (_: any, __: any, index: number) => index + 1 },
+    { title: '宠物名', dataIndex: 'name', key: 'name' },
+    { title: '主人', dataIndex: 'owner_name', key: 'owner_name' },
+    { title: '等级', dataIndex: 'level', key: 'level' },
+    { title: '物种', dataIndex: 'species_name', key: 'species_name' },
+    { title: '经验', dataIndex: 'exp', key: 'exp' },
+  ];
+
   const leaderboardChildren = (
-    <Row gutter={[16, 16]}>
-      {leaderboard.map((item: any, index: number) => (
-        <Col xs={24} sm={12} md={8} lg={6} key={item.id}>
-          <Card 
-            hoverable
-            onClick={() => handleViewPet(item)}
-            style={{ borderRadius: '12px', overflow: 'hidden', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', cursor: 'pointer' }}
-            styles={{ body: { padding: '16px' } }}
-            cover={
-              <div style={{ height: 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #fdfbfb 0%, #ebedee 100%)', padding: '20px', position: 'relative' }}>
-                <div style={{ position: 'absolute', top: 10, left: 10, fontSize: '24px', fontWeight: 'bold', color: '#faad14', textShadow: '2px 2px 4px rgba(0,0,0,0.1)' }}>#{index + 1}</div>
-                <img alt={item.name} src={(() => {
-                  try {
-                    const urls = typeof item.image_urls === 'string' ? JSON.parse(item.image_urls) : item.image_urls;
-                    return urls[item.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
-                  } catch (e) {
-                    return item.image_urls;
-                  }
-                })()} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', filter: 'drop-shadow(0 10px 8px rgba(0,0,0,0.2))' }} />
-              </div>
-            }
-            size="small" 
-          >
-            <Card.Meta 
-              title={<span style={{ fontSize: '16px', fontWeight: 'bold' }}>{item.name}</span>}
-              description={<span style={{ color: '#8c8c8c' }}>{item.owner_name}的宠物</span>}
-              style={{ marginBottom: '12px' }}
-            />
-            <Statistic 
-              title={<span style={{ fontSize: '12px' }}>当前等级</span>}
-              value={item.level} 
-              suffix={`级 (${item.species_name})`}
-              valueStyle={{ color: '#faad14', fontSize: '20px', fontWeight: 'bold' }}
-            />
-          </Card>
-        </Col>
-      ))}
-    </Row>
+    <div>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: 14, color: '#666' }}>{getLeaderboardTitle()}</span>
+        <Segmented
+          options={[
+            { label: '卡片', value: 'card' },
+            { label: '列表', value: 'list' },
+          ]}
+          value={leaderboardView}
+          onChange={(value) => setLeaderboardView(value as 'card' | 'list')}
+        />
+      </div>
+      {leaderboardView === 'card' ? (
+        <Row gutter={[16, 16]}>
+          {leaderboard.map((item: any, index: number) => (
+            <Col xs={24} sm={12} md={8} lg={6} key={item.id}>
+              <Card
+                hoverable
+                onClick={() => handleViewPet(item)}
+                style={{ borderRadius: '12px', overflow: 'hidden', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', cursor: 'pointer' }}
+                styles={{ body: { padding: '16px' } }}
+                cover={
+                  <div style={{ height: 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #fdfbfb 0%, #ebedee 100%)', padding: '20px', position: 'relative' }}>
+                    <div style={{ position: 'absolute', top: 10, left: 10, fontSize: '24px', fontWeight: 'bold', color: '#faad14', textShadow: '2px 2px 4px rgba(0,0,0,0.1)' }}>#{index + 1}</div>
+                    <img alt={item.name} src={(() => {
+                      try {
+                        const urls = typeof item.image_urls === 'string' ? JSON.parse(item.image_urls) : item.image_urls;
+                        return urls[item.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
+                      } catch (e) {
+                        return item.image_urls;
+                      }
+                    })()} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', filter: 'drop-shadow(0 10px 8px rgba(0,0,0,0.2))' }} />
+                  </div>
+                }
+                size="small"
+              >
+                <Card.Meta
+                  title={<span style={{ fontSize: '16px', fontWeight: 'bold' }}>{item.name}</span>}
+                  description={<span style={{ color: '#8c8c8c' }}>{item.owner_name}的宠物</span>}
+                  style={{ marginBottom: '12px' }}
+                />
+                <Statistic
+                  title={<span style={{ fontSize: '12px' }}>当前等级</span>}
+                  value={item.level}
+                  suffix={`级 (${item.species_name})`}
+                  valueStyle={{ color: '#faad14', fontSize: '20px', fontWeight: 'bold' }}
+                />
+              </Card>
+            </Col>
+          ))}
+        </Row>
+      ) : (
+        <Table
+          dataSource={leaderboard}
+          columns={leaderboardColumns}
+          rowKey="id"
+          pagination={{ pageSize: 10 }}
+          size="small"
+        />
+      )}
+    </div>
   );
 
   const authTabItems: TabsProps['items'] = [
     { key: 'pet', label: '我的宠物', children: hasPet ? <PetDisplay pet={pet} /> : <CreatePet onSuccess={loadPetData} /> },
-    { key: 'all_pets', label: '全班宠物', children: allPetsChildren },
+    { key: 'all_pets', label: user?.role === 'admin' ? '全校宠物' : '全班宠物', children: allPetsChildren },
     { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }
   ];
 
   const unauthTabItems: TabsProps['items'] = [
-    { key: 'all_pets', label: '全班宠物', children: allPetsChildren },
+    { key: 'all_pets', label: '全校宠物', children: allPetsChildren },
     { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }
   ];
 
@@ -325,6 +372,8 @@ const Home: React.FC = () => {
               <Achievements />
             ) : activeMenu === 'admin' ? (
               <Admin />
+            ) : activeMenu === 'applications' ? (
+              <Admin defaultTab="applications" />
             ) : activeMenu === 'profile' ? (
               <Profile />
             ) : isAuthenticated ? (

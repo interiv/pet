@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space } from 'antd';
-import { assignmentAPI } from '../utils/api';
+import { assignmentAPI, adminAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
 
@@ -10,6 +10,8 @@ const { TextArea } = Input;
 const Assignments: React.FC = () => {
   const { user } = useAuthStore();
   const [assignments, setAssignments] = useState<any[]>([]);
+  const [classes, setClasses] = useState<any[]>([]);
+  const [selectedClass, setSelectedClass] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [isSubmitModalVisible, setIsSubmitModalVisible] = useState(false);
@@ -18,18 +20,38 @@ const Assignments: React.FC = () => {
   const [submitForm] = Form.useForm();
 
   const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
+  const isAdmin = user?.role === 'admin';
 
   useEffect(() => {
     if (user) {
       loadAssignments();
+      if (isAdmin) {
+        loadClasses();
+      }
     }
   }, [user]);
+
+  const loadClasses = async () => {
+    try {
+      const res = await adminAPI.getClasses();
+      let allClasses = res.data.classes || [];
+      if (!isAdmin) {
+        allClasses = allClasses.filter((c: any) =>
+          c.teachers?.some((t: any) => t.teacher_id === user?.id)
+        );
+      }
+      setClasses(allClasses);
+    } catch (error) {
+      console.error('加载班级列表失败');
+    }
+  };
 
   const loadAssignments = async () => {
     if (!user) return;
     try {
       setLoading(true);
-      const res = await assignmentAPI.getAssignments();
+      const params = selectedClass ? { class_id: selectedClass } : {};
+      const res = await assignmentAPI.getAssignments(params);
       setAssignments(res.data.assignments || []);
     } catch (error) {
       console.error('加载作业失败:', error);
@@ -44,7 +66,8 @@ const Assignments: React.FC = () => {
       const payload = {
         ...values,
         due_date: values.due_date.toISOString(),
-        questions: [{ type: values.question_type, content: '请完成以下作业内容' }], // 简化版
+        class_id: values.class_id || selectedClass,
+        questions: [{ type: values.question_type, content: '请完成以下作业内容' }],
         ai_config: { auto_grade: true }
       };
       await assignmentAPI.createAssignment(payload);
@@ -80,6 +103,12 @@ const Assignments: React.FC = () => {
       render: (text: string) => <a>{text}</a>,
     },
     {
+      title: '班级',
+      dataIndex: 'class_name',
+      key: 'class_name',
+      render: (name: string) => name ? <Tag color="green">{name}</Tag> : <Tag>未分班</Tag>,
+    },
+    {
       title: '科目',
       dataIndex: 'subject',
       key: 'subject',
@@ -91,10 +120,10 @@ const Assignments: React.FC = () => {
       key: 'teacher_name',
     },
     {
-      title: '经验奖励',
+      title: '金币奖励',
       dataIndex: 'max_exp',
       key: 'max_exp',
-      render: (exp: number) => <span style={{ color: '#faad14', fontWeight: 'bold' }}>+{exp} EXP</span>,
+      render: (exp: number) => <span style={{ color: '#faad14', fontWeight: 'bold' }}>+{exp} 金币</span>,
     },
     {
       title: '截止日期',
@@ -137,7 +166,25 @@ const Assignments: React.FC = () => {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <h2>📝 班级作业</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <h2>📝 班级作业</h2>
+          {isAdmin && (
+            <Select
+              placeholder="筛选班级"
+              allowClear
+              style={{ width: 200 }}
+              onChange={(value) => {
+                setSelectedClass(value);
+                loadAssignments();
+              }}
+              value={selectedClass}
+            >
+              {classes.map(c => (
+                <Option key={c.id} value={c.id}>{c.name}</Option>
+              ))}
+            </Select>
+          )}
+        </div>
         {isTeacher && (
           <Button type="primary" onClick={() => setIsModalVisible(true)}>
             发布新作业
@@ -145,10 +192,10 @@ const Assignments: React.FC = () => {
         )}
       </div>
 
-      <Table 
-        columns={columns} 
-        dataSource={assignments} 
-        rowKey="id" 
+      <Table
+        columns={columns}
+        dataSource={assignments}
+        rowKey="id"
         loading={loading}
       />
 
@@ -160,6 +207,15 @@ const Assignments: React.FC = () => {
         destroyOnClose
       >
         <Form form={form} layout="vertical" onFinish={handleCreateAssignment}>
+          {isAdmin && (
+            <Form.Item name="class_id" label="发布到班级" rules={[{ required: true, message: '请选择班级' }]}>
+              <Select placeholder="选择班级">
+                {classes.map(c => (
+                  <Option key={c.id} value={c.id}>{c.name}</Option>
+                ))}
+              </Select>
+            </Form.Item>
+          )}
           <Form.Item name="title" label="作业标题" rules={[{ required: true, message: '请输入作业标题' }]}>
             <Input placeholder="例如：第三章数学练习" />
           </Form.Item>
@@ -188,8 +244,8 @@ const Assignments: React.FC = () => {
           </Form.Item>
           
           <div style={{ display: 'flex', gap: '16px' }}>
-            <Form.Item name="max_exp" label="经验奖励" rules={[{ required: true, message: '请设置经验奖励' }]} style={{ flex: 1 }}>
-              <InputNumber min={10} max={500} style={{ width: '100%' }} addonAfter="EXP" />
+            <Form.Item name="max_exp" label="金币奖励" rules={[{ required: true, message: '请设置金币奖励' }]} style={{ flex: 1 }}>
+              <InputNumber min={1} max={30} style={{ width: '100%' }} addonAfter="金币" />
             </Form.Item>
             
             <Form.Item name="due_date" label="截止日期" rules={[{ required: true, message: '请选择截止日期' }]} style={{ flex: 1 }}>
