@@ -1130,8 +1130,8 @@ const DataView: React.FC = () => {
     { title: '挑战者', dataIndex: 'challenger_name', key: 'challenger_name' },
     { title: '应战者', dataIndex: 'defender_name', key: 'defender_name' },
     { title: '班级', dataIndex: 'class_name', key: 'class_name', render: (v: string) => v || '-' },
-    { title: '结果', dataIndex: 'result', key: 'result', render: (v: string) => v === 'challenger_win' ? '挑战者胜' : '应战者胜' },
-    { title: '时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => new Date(v).toLocaleString() },
+    { title: '结果', dataIndex: 'winner_id', key: 'winner_id', render: (v: number, record: any) => v === record.pet1_id ? '挑战者胜' : v === record.pet2_id ? '应战者胜' : '-' },
+    { title: '时间', dataIndex: 'battle_date', key: 'battle_date', render: (v: string) => new Date(v).toLocaleString() },
   ];
 
   const assignmentColumns = [
@@ -1139,7 +1139,7 @@ const DataView: React.FC = () => {
     { title: '标题', dataIndex: 'title', key: 'title' },
     { title: '创建人', dataIndex: 'creator_name', key: 'creator_name' },
     { title: '班级', dataIndex: 'class_name', key: 'class_name', render: (v: string) => v || '-' },
-    { title: '金币奖励', dataIndex: 'gold_reward', key: 'gold_reward' },
+    { title: '经验奖励', dataIndex: 'max_exp', key: 'max_exp' },
     { title: '截止日期', dataIndex: 'due_date', key: 'due_date', render: (v: string) => v ? new Date(v).toLocaleDateString() : '-' },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => new Date(v).toLocaleString() },
   ];
@@ -1153,7 +1153,7 @@ const DataView: React.FC = () => {
     }>{v}</Tag> },
     { title: '数量', dataIndex: 'quantity', key: 'quantity' },
     { title: '班级', dataIndex: 'class_name', key: 'class_name', render: (v: string) => v || '-' },
-    { title: '时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => new Date(v).toLocaleString() },
+    { title: '时间', dataIndex: 'obtained_at', key: 'obtained_at', render: (v: string) => new Date(v).toLocaleString() },
   ];
 
   return (

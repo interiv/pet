@@ -282,6 +282,11 @@ const Home: React.FC = () => {
     { title: '等级', dataIndex: 'level', key: 'level' },
     { title: '物种', dataIndex: 'species_name', key: 'species_name' },
     { title: '经验', dataIndex: 'exp', key: 'exp' },
+    { title: '金币', dataIndex: 'gold', key: 'gold' },
+    { title: '体力', dataIndex: 'stamina', key: 'stamina' },
+    { title: '饱腹度', dataIndex: 'hunger', key: 'hunger' },
+    { title: '心情', dataIndex: 'mood', key: 'mood' },
+    { title: '健康', dataIndex: 'health', key: 'health' },
   ];
 
   const leaderboardChildren = (

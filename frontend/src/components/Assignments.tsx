@@ -207,7 +207,7 @@ const Assignments: React.FC = () => {
         destroyOnClose
       >
         <Form form={form} layout="vertical" onFinish={handleCreateAssignment}>
-          {isAdmin && (
+          {(isAdmin || user?.role === 'teacher') && (
             <Form.Item name="class_id" label="发布到班级" rules={[{ required: true, message: '请选择班级' }]}>
               <Select placeholder="选择班级">
                 {classes.map(c => (

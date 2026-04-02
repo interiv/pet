@@ -348,10 +348,12 @@ router.get('/classes', authenticateToken, (req, res) => {
 });
 
 // 为班级添加老师
-router.post('/classes/:id/teachers', authenticateToken, requireAdmin, (req, res) => {
+router.post('/classes/:id/teachers', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
     const { teacher_id, role } = req.body;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
 
     const cls = db.prepare(`SELECT id FROM classes WHERE id = ?`).get(id);
     if (!cls) {
@@ -360,6 +362,13 @@ router.post('/classes/:id/teachers', authenticateToken, requireAdmin, (req, res)
 
     if (!teacher_id) {
       return res.status(400).json({ error: '请指定教师' });
+    }
+
+    if (userRole !== 'admin') {
+      const myHeadTeacherClass = db.prepare(`SELECT id FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'`).get(userId, id);
+      if (!myHeadTeacherClass) {
+        return res.status(403).json({ error: '只有班主任可以添加本班教师' });
+      }
     }
 
     const teacher = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher' AND status = 'active'`).get(teacher_id);
@@ -790,8 +799,9 @@ router.get('/statistics', authenticateToken, (req, res) => {
       `).get().total || 0;
 
       const topClasses = db.prepare(`
-        SELECT c.name, c.total_exp, c.student_count, u.username as teacher_name
-        FROM classes c LEFT JOIN users u ON c.teacher_id = u.id
+        SELECT c.id, c.name, c.total_exp, c.student_count,
+          (SELECT u.username FROM class_teachers ct JOIN users u ON ct.teacher_id = u.id WHERE ct.class_id = c.id AND ct.role = 'head_teacher' LIMIT 1) as teacher_name
+        FROM classes c
         ORDER BY c.total_exp DESC LIMIT 5
       `).all();
 
@@ -803,7 +813,6 @@ router.get('/statistics', authenticateToken, (req, res) => {
         SELECT i.name, i.rarity, COUNT(ui.id) as purchase_count, SUM(ui.quantity) as total_quantity
         FROM user_items ui
         JOIN items i ON ui.item_id = i.id
-        WHERE ui.source = 'shop_purchase'
         GROUP BY i.id
         ORDER BY purchase_count DESC
         LIMIT 10
@@ -915,12 +924,16 @@ router.get('/battles', authenticateToken, (req, res) => {
 
     let sql = `
       SELECT b.*,
+        p1.user_id as challenger_id,
+        p2.user_id as defender_id,
         u1.username as challenger_name,
         u2.username as defender_name,
         c.name as class_name
       FROM battles b
-      JOIN users u1 ON b.challenger_id = u1.id
-      JOIN users u2 ON b.defender_id = u2.id
+      JOIN pets p1 ON b.pet1_id = p1.id
+      JOIN pets p2 ON b.pet2_id = p2.id
+      JOIN users u1 ON p1.user_id = u1.id
+      JOIN users u2 ON p2.user_id = u2.id
       LEFT JOIN classes c ON u1.class_id = c.id
       WHERE 1=1
     `;
@@ -942,7 +955,7 @@ router.get('/battles', authenticateToken, (req, res) => {
       params.push(class_id);
     }
 
-    sql += ` ORDER BY b.created_at DESC LIMIT 100`;
+    sql += ` ORDER BY b.battle_date DESC LIMIT 100`;
 
     const battles = db.prepare(sql).all(...params);
     res.json({ battles });
@@ -964,7 +977,7 @@ router.get('/assignments', authenticateToken, (req, res) => {
         u.username as creator_name,
         c.name as class_name
       FROM assignments a
-      JOIN users u ON a.creator_id = u.id
+      JOIN users u ON a.teacher_id = u.id
       LEFT JOIN classes c ON a.class_id = c.id
       WHERE 1=1
     `;
@@ -1013,7 +1026,7 @@ router.get('/shop-records', authenticateToken, (req, res) => {
       JOIN users u ON ui.user_id = u.id
       JOIN items i ON ui.item_id = i.id
       LEFT JOIN classes c ON u.class_id = c.id
-      WHERE ui.source = 'shop_purchase'
+      WHERE 1=1
     `;
     const params = [];
 
@@ -1033,7 +1046,7 @@ router.get('/shop-records', authenticateToken, (req, res) => {
       params.push(class_id);
     }
 
-    sql += ` ORDER BY ui.created_at DESC LIMIT 100`;
+    sql += ` ORDER BY ui.obtained_at DESC LIMIT 100`;
 
     const records = db.prepare(sql).all(...params);
     res.json({ records });
