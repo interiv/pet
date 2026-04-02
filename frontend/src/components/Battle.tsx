@@ -13,6 +13,8 @@ const Battle: React.FC = () => {
   const [opponents, setOpponents] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [battleResult, setBattleResult] = useState<any>(null);
+  const [battleModalVisible, setBattleModalVisible] = useState(false);
 
   useEffect(() => {
     loadOpponents();
@@ -51,18 +53,27 @@ const Battle: React.FC = () => {
       message.warning('你需要先拥有一只宠物才能战斗！');
       return;
     }
-    
+
     setLoading(true);
     try {
       const res = await battleAPI.startBattle({ opponent_pet_id: opponentId });
-      const { winner, rewardExp, rewardGold } = res.data;
-      
+      const { winner, rewardExp, rewardGold, battleLog, myWinChance } = res.data;
+
+      setBattleResult({
+        winner,
+        rewardExp,
+        rewardGold,
+        battleLog,
+        myWinChance
+      });
+      setBattleModalVisible(true);
+
       if (winner === '我') {
         message.success(`🎉 战斗胜利！获得了 ${rewardExp} 经验 和 ${rewardGold} 金币`);
       } else {
         message.error('💥 战斗失败！再接再厉！');
       }
-      
+
       loadHistory();
     } catch (error: any) {
       message.error(error.response?.data?.error || '战斗发起失败');
@@ -198,6 +209,62 @@ const Battle: React.FC = () => {
       </div>
 
       <Tabs defaultActiveKey="opponents" items={tabItems} />
+
+      <Modal
+        title="战斗结果"
+        open={battleModalVisible}
+        onCancel={() => setBattleModalVisible(false)}
+        footer={[
+          <Button key="close" onClick={() => setBattleModalVisible(false)}>
+            确定
+          </Button>
+        ]}
+        width={600}
+      >
+        {battleResult && (
+          <div>
+            <div style={{ textAlign: 'center', marginBottom: 24 }}>
+              <div style={{ fontSize: 64, marginBottom: 16 }}>
+                {battleResult.winner === '我' ? '🏆' : '💀'}
+              </div>
+              <h2 style={{ fontSize: 28, marginBottom: 8 }}>
+                {battleResult.winner === '我' ? '恭喜获胜！' : '对战失败'}
+              </h2>
+              <div style={{ color: '#999' }}>
+                胜率预测: {battleResult.myWinChance}%
+              </div>
+            </div>
+
+            {battleResult.battleLog && battleResult.battleLog.rounds && (
+              <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8, marginBottom: 16 }}>
+                <h4 style={{ marginBottom: 12 }}>战斗回放</h4>
+                {battleResult.battleLog.rounds.map((round: any, idx: number) => (
+                  <div key={idx} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: idx < battleResult.battleLog.rounds.length - 1 ? '1px solid #ddd' : 'none' }}>
+                    <div style={{ fontWeight: 'bold', color: '#667eea', marginBottom: 4 }}>第 {round.round} 回合</div>
+                    <div style={{ fontSize: 13 }}>
+                      <div>你的宠物: -{round.myDamage} HP ({round.myAction})</div>
+                      <div>对手宠物: -{round.opponentDamage} HP ({round.opponentAction})</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {battleResult.winner === '我' && (
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 48 }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 24, color: '#52c41a', fontWeight: 'bold' }}>+{battleResult.rewardExp}</div>
+                  <div style={{ color: '#999' }}>经验</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 24, color: '#faad14', fontWeight: 'bold' }}>+{battleResult.rewardGold}</div>
+                  <div style={{ color: '#999' }}>金币</div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };

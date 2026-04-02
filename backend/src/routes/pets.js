@@ -53,6 +53,7 @@ router.get('/all', (req, res) => {
       JOIN pet_species ps ON p.species_id = ps.id
       JOIN users u ON p.user_id = u.id
       WHERE u.role = 'student'
+      ORDER BY p.level DESC, p.exp DESC
     `).all();
 
     res.json({ pets });
@@ -295,7 +296,7 @@ router.post('/feed', authenticateToken, (req, res) => {
 });
 
 // 获取所有宠物（用于排行榜）
-router.get('/all', authenticateToken, (req, res) => {
+router.get('/leaderboard', authenticateToken, (req, res) => {
   try {
     const pets = db.prepare(`
       SELECT p.*, ps.name as species_name, ps.element_type, ps.image_urls,
@@ -565,17 +566,6 @@ router.get('/skills', authenticateToken, (req, res) => {
       ORDER BY ps.slot
     `).all(pet.id);
 
-    res.json({ skills });
-  } catch (error) {
-    console.error('获取技能列表错误:', error);
-    res.status(500).json({ error: '获取技能列表失败' });
-  }
-});
-
-// 获取所有可用技能
-router.get('/all-skills', (req, res) => {
-  try {
-    const skills = db.prepare('SELECT * FROM skills').all();
     res.json({ skills });
   } catch (error) {
     console.error('获取技能列表错误:', error);

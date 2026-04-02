@@ -124,16 +124,52 @@ export const itemAPI = {
 // 好友相关 API
 export const friendAPI = {
   getFriends: () => api.get('/friends/list'),
-  
-  addFriend: (data: { friend_username: string }) => 
+
+  addFriend: (data: { friend_username: string }) =>
     api.post('/friends/add', data),
+
+  visitFriend: (data: { friend_id: number }) =>
+    api.post('/friends/visit', data),
+
+  giftFriend: (data: { friend_id: number; item_id: number }) =>
+    api.post('/friends/gift', data),
+
+  friendBattle: (data: { friend_id: number }) =>
+    api.post('/friends/friend-battle', data),
+
+  removeFriend: (data: { friend_id: number }) =>
+    api.delete('/friends/remove', data),
 };
 
 // 成就相关 API
 export const achievementAPI = {
   getAchievements: () => api.get('/achievements/list'),
-  
+
   getMyAchievements: () => api.get('/achievements/my-achievements'),
+
+  getAchievementStatus: () => api.get('/achievements/status'),
+
+  checkAchievement: (data: { type: string; value: number }) =>
+    api.post('/achievements/check', data),
+};
+
+// 宠物相关 API 扩展
+export const petExtendedAPI = {
+  revivePet: (data: { item_id?: number }) =>
+    api.post('/pets/revive', data),
+
+  rebirthPet: (data: { item_id: number }) =>
+    api.post('/pets/rebirth', data),
+
+  learnSkill: (data: { skill_id: number }) =>
+    api.post('/pets/learn-skill', data),
+
+  forgetSkill: (data: { skill_id: number }) =>
+    api.post('/pets/forget-skill', data),
+
+  getMySkills: () => api.get('/pets/skills'),
+
+  getAllSkills: () => api.get('/pets/all-skills'),
 };
 
 // 排行榜相关 API

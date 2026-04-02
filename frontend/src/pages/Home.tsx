@@ -20,6 +20,7 @@ import ShopAndBackpack from '../components/ShopAndBackpack';
 import Friends from '../components/Friends';
 import Admin from '../components/Admin';
 import Profile from '../components/Profile';
+import Achievements from '../components/Achievements';
 
 const { Header, Content, Sider } = Layout;
 
@@ -119,6 +120,11 @@ const Home: React.FC = () => {
       key: 'friends',
       icon: <UserOutlined />,
       label: '我的好友',
+    },
+    {
+      key: 'achievements',
+      icon: <TrophyOutlined />,
+      label: '成就',
     },
     {
       key: 'leaderboard',
@@ -315,6 +321,8 @@ const Home: React.FC = () => {
               <ShopAndBackpack />
             ) : activeMenu === 'friends' ? (
               <Friends />
+            ) : activeMenu === 'achievements' ? (
+              <Achievements />
             ) : activeMenu === 'admin' ? (
               <Admin />
             ) : activeMenu === 'profile' ? (

@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Button, Input, List, Avatar, message, Modal, Form, Spin, Row, Col, Statistic } from 'antd';
-import { UserAddOutlined, TeamOutlined, HeartFilled } from '@ant-design/icons';
-import { friendAPI, petAPI } from '../utils/api';
+import { Card, Button, Input, List, Avatar, message, Modal, Form, Spin, Row, Col, Statistic, Popconfirm, Select } from 'antd';
+import { UserAddOutlined, TeamOutlined, HeartFilled, DeleteOutlined, GiftOutlined, FireOutlined, EyeOutlined } from '@ant-design/icons';
+import { friendAPI, petAPI, itemAPI, battleAPI } from '../utils/api';
 
-import { useAuthStore } from '../store/authStore';
+import { useAuthStore, usePetStore } from '../store/authStore';
 
 const Friends: React.FC = () => {
   const { isAuthenticated } = useAuthStore();
+  const { pet } = usePetStore();
   const [friends, setFriends] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -16,6 +17,12 @@ const Friends: React.FC = () => {
   const [loadingPetDetail, setLoadingPetDetail] = useState(false);
   const [petEquipments, setPetEquipments] = useState<any[]>([]);
   const [petBonus, setPetBonus] = useState<any>(null);
+  const [myItems, setMyItems] = useState<any[]>([]);
+  const [giftModalVisible, setGiftModalVisible] = useState(false);
+  const [selectedFriend, setSelectedFriend] = useState<any>(null);
+  const [giftForm] = Form.useForm();
+  const [battleResult, setBattleResult] = useState<any>(null);
+  const [battleModalVisible, setBattleModalVisible] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -68,6 +75,59 @@ const Friends: React.FC = () => {
     }
   };
 
+  const handleOpenGiftModal = async (friend: any) => {
+    setSelectedFriend(friend);
+    try {
+      const res = await itemAPI.getMyItems();
+      setMyItems(res.data.items || []);
+      setGiftModalVisible(true);
+    } catch (error) {
+      message.error('加载背包失败');
+    }
+  };
+
+  const handleGift = async (values: { item_id: number }) => {
+    if (!selectedFriend) return;
+    try {
+      await friendAPI.giftFriend({ friend_id: selectedFriend.friend_id, item_id: values.item_id });
+      message.success('送礼成功！亲密度+' + (myItems.find(i => i.item_id === values.item_id)?.effect_value || 10));
+      setGiftModalVisible(false);
+      giftForm.resetFields();
+      loadFriends();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '送礼失败');
+    }
+  };
+
+  const handleFriendBattle = async (friend: any) => {
+    if (!pet) {
+      message.warning('你需要先拥有一只宠物才能对战！');
+      return;
+    }
+    try {
+      setLoading(true);
+      const res = await friendAPI.friendBattle({ friend_id: friend.friend_id });
+      const { winner, rewardExp, rewardGold } = res.data;
+      setBattleResult({ winner, rewardExp, rewardGold, opponentName: friend.username });
+      setBattleModalVisible(true);
+      loadFriends();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '对战失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRemoveFriend = async (friendId: number) => {
+    try {
+      await friendAPI.removeFriend({ friend_id: friendId });
+      message.success('删除成功');
+      loadFriends();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '删除失败');
+    }
+  };
+
   if (!isAuthenticated) {
     return (
       <Card style={{ borderRadius: '12px', textAlign: 'center', padding: '40px' }}>
@@ -101,7 +161,17 @@ const Friends: React.FC = () => {
           renderItem={(item: any) => (
             <List.Item
               actions={[
-                <Button type="link" onClick={() => handleViewFriendPet(item)}>访问宠物</Button>
+                <Button type="link" icon={<EyeOutlined />} onClick={() => handleViewFriendPet(item)}>访问</Button>,
+                <Button type="link" icon={<GiftOutlined />} onClick={() => handleOpenGiftModal(item)}>送礼</Button>,
+                <Button type="link" icon={<FireOutlined />} onClick={() => handleFriendBattle(item)}>对战</Button>,
+                <Popconfirm
+                  title="确定要删除该好友吗？"
+                  onConfirm={() => handleRemoveFriend(item.friend_id)}
+                  okText="确定"
+                  cancelText="取消"
+                >
+                  <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+                </Popconfirm>
               ]}
             >
               <List.Item.Meta
@@ -274,6 +344,62 @@ const Friends: React.FC = () => {
             </div>
           )}
         </Spin>
+      </Modal>
+
+      <Modal
+        title={`向 ${selectedFriend?.username} 送礼`}
+        open={giftModalVisible}
+        onOk={() => giftForm.submit()}
+        onCancel={() => setGiftModalVisible(false)}
+        confirmLoading={loading}
+        destroyOnClose
+      >
+        <Form form={giftForm} layout="vertical" onFinish={handleGift}>
+          <Form.Item
+            name="item_id"
+            label="选择礼物"
+            rules={[{ required: true, message: '请选择要赠送的礼物' }]}
+          >
+            <Select placeholder="选择要赠送的礼物">
+              {myItems.map(item => (
+                <Select.Option key={item.item_id} value={item.item_id}>
+                  {item.name} (x{item.quantity}) - 亲密度+{item.effect_value}
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="对战结果"
+        open={battleModalVisible}
+        onCancel={() => setBattleModalVisible(false)}
+        footer={[
+          <Button key="close" onClick={() => setBattleModalVisible(false)}>
+            确定
+          </Button>
+        ]}
+      >
+        {battleResult && (
+          <div style={{ textAlign: 'center', padding: '20px' }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>
+              {battleResult.winner === '我' ? '🏆' : '💀'}
+            </div>
+            <h3 style={{ fontSize: 24, marginBottom: 24 }}>
+              {battleResult.winner === '我' ? '恭喜获胜！' : '对战失败'}
+            </h3>
+            <p style={{ fontSize: 16, color: '#666' }}>
+              与 <strong>{battleResult.opponentName}</strong> 的对战
+            </p>
+            {battleResult.winner === '我' && (
+              <div style={{ marginTop: 20 }}>
+                <Statistic title="获得经验" value={battleResult.rewardExp} valueStyle={{ color: '#52c41a' }} />
+                <Statistic title="获得金币" value={battleResult.rewardGold} valueStyle={{ color: '#faad14' }} />
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
     </div>
   );

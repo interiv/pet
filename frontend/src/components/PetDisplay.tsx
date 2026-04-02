@@ -1,14 +1,19 @@
-import React, { useState } from 'react';
-import { Card, Row, Col, Progress, Button, message, Input } from 'antd';
-import { 
-  ThunderboltOutlined, 
+import React, { useState, useEffect } from 'react';
+import { Card, Row, Col, Progress, Button, message, Input, Modal, Form, Select, Tag, Badge, Divider } from 'antd';
+import {
+  ThunderboltOutlined,
   RocketOutlined,
   HeartOutlined,
   SmileOutlined,
   CoffeeOutlined,
-  EditOutlined
+  EditOutlined,
+  StarOutlined,
+  RetweetOutlined,
+  RiseOutlined,
+  MedicineBoxOutlined,
+  SkillStateError
 } from '@ant-design/icons';
-import { petAPI, equipmentAPI } from '../utils/api';
+import { petAPI, equipmentAPI, petExtendedAPI, itemAPI } from '../utils/api';
 import { usePetStore } from '../store/authStore';
 import { EquipmentPanel } from './EquipmentPanel';
 
@@ -23,8 +28,16 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet }) => {
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState(pet?.name || '');
   const [equippedItems, setEquippedItems] = useState<any[]>([]);
+  const [reviveModalVisible, setReviveModalVisible] = useState(false);
+  const [rebirthModalVisible, setRebirthModalVisible] = useState(false);
+  const [skillModalVisible, setSkillModalVisible] = useState(false);
+  const [mySkills, setMySkills] = useState<any[]>([]);
+  const [allSkills, setAllSkills] = useState<any[]>([]);
+  const [myItems, setMyItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [form] = Form.useForm();
 
-  React.useEffect(() => {
+  useEffect(() => {
     loadEquipments();
   }, []);
 
@@ -78,6 +91,99 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet }) => {
       loadEquipments();
     } catch (error) {
       console.error(error);
+    }
+  };
+
+  const isPetUnconscious = pet?.status === 'unconscious';
+
+  const handleOpenReviveModal = async () => {
+    try {
+      const res = await itemAPI.getMyItems();
+      setMyItems(res.data.items || []);
+      setReviveModalVisible(true);
+    } catch (error) {
+      message.error('加载背包失败');
+    }
+  };
+
+  const handleRevive = async (values: { item_id?: number }) => {
+    try {
+      setLoading(true);
+      await petExtendedAPI.revivePet(values);
+      message.success('复活成功！宠物已恢复');
+      setReviveModalVisible(false);
+      const response = await petAPI.getMyPet();
+      setPet(response.data.pet);
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '复活失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenRebirthModal = async () => {
+    try {
+      const res = await itemAPI.getMyItems();
+      setMyItems(res.data.items || []);
+      setRebirthModalVisible(true);
+    } catch (error) {
+      message.error('加载背包失败');
+    }
+  };
+
+  const handleRebirth = async (values: { item_id: number }) => {
+    try {
+      setLoading(true);
+      const res = await petExtendedAPI.rebirthPet(values);
+      message.success(res.data.message || '转生成功！');
+      setRebirthModalVisible(false);
+      const response = await petAPI.getMyPet();
+      setPet(response.data.pet);
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '转生失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenSkillModal = async () => {
+    try {
+      setLoading(true);
+      const [skillsRes, allSkillsRes] = await Promise.all([
+        petExtendedAPI.getMySkills(),
+        petExtendedAPI.getAllSkills()
+      ]);
+      setMySkills(skillsRes.data.skills || []);
+      setAllSkills(allSkillsRes.data.skills || []);
+      setSkillModalVisible(true);
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '加载技能失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLearnSkill = async (skillId: number) => {
+    try {
+      await petExtendedAPI.learnSkill({ skill_id: skillId });
+      message.success('学习技能成功！');
+      handleOpenSkillModal();
+      const response = await petAPI.getMyPet();
+      setPet(response.data.pet);
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '学习技能失败');
+    }
+  };
+
+  const handleForgetSkill = async (skillId: number) => {
+    try {
+      await petExtendedAPI.forgetSkill({ skill_id: skillId });
+      message.success('遗忘技能成功！');
+      handleOpenSkillModal();
+      const response = await petAPI.getMyPet();
+      setPet(response.data.pet);
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '遗忘技能失败');
     }
   };
 
@@ -160,9 +266,15 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet }) => {
               </div>
             }
             actions={[
-              <Button key="feed" type="primary">喂食</Button>,
-              <Button key="play">玩耍</Button>,
-              <Button key="train">训练</Button>,
+              isPetUnconscious ? (
+                <Button key="revive" type="primary" danger icon={<MedicineBoxOutlined />} onClick={handleOpenReviveModal}>复活宠物</Button>
+              ) : (
+                <>
+                  <Button key="feed" type="primary" onClick={() => window.location.href = '/shop'}>喂食</Button>
+                  <Button key="skill" icon={<StarOutlined />} onClick={handleOpenSkillModal}>技能</Button>
+                  <Button key="rebirth" icon={<RetweetOutlined />} onClick={handleOpenRebirthModal}>转生</Button>
+                </>
+              )
             ]}
           >
             <Meta
@@ -219,6 +331,16 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet }) => {
         {/* 右侧属性面板 */}
         <Col xs={24} md={8}>
           <Card title="宠物属性">
+            {isPetUnconscious && (
+              <div style={{ background: '#fff1f0', padding: 12, borderRadius: 8, marginBottom: 16, textAlign: 'center' }}>
+                <Badge status="error" text={<span style={{ color: '#f5222d', fontWeight: 'bold' }}>宠物处于濒死状态，需要复活！</span>} />
+              </div>
+            )}
+            {pet.rebirth_count > 0 && (
+              <div style={{ background: '#f0f5ff', padding: 8, borderRadius: 8, marginBottom: 16, textAlign: 'center' }}>
+                <Tag color="blue" icon={<RiseOutlined />}>已转生 {pet.rebirth_count} 次</Tag>
+              </div>
+            )}
             <div style={{ marginBottom: 24 }}>
               <div style={{ fontSize: 32, fontWeight: 'bold', color: '#667eea' }}>
                 Lv.{pet.level}
@@ -304,6 +426,95 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet }) => {
       </Row>
 
       <EquipmentPanel onEquipChange={handleEquipChange} />
+
+      <Modal
+        title="复活宠物"
+        open={reviveModalVisible}
+        onOk={() => form.submit()}
+        onCancel={() => setReviveModalVisible(false)}
+        confirmLoading={loading}
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical" onFinish={handleRevive}>
+          <p style={{ marginBottom: 16 }}>请选择复活道具（可选，不选则使用金币复活）</p>
+          <Form.Item name="item_id" label="复活道具">
+            <Select placeholder="选择复活道具（不选则消耗100金币）" allowClear>
+              {myItems.filter(item => item.effect_type === 'revive').map(item => (
+                <Select.Option key={item.item_id} value={item.item_id}>
+                  {item.name} (x{item.quantity})
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="宠物转生"
+        open={rebirthModalVisible}
+        onOk={() => form.submit()}
+        onCancel={() => setRebirthModalVisible(false)}
+        confirmLoading={loading}
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical" onFinish={handleRebirth}>
+          <p style={{ marginBottom: 16 }}>转生需要消耗一个「转生之证」，转生后宠物将重置为1级，但保留部分属性加成。</p>
+          <Form.Item
+            name="item_id"
+            label="转生道具"
+            rules={[{ required: true, message: '请选择转生道具' }]}
+          >
+            <Select placeholder="请选择转生道具">
+              {myItems.filter(item => item.effect_type === 'rebirth').map(item => (
+                <Select.Option key={item.item_id} value={item.item_id}>
+                  {item.name} (x{item.quantity})
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="宠物技能"
+        open={skillModalVisible}
+        onCancel={() => setSkillModalVisible(false)}
+        footer={null}
+        width={700}
+      >
+        <Divider>已学会的技能</Divider>
+        {mySkills.length > 0 ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 24 }}>
+            {mySkills.map(skill => (
+              <Tag
+                key={skill.id}
+                color="blue"
+                closable
+                onClose={() => handleForgetSkill(skill.id)}
+                style={{ padding: '4px 12px', fontSize: 14 }}
+              >
+                {skill.name} ({skill.element_type})
+              </Tag>
+            ))}
+          </div>
+        ) : (
+          <p style={{ color: '#999', marginBottom: 24 }}>还没有学会任何技能</p>
+        )}
+
+        <Divider>可学习的技能</Divider>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {allSkills.filter(s => !mySkills.find(ms => ms.id === s.id)).map(skill => (
+            <Tag
+              key={skill.id}
+              color="green"
+              style={{ padding: '4px 12px', fontSize: 14, cursor: 'pointer' }}
+              onClick={() => handleLearnSkill(skill.id)}
+            >
+              + {skill.name} ({skill.element_type})
+            </Tag>
+          ))}
+        </div>
+      </Modal>
     </div>
   );
 };

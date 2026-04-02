@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Button, List, Tag, Badge, message, Tooltip } from 'antd';
-import { SkinOutlined, ArrowUpOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
-import { equipmentAPI } from '../utils/api';
+import { Card, Row, Col, Button, List, Tag, Badge, message, Tooltip, Divider } from 'antd';
+import { SkinOutlined, ArrowUpOutlined, SafetyCertificateOutlined, ThunderboltOutlined, HeartOutlined, RocketOutlined } from '@ant-design/icons';
+import { equipmentAPI, petAPI } from '../utils/api';
 
 interface EquipmentPanelProps {
   onEquipChange?: () => void;
@@ -24,12 +24,16 @@ const slotColors: Record<string, string> = {
 export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange }) => {
   const [equipments, setEquipments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [setBonus, setSetBonus] = useState<any>(null);
 
   const loadEquipments = async () => {
     setLoading(true);
     try {
       const res = await equipmentAPI.getMyEquipment();
       setEquipments(res.data.equipment || []);
+      if (res.data.bonus) {
+        setSetBonus(res.data.bonus);
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -94,10 +98,10 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
           const equipped = equippedParts.find(e => e.slot === slot);
           return (
             <Col xs={12} sm={12} md={6} key={slot}>
-              <Card 
-                size="small" 
-                style={{ 
-                  height: '100%', 
+              <Card
+                size="small"
+                style={{
+                  height: '100%',
                   background: equipped ? '#f0f5ff' : '#fafafa',
                   borderColor: equipped ? slotColors[slot] : '#f0f0f0',
                   borderWidth: equipped ? 2 : 1
@@ -109,10 +113,10 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
                   <div style={{ textAlign: 'center' }}>
                     <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
                       {equipped.image_url?.startsWith('http') || equipped.image_url?.startsWith('/images/') ? (
-                        <img 
-                          src={equipped.image_url} 
-                          alt={equipped.name} 
-                          style={{ width: 64, height: 64, objectFit: 'contain', filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.1))', borderRadius: 8 }} 
+                        <img
+                          src={equipped.image_url}
+                          alt={equipped.name}
+                          style={{ width: 64, height: 64, objectFit: 'contain', filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.1))', borderRadius: 8 }}
                         />
                       ) : (
                         <div style={{ fontSize: 40, margin: '10px 0', filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.1))' }}>
@@ -122,14 +126,15 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
                     </div>
                     <div style={{ fontWeight: 'bold', marginBottom: 8, fontSize: 14 }}>
                       {equipped.name} <Badge count={`Lv.${equipped.level}`} style={{ backgroundColor: '#52c41a' }} />
+                      {equipped.set_name && <Tag color="purple" style={{ marginLeft: 4 }}>{equipped.set_name}</Tag>}
                     </div>
                     <div style={{ marginBottom: 12, minHeight: 48, display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 4 }}>
                       {renderStats(equipped.stats_bonus)}
                     </div>
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-                      <Button 
-                        size="small" 
-                        type="default" 
+                      <Button
+                        size="small"
+                        type="default"
                         danger
                         onClick={() => handleEquip(equipped.user_equip_id)}
                       >
@@ -157,6 +162,49 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
           );
         })}
       </Row>
+
+      {setBonus && (setBonus.set?.attack > 0 || setBonus.set?.defense > 0 || setBonus.set?.speed > 0) && (
+        <div style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', padding: 16, borderRadius: 12, marginTop: 24, color: '#fff' }}>
+          <div style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>套装效果</span>
+          </div>
+          <Row gutter={[16, 16]}>
+            <Col span={8}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                  <ThunderboltOutlined /> <span>攻击</span>
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 'bold', marginTop: 4 }}>
+                  +{setBonus.set.attack}
+                </div>
+              </div>
+            </Col>
+            <Col span={8}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                  <HeartOutlined /> <span>防御</span>
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 'bold', marginTop: 4 }}>
+                  +{setBonus.set.defense}
+                </div>
+              </div>
+            </Col>
+            <Col span={8}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                  <RocketOutlined /> <span>速度</span>
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 'bold', marginTop: 4 }}>
+                  +{setBonus.set.speed}
+                </div>
+              </div>
+            </Col>
+          </Row>
+          <div style={{ marginTop: 12, fontSize: 12, opacity: 0.9 }}>
+            集齐套装装备可激活额外属性加成
+          </div>
+        </div>
+      )}
 
       <h3 style={{ marginTop: 32, marginBottom: 16, color: '#555' }}>我的衣橱</h3>
       <List

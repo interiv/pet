@@ -1,0 +1,244 @@
+import React, { useEffect, useState } from 'react';
+import { Card, Row, Col, Progress, Tag, Badge, message, List, Tabs, TabsProps } from 'antd';
+import { TrophyOutlined, CheckCircleOutlined, ClockCircleOutlined, StarOutlined } from '@ant-design/icons';
+import { achievementAPI } from '../utils/api';
+import { useAuthStore } from '../store/authStore';
+
+interface Achievement {
+  id: number;
+  name: string;
+  description: string;
+  icon: string;
+  category: string;
+  requirement: string;
+  reward?: string;
+}
+
+interface UserAchievement {
+  id: number;
+  achievement_id: number;
+  completed: boolean;
+  progress?: number;
+  completed_at?: string;
+  achievement?: Achievement;
+}
+
+const categoryNames: Record<string, string> = {
+  'battle': '战斗成就',
+  'pet': '宠物成就',
+  'social': '社交成就',
+  'collection': '收集成就',
+  'special': '特殊成就'
+};
+
+const categoryColors: Record<string, string> = {
+  'battle': '#ff4d4f',
+  'pet': '#52c41a',
+  'social': '#1890ff',
+  'collection': '#faad14',
+  'special': '#722ed1'
+};
+
+const Achievements: React.FC = () => {
+  const { isAuthenticated } = useAuthStore();
+  const [achievements, setAchievements] = useState<Achievement[]>([]);
+  const [myAchievements, setMyAchievements] = useState<UserAchievement[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadAchievements();
+    }
+  }, [isAuthenticated]);
+
+  const loadAchievements = async () => {
+    if (!isAuthenticated) return;
+    setLoading(true);
+    try {
+      const [allRes, myRes] = await Promise.all([
+        achievementAPI.getAchievements(),
+        achievementAPI.getAchievementStatus()
+      ]);
+      setAchievements(allRes.data.achievements || []);
+      setMyAchievements(myRes.data.achievements || []);
+    } catch (error) {
+      console.error('加载成就失败:', error);
+      message.error('加载成就失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const isCompleted = (achievementId: number) => {
+    return myAchievements.find(ma => ma.achievement_id === achievementId && ma.completed);
+  };
+
+  const getUserAchievement = (achievementId: number) => {
+    return myAchievements.find(ma => ma.achievement_id === achievementId);
+  };
+
+  const getCompletedCount = () => {
+    return myAchievements.filter(ma => ma.completed).length;
+  };
+
+  const getTotalCount = () => {
+    return achievements.length;
+  };
+
+  const getProgressByCategory = (category: string) => {
+    const categoryAchievements = achievements.filter(a => a.category === category);
+    if (categoryAchievements.length === 0) return 0;
+    const completed = categoryAchievements.filter(a => isCompleted(a.id));
+    return Math.round((completed.length / categoryAchievements.length) * 100);
+  };
+
+  const renderAchievementCard = (achievement: Achievement) => {
+    const completed = isCompleted(achievement.id);
+    const userAch = getUserAchievement(achievement.id);
+
+    return (
+      <Card
+        size="small"
+        style={{
+          borderRadius: 12,
+          background: completed ? 'linear-gradient(135deg, #f6ffed 0%, #d9f7be 100%)' : '#fafafa',
+          border: completed ? '2px solid #52c41a' : '1px solid #f0f0f0'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <div style={{
+            fontSize: 36,
+            width: 56,
+            height: 56,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: completed ? '#fff' : '#f5f5f5',
+            borderRadius: 12,
+            filter: completed ? 'none' : 'grayscale(100%)',
+            opacity: completed ? 1 : 0.5
+          }}>
+            {achievement.icon || '🏆'}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <span style={{ fontWeight: 'bold', fontSize: 15, color: completed ? '#389e0d' : '#333' }}>
+                {achievement.name}
+              </span>
+              {completed && <CheckCircleOutlined style={{ color: '#52c41a' }} />}
+            </div>
+            <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
+              {achievement.description}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Tag color={categoryColors[achievement.category] || 'default'}>
+                {categoryNames[achievement.category] || achievement.category}
+              </Tag>
+              {achievement.reward && (
+                <span style={{ fontSize: 12, color: '#faad14' }}>
+                  奖励: {achievement.reward}
+                </span>
+              )}
+            </div>
+            {userAch?.progress !== undefined && !completed && (
+              <Progress
+                percent={userAch.progress}
+                size="small"
+                style={{ marginTop: 8, marginBottom: 0 }}
+                strokeColor="#52c41a"
+              />
+            )}
+          </div>
+        </div>
+      </Card>
+    );
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <Card style={{ borderRadius: '12px', textAlign: 'center', padding: '40px' }}>
+        <h3 style={{ color: '#999', marginBottom: 20 }}>未登录无法查看成就</h3>
+      </Card>
+    );
+  }
+
+  const groupedAchievements: Record<string, Achievement[]> = {};
+  achievements.forEach(a => {
+    if (!groupedAchievements[a.category]) {
+      groupedAchievements[a.category] = [];
+    }
+    groupedAchievements[a.category].push(a);
+  });
+
+  const tabItems: TabsProps['items'] = [
+    {
+      key: 'all',
+      label: <span><TrophyOutlined /> 全部成就</span>,
+      children: (
+        <div>
+          <Card style={{ marginBottom: 16, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', borderRadius: 12 }}>
+            <div style={{ textAlign: 'center', color: '#fff' }}>
+              <div style={{ fontSize: 16, marginBottom: 8 }}>成就进度</div>
+              <div style={{ fontSize: 32, fontWeight: 'bold' }}>
+                {getCompletedCount()} / {getTotalCount()}
+              </div>
+              <Progress
+                percent={getTotalCount() > 0 ? Math.round((getCompletedCount() / getTotalCount()) * 100) : 0}
+                showInfo={false}
+                strokeColor="#fff"
+                style={{ marginTop: 8 }}
+              />
+            </div>
+          </Card>
+
+          <Row gutter={[16, 16]}>
+            {achievements.map(achievement => (
+              <Col xs={24} sm={12} md={8} lg={6} key={achievement.id}>
+                {renderAchievementCard(achievement)}
+              </Col>
+            ))}
+          </Row>
+        </div>
+      )
+    },
+    ...Object.entries(groupedAchievements).map(([category, categoryAchievements]) => ({
+      key: category,
+      label: <span><StarOutlined /> {categoryNames[category] || category}</span>,
+      children: (
+        <div>
+          <Card style={{ marginBottom: 16, background: categoryColors[category], borderRadius: 12 }}>
+            <div style={{ textAlign: 'center', color: '#fff' }}>
+              <div style={{ fontSize: 16, marginBottom: 8 }}>{categoryNames[category] || category}</div>
+              <Progress
+                percent={getProgressByCategory(category)}
+                showInfo={true}
+                strokeColor="#fff"
+              />
+            </div>
+          </Card>
+
+          <Row gutter={[16, 16]}>
+            {categoryAchievements.map(achievement => (
+              <Col xs={24} sm={12} md={8} lg={6} key={achievement.id}>
+                {renderAchievementCard(achievement)}
+              </Col>
+            ))}
+          </Row>
+        </div>
+      )
+    }))
+  ];
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 20, gap: 12 }}>
+        <TrophyOutlined style={{ fontSize: 24, color: '#faad14' }} />
+        <h2 style={{ margin: 0 }}>成就中心</h2>
+      </div>
+
+      <Tabs defaultActiveKey="all" items={tabItems} />
+    </div>
+  );
+};
+
+export default Achievements;
