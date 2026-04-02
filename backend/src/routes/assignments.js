@@ -180,13 +180,60 @@ router.post('/:id/grade', authenticateToken, authorizeRole('teacher', 'admin'), 
       return res.status(404).json({ error: '提交记录不存在' });
     }
 
-    // TODO: 调用 AI 批改服务
-    // 这里是模拟批改
-    const aiScore = Math.random() * 100;
-    const aiFeedback = {
-      comments: 'AI 批改示例',
-      suggestions: ['继续加油', '注意细节']
-    };
+    const settings = db.prepare(`SELECT key, value FROM settings WHERE key LIKE 'ai_%'`).all();
+    const config = {};
+    settings.forEach(s => config[s.key] = s.value);
+
+    let aiScore, aiFeedback;
+
+    if (config.ai_api_key && config.ai_base_url && config.ai_model) {
+      try {
+        const prompt = `请批改以下学生作业：
+作业标题：${submission.title || '无标题'}
+题目：${submission.questions}
+学生答案：${submission.answers}
+
+请以 JSON 格式返回，格式如下：
+{
+  "score": 分数(0-100),
+  "feedback": "总体评价",
+  "suggestions": ["建议1", "建议2"]
+}`;
+
+        const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
+          model: config.ai_model,
+          messages: [{ role: 'user', content: prompt }],
+          response_format: { type: "json_object" }
+        }, {
+          headers: {
+            'Authorization': `Bearer ${config.ai_api_key}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        const aiContent = response.data.choices[0].message.content;
+        const result = JSON.parse(aiContent);
+        aiScore = Math.max(0, Math.min(100, result.score || 0));
+        aiFeedback = {
+          comments: result.feedback || 'AI 批改完成',
+          suggestions: result.suggestions || ['继续加油']
+        };
+      } catch (aiError) {
+        console.log('AI 批改失败，使用随机评分:', aiError.message);
+        aiScore = Math.random() * 100;
+        aiFeedback = {
+          comments: 'AI 批改示例',
+          suggestions: ['继续加油', '注意细节']
+        };
+      }
+    } else {
+      aiScore = Math.random() * 100;
+      aiFeedback = {
+        comments: 'AI 批改示例',
+        suggestions: ['继续加油', '注意细节']
+      };
+    }
+
     const expReward = Math.floor((aiScore / 100) * submission.max_exp);
     
     // 计算金币奖励 - 根据分数

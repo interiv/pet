@@ -88,7 +88,7 @@ router.get('/my-pet', authenticateToken, (req, res) => {
     }
 
     const equipments = db.prepare(`
-      SELECT e.stats_bonus, ue.level
+      SELECT e.stats_bonus, e.set_name, ue.level
       FROM user_equipment ue
       JOIN equipment e ON ue.equipment_id = e.id
       WHERE ue.user_id = ? AND ue.equipped = 1
@@ -97,7 +97,11 @@ router.get('/my-pet', authenticateToken, (req, res) => {
     let bonusAttack = 0;
     let bonusDefense = 0;
     let bonusSpeed = 0;
+    let setBonusAttack = 0;
+    let setBonusDefense = 0;
+    let setBonusSpeed = 0;
 
+    const setCounts = {};
     for (const eq of equipments) {
       try {
         const stats = JSON.parse(eq.stats_bonus);
@@ -105,14 +109,36 @@ router.get('/my-pet', authenticateToken, (req, res) => {
         if (stats.attack) bonusAttack += Math.floor(stats.attack * multiplier);
         if (stats.defense) bonusDefense += Math.floor(stats.defense * multiplier);
         if (stats.speed) bonusSpeed += Math.floor(stats.speed * multiplier);
+        if (eq.set_name) {
+          setCounts[eq.set_name] = (setCounts[eq.set_name] || 0) + 1;
+        }
       } catch (e) {}
     }
 
-    pet.attack += bonusAttack;
-    pet.defense += bonusDefense;
-    pet.speed += bonusSpeed;
+    for (const [setName, count] of Object.entries(setCounts)) {
+      if (count >= 2) {
+        setBonusAttack += 5;
+        setBonusDefense += 5;
+        setBonusSpeed += 5;
+      }
+      if (count >= 4) {
+        setBonusAttack += 10;
+        setBonusDefense += 10;
+        setBonusSpeed += 10;
+      }
+    }
 
-    res.json({ pet, bonus: { attack: bonusAttack, defense: bonusDefense, speed: bonusSpeed } });
+    pet.attack += bonusAttack + setBonusAttack;
+    pet.defense += bonusDefense + setBonusDefense;
+    pet.speed += bonusSpeed + setBonusSpeed;
+
+    res.json({
+      pet,
+      bonus: {
+        equipment: { attack: bonusAttack, defense: bonusDefense, speed: bonusSpeed },
+        set: { attack: setBonusAttack, defense: setBonusDefense, speed: setBonusSpeed }
+      }
+    });
   } catch (error) {
     console.error('获取宠物错误:', error);
     res.status(500).json({ error: '获取宠物失败' });
@@ -334,6 +360,226 @@ router.get('/user/:userId', (req, res) => {
   } catch (error) {
     console.error('获取用户宠物错误:', error);
     res.status(500).json({ error: '获取宠物详情失败' });
+  }
+});
+
+// 获取所有可用技能
+router.get('/all-skills', (req, res) => {
+  try {
+    const skills = db.prepare('SELECT * FROM skills').all();
+    res.json({ skills });
+  } catch (error) {
+    console.error('获取技能列表错误:', error);
+    res.status(500).json({ error: '获取技能列表失败' });
+  }
+});
+
+// 检查宠物是否濒死/死亡状态
+function checkPetStatus(pet) {
+  if (pet.hunger <= 0 || pet.health <= 0) {
+    if (pet.status !== 'unconscious') {
+      db.prepare('UPDATE pets SET status = "unconscious" WHERE id = ?').run(pet.id);
+    }
+    return true;
+  }
+  if (pet.status === 'unconscious') {
+    db.prepare('UPDATE pets SET status = "normal" WHERE id = ?').run(pet.id);
+  }
+  return false;
+}
+
+// 复活宠物
+router.post('/revive', authenticateToken, (req, res) => {
+  try {
+    const { item_id } = req.body;
+
+    const pet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(req.user.userId);
+    if (!pet) {
+      return res.status(404).json({ error: '还没有宠物' });
+    }
+
+    if (pet.status !== 'unconscious') {
+      return res.status(400).json({ error: '宠物不需要复活' });
+    }
+
+    if (item_id) {
+      const userItem = db.prepare('SELECT * FROM user_items WHERE user_id = ? AND item_id = ? AND quantity > 0').get(req.user.userId, item_id);
+      if (!userItem) {
+        return res.status(400).json({ error: '没有复活道具' });
+      }
+      db.prepare('UPDATE user_items SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?').run(req.user.userId, item_id);
+    }
+
+    const penalty = 0.1 + Math.random() * 0.05;
+    const newAttack = Math.floor(pet.attack * (1 - penalty));
+    const newDefense = Math.floor(pet.defense * (1 - penalty));
+    const newSpeed = Math.floor(pet.speed * (1 - penalty));
+
+    db.prepare(`
+      UPDATE pets SET
+        status = 'normal',
+        hunger = 50,
+        health = 50,
+        mood = 50,
+        attack = ?,
+        defense = ?,
+        speed = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+    `).run(newAttack, newDefense, newSpeed, req.user.userId);
+
+    const updatedPet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(req.user.userId);
+
+    res.json({
+      message: `复活成功，属性下降 ${Math.floor(penalty * 100)}%`,
+      pet: updatedPet
+    });
+  } catch (error) {
+    console.error('复活宠物错误:', error);
+    res.status(500).json({ error: '复活失败' });
+  }
+});
+
+// 宠物转生
+router.post('/rebirth', authenticateToken, (req, res) => {
+  try {
+    const { item_id } = req.body;
+
+    if (!item_id) {
+      return res.status(400).json({ error: '需要提供转生道具' });
+    }
+
+    const userItem = db.prepare('SELECT * FROM user_items WHERE user_id = ? AND item_id = ? AND quantity > 0').get(req.user.userId, item_id);
+    if (!userItem) {
+      return res.status(400).json({ error: '没有转生丹' });
+    }
+
+    const pet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(req.user.userId);
+    if (!pet) {
+      return res.status(404).json({ error: '还没有宠物' });
+    }
+
+    const multiplier = 1.2;
+    const newAttack = Math.floor(pet.attack * multiplier);
+    const newDefense = Math.floor(pet.defense * multiplier);
+    const newSpeed = Math.floor(pet.speed * multiplier);
+
+    db.prepare(`
+      UPDATE pets SET
+        level = 1,
+        exp = 0,
+        attack = ?,
+        defense = ?,
+        speed = ?,
+        rebirth_count = rebirth_count + 1,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+    `).run(newAttack, newDefense, newSpeed, req.user.userId);
+
+    db.prepare('UPDATE user_items SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?').run(req.user.userId, item_id);
+
+    const updatedPet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(req.user.userId);
+
+    res.json({
+      message: '转生成功，基础属性永久提升20%',
+      pet: updatedPet
+    });
+  } catch (error) {
+    console.error('转生错误:', error);
+    res.status(500).json({ error: '转生失败' });
+  }
+});
+
+// 学习技能
+router.post('/learn-skill', authenticateToken, (req, res) => {
+  try {
+    const { skill_id } = req.body;
+
+    const skill = db.prepare('SELECT * FROM skills WHERE id = ?').get(skill_id);
+    if (!skill) {
+      return res.status(404).json({ error: '技能不存在' });
+    }
+
+    const pet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(req.user.userId);
+    if (!pet) {
+      return res.status(404).json({ error: '还没有宠物' });
+    }
+
+    const existingCount = db.prepare('SELECT COUNT(*) as count FROM pet_skills WHERE pet_id = ?').get(pet.id);
+    if (existingCount.count >= 4) {
+      return res.status(400).json({ error: '技能槽已满，需要遗忘一个技能才能学习新技能' });
+    }
+
+    const alreadyLearned = db.prepare('SELECT * FROM pet_skills WHERE pet_id = ? AND skill_id = ?').get(pet.id, skill_id);
+    if (alreadyLearned) {
+      return res.status(400).json({ error: '已经学会这个技能了' });
+    }
+
+    const slot = existingCount.count + 1;
+    db.prepare('INSERT INTO pet_skills (pet_id, skill_id, slot) VALUES (?, ?, ?)').run(pet.id, skill_id, slot);
+
+    res.json({ message: `学会技能：${skill.name}`, skill });
+  } catch (error) {
+    console.error('学习技能错误:', error);
+    res.status(500).json({ error: '学习技能失败' });
+  }
+});
+
+// 遗忘技能
+router.post('/forget-skill', authenticateToken, (req, res) => {
+  try {
+    const { skill_id } = req.body;
+
+    const pet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(req.user.userId);
+    if (!pet) {
+      return res.status(404).json({ error: '还没有宠物' });
+    }
+
+    const petSkill = db.prepare('SELECT * FROM pet_skills WHERE pet_id = ? AND skill_id = ?').get(pet.id, skill_id);
+    if (!petSkill) {
+      return res.status(400).json({ error: '宠物没有学会这个技能' });
+    }
+
+    db.prepare('DELETE FROM pet_skills WHERE pet_id = ? AND skill_id = ?').run(pet.id, skill_id);
+
+    res.json({ message: '遗忘技能成功' });
+  } catch (error) {
+    console.error('遗忘技能错误:', error);
+    res.status(500).json({ error: '遗忘技能失败' });
+  }
+});
+
+// 获取宠物技能列表
+router.get('/skills', authenticateToken, (req, res) => {
+  try {
+    const pet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(req.user.userId);
+    if (!pet) {
+      return res.status(404).json({ error: '还没有宠物' });
+    }
+
+    const skills = db.prepare(`
+      SELECT s.*, ps.slot
+      FROM pet_skills ps
+      JOIN skills s ON ps.skill_id = s.id
+      WHERE ps.pet_id = ?
+      ORDER BY ps.slot
+    `).all(pet.id);
+
+    res.json({ skills });
+  } catch (error) {
+    console.error('获取技能列表错误:', error);
+    res.status(500).json({ error: '获取技能列表失败' });
+  }
+});
+
+// 获取所有可用技能
+router.get('/all-skills', (req, res) => {
+  try {
+    const skills = db.prepare('SELECT * FROM skills').all();
+    res.json({ skills });
+  } catch (error) {
+    console.error('获取技能列表错误:', error);
+    res.status(500).json({ error: '获取技能列表失败' });
   }
 });
 

@@ -4,104 +4,126 @@ const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { checkLevelUp } = require('./pets');
 
+// 生成战斗日志
+function generateBattleLog(myPet, opponentPet, winner, myWinChance) {
+  const log = [];
+  const maxRounds = 3;
+
+  let myHp = 100;
+  let opponentHp = 100;
+
+  for (let round = 1; round <= maxRounds; round++) {
+    const myDamage = Math.floor(myPet.attack * (0.8 + Math.random() * 0.4));
+    const opponentDamage = Math.floor(opponentPet.attack * (0.8 + Math.random() * 0.4));
+
+    const isCritical = Math.random() < 0.1;
+    const finalMyDamage = isCritical ? Math.floor(myDamage * 1.5) : myDamage;
+
+    opponentHp = Math.max(0, opponentHp - finalMyDamage);
+    myHp = Math.max(0, myHp - opponentDamage);
+
+    log.push({
+      round,
+      myPet: { hp: myHp, damage: finalMyDamage, critical: isCritical },
+      opponent: { hp: opponentHp, damage: opponentDamage }
+    });
+
+    if (opponentHp <= 0 || myHp <= 0) break;
+  }
+
+  return {
+    winner: winner === myPet.id ? 'myPet' : 'opponent',
+    myWinChance: Math.round(myWinChance * 100),
+    rounds: log
+  };
+}
+
 // 发起战斗
 router.post('/start', authenticateToken, (req, res) => {
   try {
     const { opponent_pet_id } = req.body;
 
-    // 获取自己的宠物
     const myPet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(req.user.userId);
     if (!myPet) {
       return res.status(404).json({ error: '还没有宠物' });
     }
 
-    // 检查体力值
     if (myPet.hunger < 20) {
       return res.status(400).json({ error: '宠物体力不足，需要喂食后才能战斗！' });
     }
 
-    // 获取对方宠物
+    if (myPet.status === 'unconscious') {
+      return res.status(400).json({ error: '宠物处于濒死状态，无法战斗' });
+    }
+
     const opponentPet = db.prepare('SELECT * FROM pets WHERE id = ?').get(opponent_pet_id);
     if (!opponentPet) {
       return res.status(404).json({ error: '对方宠物不存在' });
     }
 
-    // 创建战斗记录
     const result = db.prepare(`
       INSERT INTO battles (pet1_id, pet2_id, battle_type)
       VALUES (?, ?, '1v1')
     `).run(myPet.id, opponentPet.id);
 
-    // 计算战斗逻辑 - 基于属性的胜负概率
     const myPower = myPet.attack + myPet.defense + myPet.speed;
     const opponentPower = opponentPet.attack + opponentPet.defense + opponentPet.speed;
-    
-    // 计算胜率（基础50% + 力量差影响）
+
     const powerDiff = myPower - opponentPower;
     const myWinChance = Math.max(0.1, Math.min(0.9, 0.5 + powerDiff * 0.001));
-    
-    // 决定胜负
+
     const winner = Math.random() < myWinChance ? myPet.id : opponentPet.id;
-    
-    // 计算奖励 - 根据对手等级和胜负
+
     const levelDiff = opponentPet.level - myPet.level;
     const baseExp = 30;
     const baseGold = 50;
-    
+
     let rewardExp = 0;
     let rewardGold = 0;
     let myExpGain = 0;
     let opponentExpGain = 0;
-    
+
     if (winner === myPet.id) {
-      // 胜利奖励：基础奖励 + 等级差加成
       rewardExp = Math.floor(baseExp * (1 + Math.max(0, levelDiff) * 0.1));
       rewardGold = Math.floor(baseGold * (1 + Math.max(0, levelDiff) * 0.05));
       myExpGain = rewardExp;
     } else {
-      // 失败安慰奖
       rewardExp = 10;
       rewardGold = 10;
       opponentExpGain = Math.floor(baseExp * (1 + Math.max(0, -levelDiff) * 0.1));
     }
 
-    // 更新战斗记录
-    db.prepare(`
-      UPDATE battles SET winner_id = ?, reward_exp = ?, reward_gold = ? WHERE id = ?
-    `).run(winner, rewardExp, rewardGold, result.lastInsertRowid);
+    const battleLog = generateBattleLog(myPet, opponentPet, winner, myWinChance);
 
-    // 扣除体力值
+    db.prepare(`
+      UPDATE battles SET winner_id = ?, reward_exp = ?, reward_gold = ?, battle_log = ? WHERE id = ?
+    `).run(winner, rewardExp, rewardGold, JSON.stringify(battleLog), result.lastInsertRowid);
+
     db.prepare('UPDATE pets SET hunger = hunger - 20 WHERE id = ?').run(myPet.id);
 
-    // 更新获胜宠物统计
     if (winner === myPet.id) {
       db.prepare(`
-        UPDATE pets 
-        SET win_count = win_count + 1, 
-            total_battles = total_battles + 1, 
+        UPDATE pets
+        SET win_count = win_count + 1,
+            total_battles = total_battles + 1,
             exp = exp + ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(myExpGain, myPet.id);
-      
-      // 给用户增加金币
+
       db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(rewardGold, req.user.userId);
     } else {
       db.prepare('UPDATE pets SET total_battles = total_battles + 1 WHERE id = ?').run(myPet.id);
-      // 失败方获得少量经验
       db.prepare('UPDATE pets SET exp = exp + 10 WHERE id = ?').run(myPet.id);
     }
-    
-    // 对手也获得经验
+
     if (opponentExpGain > 0) {
       db.prepare('UPDATE pets SET exp = exp + ? WHERE id = ?').run(opponentExpGain, opponentPet.id);
-      
-      // 检查对手升级
+
       const updatedOpponent = db.prepare('SELECT * FROM pets WHERE id = ?').get(opponentPet.id);
       checkLevelUp(updatedOpponent);
     }
-    
-    // 检查我的宠物升级
+
     const updatedMyPet = db.prepare('SELECT * FROM pets WHERE id = ?').get(myPet.id);
     const myLevelUp = checkLevelUp(updatedMyPet);
 
@@ -111,7 +133,8 @@ router.post('/start', authenticateToken, (req, res) => {
       rewardExp: winner === myPet.id ? myExpGain : 10,
       rewardGold: winner === myPet.id ? rewardGold : 0,
       myWinChance: Math.round(myWinChance * 100),
-      levelUp: myLevelUp
+      levelUp: myLevelUp,
+      battleLog
     });
   } catch (error) {
     console.error('发起战斗错误:', error);

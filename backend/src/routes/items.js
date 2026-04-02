@@ -24,11 +24,15 @@ router.post('/buy', authenticateToken, (req, res) => {
       return res.status(404).json({ error: '物品不存在' });
     }
 
-    // TODO: 检查金币是否足够
-
     const totalCost = item.price * quantity;
 
-    // 添加物品到用户背包
+    const user = db.prepare('SELECT gold FROM users WHERE id = ?').get(req.user.userId);
+    if (!user || user.gold < totalCost) {
+      return res.status(400).json({ error: '金币不足' });
+    }
+
+    db.prepare('UPDATE users SET gold = gold - ? WHERE id = ?').run(totalCost, req.user.userId);
+
     const existing = db.prepare('SELECT * FROM user_items WHERE user_id = ? AND item_id = ?').get(req.user.userId, item_id);
     
     if (existing) {
