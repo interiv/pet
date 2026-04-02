@@ -80,7 +80,7 @@ export const petAPI = {
   feedPet: (data: { item_id: number }) => 
     api.post('/pets/feed', data),
   
-  getAllPets: () => api.get('/pets/all'),
+  getAllPets: (params?: { class_id?: number }) => api.get('/pets/all', { params }),
   
   getSpecies: () => api.get('/pets/species'),
   
@@ -208,12 +208,21 @@ export const adminAPI = {
 
   // 公告管理
   getAnnouncements: () => api.get('/admin/announcements'),
-  createAnnouncement: (data: { title: string; content?: string; class_id?: number; priority?: number; expires_at?: string }) => api.post('/admin/announcements', data),
+  createAnnouncement: (data: { title: string; content?: string; class_ids?: number[]; priority?: number; expires_at?: string }) => api.post('/admin/announcements', data),
   updateAnnouncement: (id: number, data: any) => api.put(`/admin/announcements/${id}`, data),
   deleteAnnouncement: (id: number) => api.delete(`/admin/announcements/${id}`),
 
   // 数据统计
   getStatistics: () => api.get('/admin/statistics'),
+
+  // 战斗记录
+  getBattles: (params?: { class_id?: number }) => api.get('/admin/battles', { params }),
+
+  // 作业记录
+  getAssignments: (params?: { class_id?: number }) => api.get('/admin/assignments', { params }),
+
+  // 商店购买记录
+  getShopRecords: (params?: { class_id?: number }) => api.get('/admin/shop-records', { params }),
 
   // AI设置
   getAISettings: () => api.get('/admin/settings/ai'),

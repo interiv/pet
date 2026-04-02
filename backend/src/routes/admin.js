@@ -13,7 +13,7 @@ const requireAdmin = (req, res, next) => {
 // ==================== 教师管理 ====================
 
 // 获取所有教师列表
-router.get('/teachers', authenticateToken, requireAdmin, (req, res) => {
+router.get('/teachers', authenticateToken, (req, res) => {
   try {
     const { status, search } = req.query;
     let sql = `SELECT id, username, email, avatar, created_at, last_login, status FROM users WHERE role = 'teacher'`;
@@ -132,12 +132,26 @@ router.delete('/teachers/:id', authenticateToken, requireAdmin, (req, res) => {
 // ==================== 学生管理 ====================
 
 // 获取所有学生列表
-router.get('/students', authenticateToken, requireAdmin, (req, res) => {
+router.get('/students', authenticateToken, (req, res) => {
   try {
     const { status, class_id, search } = req.query;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+    
     let sql = `SELECT u.id, u.username, u.email, u.avatar, u.class_id, u.gold, u.created_at, u.last_login, u.status, c.name as class_name 
                FROM users u LEFT JOIN classes c ON u.class_id = c.id WHERE u.role = 'student'`;
     const params = [];
+    
+    if (userRole === 'teacher') {
+      const myClassIds = db.prepare(`SELECT class_id FROM class_teachers WHERE teacher_id = ?`).all(userId).map(row => row.class_id).filter(id => id != null);
+      if (myClassIds.length > 0) {
+        const placeholders = myClassIds.map(() => '?').join(',');
+        sql += ` AND u.class_id IN (${placeholders})`;
+        params.push(...myClassIds);
+      } else {
+        sql += ` AND 1=0`;
+      }
+    }
     
     if (status) {
       sql += ` AND u.status = ?`;
@@ -289,20 +303,26 @@ router.delete('/students/:id', authenticateToken, requireAdmin, (req, res) => {
 // 获取所有班级列表
 router.get('/classes', authenticateToken, (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.userId;
     const userRole = req.user.role;
-    
+
     let classes;
     if (userRole === 'admin') {
       classes = db.prepare(`
-        SELECT c.*, u.username as teacher_name
+        SELECT c.*, u.username as teacher_name,
+          (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') as student_count,
+          (SELECT COALESCE(SUM(exp), 0) FROM pets WHERE user_id IN (SELECT id FROM users WHERE class_id = c.id AND role = 'student')) as total_exp,
+          (SELECT COALESCE(SUM(gold), 0) FROM users WHERE class_id = c.id AND role = 'student') as total_gold
         FROM classes c LEFT JOIN users u ON c.teacher_id = u.id
         ORDER BY c.created_at DESC
       `).all();
     } else {
       classes = db.prepare(`
-        SELECT c.*, u.username as teacher_name
-        FROM classes c 
+        SELECT c.*, u.username as teacher_name,
+          (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') as student_count,
+          (SELECT COALESCE(SUM(exp), 0) FROM pets WHERE user_id IN (SELECT id FROM users WHERE class_id = c.id AND role = 'student')) as total_exp,
+          (SELECT COALESCE(SUM(gold), 0) FROM users WHERE class_id = c.id AND role = 'student') as total_gold
+        FROM classes c
         LEFT JOIN users u ON c.teacher_id = u.id
         INNER JOIN class_teachers ct ON c.id = ct.class_id
         WHERE ct.teacher_id = ?
@@ -627,20 +647,51 @@ router.get('/announcements', authenticateToken, requireAdmin, (req, res) => {
 });
 
 // 创建公告
-router.post('/announcements', authenticateToken, requireAdmin, (req, res) => {
+router.post('/announcements', authenticateToken, (req, res) => {
   try {
-    const { title, content, class_id, priority, expires_at } = req.body;
-    
+    const { title, content, class_ids, priority, expires_at } = req.body;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
     if (!title) {
       return res.status(400).json({ error: '公告标题不能为空' });
     }
-    
-    const result = db.prepare(`
-      INSERT INTO announcements (title, content, class_id, publisher_id, priority, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, datetime('now'), ?)
-    `).run(title, content || '', class_id || null, req.user.userId, priority || 0, expires_at || null);
-    
-    res.json({ message: '公告创建成功', announcement_id: result.lastInsertRowid });
+
+    if (userRole === 'teacher') {
+      const myClassIds = db.prepare(`SELECT class_id FROM class_teachers WHERE teacher_id = ?`).all(userId).map(row => row.class_id);
+      if (class_ids && class_ids.length > 0) {
+        const invalidIds = class_ids.filter((id) => !myClassIds.includes(id));
+        if (invalidIds.length > 0) {
+          return res.status(403).json({ error: '只能为自己所属的班级发布公告' });
+        }
+      } else {
+        if (myClassIds.length > 0) {
+          for (const classId of myClassIds) {
+            db.prepare(`
+              INSERT INTO announcements (title, content, class_id, publisher_id, priority, created_at, expires_at)
+              VALUES (?, ?, ?, ?, ?, datetime('now'), ?)
+            `).run(title, content || '', classId, userId, priority || 0, expires_at || null);
+          }
+          return res.json({ message: '公告创建成功' });
+        }
+      }
+    }
+
+    if (class_ids && class_ids.length > 0) {
+      for (const classId of class_ids) {
+        db.prepare(`
+          INSERT INTO announcements (title, content, class_id, publisher_id, priority, created_at, expires_at)
+          VALUES (?, ?, ?, ?, ?, datetime('now'), ?)
+        `).run(title, content || '', classId, userId, priority || 0, expires_at || null);
+      }
+    } else {
+      db.prepare(`
+        INSERT INTO announcements (title, content, class_id, publisher_id, priority, created_at, expires_at)
+        VALUES (?, ?, NULL, ?, ?, datetime('now'), ?)
+      `).run(title, content || '', userId, priority || 0, expires_at || null);
+    }
+
+    res.json({ message: '公告创建成功' });
   } catch (error) {
     console.error('创建公告失败:', error);
     res.status(500).json({ error: '创建公告失败' });
@@ -701,36 +752,63 @@ router.delete('/announcements/:id', authenticateToken, requireAdmin, (req, res) 
 router.get('/statistics', authenticateToken, (req, res) => {
   try {
     const userRole = req.user.role;
-    const userId = req.user.id;
-    
+    const userId = req.user.userId;
+
     const totalUsers = db.prepare(`SELECT COUNT(*) as count FROM users`).get().count;
     const totalTeachers = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'teacher'`).get().count;
     const totalStudents = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'student'`).get().count;
     const totalGold = db.prepare(`SELECT SUM(gold) as total FROM users`).get().total || 0;
-    
+
     let statistics = {
       users: { total: totalUsers, teachers: totalTeachers, students: totalStudents },
       totals: { gold: totalGold }
     };
-    
+
     if (userRole === 'admin') {
+      const today = new Date().toISOString().split('T')[0];
+
       const totalClasses = db.prepare(`SELECT COUNT(*) as count FROM classes`).get().count;
       const totalPets = db.prepare(`SELECT COUNT(*) as count FROM pets`).get().count;
       const totalBattles = db.prepare(`SELECT COUNT(*) as count FROM battles`).get().count;
       const activeTeachers = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'teacher' AND status = 'active'`).get().count;
       const pendingTeachers = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'teacher' AND status = 'pending_approval'`).get().count;
       const totalExp = db.prepare(`SELECT SUM(exp) as total FROM pets`).get().total || 0;
-      
+
+      const dailyActiveUsers = db.prepare(`
+        SELECT COUNT(DISTINCT user_id) as count FROM user_activities
+        WHERE DATE(created_at) = DATE('now', 'localtime')
+      `).get().count || 0;
+
+      const dailyGoldDistributed = db.prepare(`
+        SELECT COALESCE(SUM(gold_change), 0) as total FROM gold_transactions
+        WHERE DATE(created_at) = DATE('now', 'localtime') AND gold_change > 0
+      `).get().total || 0;
+
+      const dailyGoldConsumed = db.prepare(`
+        SELECT COALESCE(SUM(ABS(gold_change)), 0) as total FROM gold_transactions
+        WHERE DATE(created_at) = DATE('now', 'localtime') AND gold_change < 0
+      `).get().total || 0;
+
       const topClasses = db.prepare(`
         SELECT c.name, c.total_exp, c.student_count, u.username as teacher_name
         FROM classes c LEFT JOIN users u ON c.teacher_id = u.id
         ORDER BY c.total_exp DESC LIMIT 5
       `).all();
-      
+
       const recentRegistrations = db.prepare(`
         SELECT id, username, role, created_at FROM users ORDER BY created_at DESC LIMIT 10
       `).all();
-      
+
+      const topSellingItems = db.prepare(`
+        SELECT i.name, i.rarity, COUNT(ui.id) as purchase_count, SUM(ui.quantity) as total_quantity
+        FROM user_items ui
+        JOIN items i ON ui.item_id = i.id
+        WHERE ui.source = 'shop_purchase'
+        GROUP BY i.id
+        ORDER BY purchase_count DESC
+        LIMIT 10
+      `).all();
+
       statistics = {
         ...statistics,
         classes: { total: totalClasses },
@@ -741,7 +819,13 @@ router.get('/statistics', authenticateToken, (req, res) => {
           active_teachers: activeTeachers,
           pending_teachers: pendingTeachers
         },
+        daily: {
+          active_users: dailyActiveUsers,
+          gold_distributed: dailyGoldDistributed,
+          gold_consumed: dailyGoldConsumed
+        },
         top_classes: topClasses,
+        top_selling_items: topSellingItems,
         recent_registrations: recentRegistrations
       };
     } else if (userRole === 'teacher') {
@@ -814,11 +898,148 @@ router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
       if (ai_api_key !== undefined) stmt.run('ai_api_key', ai_api_key);
       if (ai_base_url !== undefined) stmt.run('ai_base_url', ai_base_url);
     })();
-    
+
     res.json({ message: '设置保存成功' });
   } catch (error) {
     console.error('保存设置失败:', error);
     res.status(500).json({ error: '保存设置失败' });
+  }
+});
+
+// 获取战斗记录
+router.get('/battles', authenticateToken, (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+    const { class_id } = req.query;
+
+    let sql = `
+      SELECT b.*,
+        u1.username as challenger_name,
+        u2.username as defender_name,
+        c.name as class_name
+      FROM battles b
+      JOIN users u1 ON b.challenger_id = u1.id
+      JOIN users u2 ON b.defender_id = u2.id
+      LEFT JOIN classes c ON u1.class_id = c.id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (userRole === 'teacher') {
+      const myClassIds = db.prepare(`SELECT class_id FROM class_teachers WHERE teacher_id = ?`).all(userId).map(row => row.class_id);
+      if (myClassIds.length > 0) {
+        const placeholders = myClassIds.map(() => '?').join(',');
+        sql += ` AND u1.class_id IN (${placeholders})`;
+        params.push(...myClassIds);
+      } else {
+        sql += ` AND 1=0`;
+      }
+    }
+
+    if (class_id) {
+      sql += ` AND u1.class_id = ?`;
+      params.push(class_id);
+    }
+
+    sql += ` ORDER BY b.created_at DESC LIMIT 100`;
+
+    const battles = db.prepare(sql).all(...params);
+    res.json({ battles });
+  } catch (error) {
+    console.error('获取战斗记录失败:', error);
+    res.status(500).json({ error: '获取战斗记录失败' });
+  }
+});
+
+// 获取作业列表
+router.get('/assignments', authenticateToken, (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+    const { class_id } = req.query;
+
+    let sql = `
+      SELECT a.*,
+        u.username as creator_name,
+        c.name as class_name
+      FROM assignments a
+      JOIN users u ON a.creator_id = u.id
+      LEFT JOIN classes c ON a.class_id = c.id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (userRole === 'teacher') {
+      const myClassIds = db.prepare(`SELECT class_id FROM class_teachers WHERE teacher_id = ?`).all(userId).map(row => row.class_id);
+      if (myClassIds.length > 0) {
+        const placeholders = myClassIds.map(() => '?').join(',');
+        sql += ` AND a.class_id IN (${placeholders})`;
+        params.push(...myClassIds);
+      } else {
+        sql += ` AND 1=0`;
+      }
+    }
+
+    if (class_id) {
+      sql += ` AND a.class_id = ?`;
+      params.push(class_id);
+    }
+
+    sql += ` ORDER BY a.created_at DESC LIMIT 100`;
+
+    const assignments = db.prepare(sql).all(...params);
+    res.json({ assignments });
+  } catch (error) {
+    console.error('获取作业列表失败:', error);
+    res.status(500).json({ error: '获取作业列表失败' });
+  }
+});
+
+// 获取商店购买记录
+router.get('/shop-records', authenticateToken, (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+    const { class_id } = req.query;
+
+    let sql = `
+      SELECT ui.*,
+        u.username as buyer_name,
+        i.name as item_name,
+        i.rarity,
+        c.name as class_name
+      FROM user_items ui
+      JOIN users u ON ui.user_id = u.id
+      JOIN items i ON ui.item_id = i.id
+      LEFT JOIN classes c ON u.class_id = c.id
+      WHERE ui.source = 'shop_purchase'
+    `;
+    const params = [];
+
+    if (userRole === 'teacher') {
+      const myClassIds = db.prepare(`SELECT class_id FROM class_teachers WHERE teacher_id = ?`).all(userId).map(row => row.class_id);
+      if (myClassIds.length > 0) {
+        const placeholders = myClassIds.map(() => '?').join(',');
+        sql += ` AND u.class_id IN (${placeholders})`;
+        params.push(...myClassIds);
+      } else {
+        sql += ` AND 1=0`;
+      }
+    }
+
+    if (class_id) {
+      sql += ` AND u.class_id = ?`;
+      params.push(class_id);
+    }
+
+    sql += ` ORDER BY ui.created_at DESC LIMIT 100`;
+
+    const records = db.prepare(sql).all(...params);
+    res.json({ records });
+  } catch (error) {
+    console.error('获取商店记录失败:', error);
+    res.status(500).json({ error: '获取商店记录失败' });
   }
 });
 

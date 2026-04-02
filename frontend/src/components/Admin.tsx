@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge } from 'antd';
-import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, SettingOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
+import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, SettingOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DollarOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { adminAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
@@ -33,11 +33,14 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
       tabs.push(<Tabs.TabPane tab={<span><FolderOutlined /> 班级管理</span>} key="classes"><ClassManagement /></Tabs.TabPane>);
       tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 入学申请</span>} key="applications"><ApplicationManagement /></Tabs.TabPane>);
       tabs.push(<Tabs.TabPane tab={<span><NotificationOutlined /> 公告管理</span>} key="announcements"><AnnouncementManagement /></Tabs.TabPane>);
+      tabs.push(<Tabs.TabPane tab={<span><DatabaseOutlined /> 数据查看</span>} key="dataview"><DataView /></Tabs.TabPane>);
       tabs.push(<Tabs.TabPane tab={<span><SettingOutlined /> AI设置</span>} key="settings"><AISettings /></Tabs.TabPane>);
     } else if (isTeacher) {
       tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 总览</span>} key="dashboard"><Dashboard /></Tabs.TabPane>);
+      tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 学生管理</span>} key="students"><StudentManagement /></Tabs.TabPane>);
       tabs.push(<Tabs.TabPane tab={<span><FolderOutlined /> 班级管理</span>} key="classes"><ClassManagement /></Tabs.TabPane>);
       tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 入学申请</span>} key="applications"><ApplicationManagement /></Tabs.TabPane>);
+      tabs.push(<Tabs.TabPane tab={<span><DatabaseOutlined /> 数据查看</span>} key="dataview"><DataView /></Tabs.TabPane>);
     }
 
     return tabs;
@@ -136,6 +139,17 @@ const Dashboard: React.FC = () => {
           <Card><Statistic title="经验总量" value={statistics.totals.exp} /></Card>
         </Col>
       </Row>
+      <Row gutter={16} style={{ marginBottom: 24 }}>
+        <Col span={8}>
+          <Card><Statistic title="当日活跃用户" value={statistics.daily?.active_users || 0} prefix={<UserOutlined />} /></Card>
+        </Col>
+        <Col span={8}>
+          <Card><Statistic title="当日金币发放" value={statistics.daily?.gold_distributed || 0} prefix={<DollarOutlined />} valueStyle={{ color: '#52c41a' }} /></Card>
+        </Col>
+        <Col span={8}>
+          <Card><Statistic title="当日金币消耗" value={statistics.daily?.gold_consumed || 0} prefix={<DollarOutlined />} valueStyle={{ color: '#ff4d4f' }} /></Card>
+        </Col>
+      </Row>
       <Row gutter={16}>
         <Col span={12}>
           <Card title="待审批教师" loading={loading}>
@@ -178,6 +192,30 @@ const Dashboard: React.FC = () => {
                   </Space>
                 </List.Item>
               )}
+            />
+          </Card>
+        </Col>
+      </Row>
+      <Row gutter={16} style={{ marginTop: 24 }}>
+        <Col span={24}>
+          <Card title="商品销售排行">
+            <Table
+              dataSource={statistics.top_selling_items}
+              rowKey="id"
+              size="small"
+              pagination={false}
+              columns={[
+                { title: '排名', render: (_: any, __: any, index: number) => index + 1 },
+                { title: '商品名称', dataIndex: 'name', key: 'name' },
+                { title: '稀有度', dataIndex: 'rarity', key: 'rarity', render: (v: string) => <Tag color={
+                  v === 'legendary' ? 'gold' :
+                  v === 'epic' ? 'purple' :
+                  v === 'rare' ? 'blue' :
+                  v === 'uncommon' ? 'green' : 'default'
+                }>{v}</Tag> },
+                { title: '购买次数', dataIndex: 'purchase_count', key: 'purchase_count' },
+                { title: '总数量', dataIndex: 'total_quantity', key: 'total_quantity' },
+              ]}
             />
           </Card>
         </Col>
@@ -761,6 +799,10 @@ const ClassManagement: React.FC = () => {
     setAddTeacherModalVisible(true);
   };
 
+  const isHeadTeacherOf = (cls: any) => {
+    return cls.teachers?.some((t: any) => t.teacher_id === user?.id && t.role === 'head_teacher');
+  };
+
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     { title: '班级名称', dataIndex: 'name', key: 'name' },
@@ -773,19 +815,22 @@ const ClassManagement: React.FC = () => {
           {(record.teachers || []).map((t: any) => (
             <Tag
               key={t.teacher_id}
-              closable={isAdmin}
-              onClose={() => isAdmin ? handleRemoveTeacher(record.id, t.teacher_id) : undefined}
+              closable={isAdmin || isHeadTeacherOf(record)}
+              onClose={() => (isAdmin || isHeadTeacherOf(record)) ? handleRemoveTeacher(record.id, t.teacher_id) : undefined}
               color={t.role === 'head_teacher' ? 'blue' : 'default'}
             >
               {t.username} {t.role === 'head_teacher' ? '(班主任)' : ''}
             </Tag>
           ))}
-          <Button type="link" size="small" onClick={() => openAddTeacherModal(record)}>+ 添加教师</Button>
+          {(isAdmin || isHeadTeacherOf(record)) && (
+            <Button type="link" size="small" onClick={() => openAddTeacherModal(record)}>+ 添加教师</Button>
+          )}
         </div>
       )
     },
     { title: '学生数', dataIndex: 'student_count', key: 'student_count' },
-    { title: '总经验', dataIndex: 'total_exp', key: 'total_exp' },
+    ...(isAdmin ? [{ title: '总经验', dataIndex: 'total_exp', key: 'total_exp' }] : []),
+    ...(isAdmin ? [{ title: '金币总数', dataIndex: 'total_gold', key: 'total_gold' }] : []),
     ...(isAdmin ? [{
       title: '操作' as const,
       key: 'action' as const,
@@ -966,8 +1011,8 @@ const AnnouncementManagement: React.FC = () => {
           <Form.Item name="content" label="内容">
             <Input.TextArea rows={4} />
           </Form.Item>
-          <Form.Item name="class_id" label="发布范围">
-            <Select allowClear placeholder="选择班级（不选则全局发布）">
+          <Form.Item name="class_ids" label="发布范围">
+            <Select mode="multiple" allowClear placeholder="选择班级（不选则全局发布）">
               {classes.map(c => <Select.Option key={c.id} value={c.id}>{c.name}</Select.Option>)}
             </Select>
           </Form.Item>
@@ -1045,6 +1090,86 @@ const AISettings: React.FC = () => {
         </Form.Item>
       </Form>
     </Card>
+  );
+};
+
+const DataView: React.FC = () => {
+  const { user } = useAuthStore();
+  const [battles, setBattles] = useState<any[]>([]);
+  const [assignments, setAssignments] = useState<any[]>([]);
+  const [shopRecords, setShopRecords] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('battles');
+
+  const isAdmin = user?.role === 'admin';
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [battlesRes, assignmentsRes, recordsRes] = await Promise.all([
+        adminAPI.getBattles(),
+        adminAPI.getAssignments(),
+        adminAPI.getShopRecords(),
+      ]);
+      setBattles(battlesRes.data.battles || []);
+      setAssignments(assignmentsRes.data.assignments || []);
+      setShopRecords(recordsRes.data.records || []);
+    } catch (error) {
+      message.error('加载数据失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const battleColumns = [
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
+    { title: '挑战者', dataIndex: 'challenger_name', key: 'challenger_name' },
+    { title: '应战者', dataIndex: 'defender_name', key: 'defender_name' },
+    { title: '班级', dataIndex: 'class_name', key: 'class_name', render: (v: string) => v || '-' },
+    { title: '结果', dataIndex: 'result', key: 'result', render: (v: string) => v === 'challenger_win' ? '挑战者胜' : '应战者胜' },
+    { title: '时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => new Date(v).toLocaleString() },
+  ];
+
+  const assignmentColumns = [
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
+    { title: '标题', dataIndex: 'title', key: 'title' },
+    { title: '创建人', dataIndex: 'creator_name', key: 'creator_name' },
+    { title: '班级', dataIndex: 'class_name', key: 'class_name', render: (v: string) => v || '-' },
+    { title: '金币奖励', dataIndex: 'gold_reward', key: 'gold_reward' },
+    { title: '截止日期', dataIndex: 'due_date', key: 'due_date', render: (v: string) => v ? new Date(v).toLocaleDateString() : '-' },
+    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => new Date(v).toLocaleString() },
+  ];
+
+  const shopColumns = [
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
+    { title: '购买者', dataIndex: 'buyer_name', key: 'buyer_name' },
+    { title: '商品', dataIndex: 'item_name', key: 'item_name' },
+    { title: '稀有度', dataIndex: 'rarity', key: 'rarity', render: (v: string) => <Tag color={
+      v === 'legendary' ? 'gold' : v === 'epic' ? 'purple' : v === 'rare' ? 'blue' : v === 'uncommon' ? 'green' : 'default'
+    }>{v}</Tag> },
+    { title: '数量', dataIndex: 'quantity', key: 'quantity' },
+    { title: '班级', dataIndex: 'class_name', key: 'class_name', render: (v: string) => v || '-' },
+    { title: '时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => new Date(v).toLocaleString() },
+  ];
+
+  return (
+    <div>
+      <Tabs activeKey={activeTab} onChange={setActiveTab}>
+        <Tabs.TabPane tab="战斗记录" key="battles">
+          <Table dataSource={battles} columns={battleColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" />
+        </Tabs.TabPane>
+        <Tabs.TabPane tab="作业记录" key="assignments">
+          <Table dataSource={assignments} columns={assignmentColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" />
+        </Tabs.TabPane>
+        <Tabs.TabPane tab="购买记录" key="shop">
+          <Table dataSource={shopRecords} columns={shopColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" />
+        </Tabs.TabPane>
+      </Tabs>
+    </div>
   );
 };
 

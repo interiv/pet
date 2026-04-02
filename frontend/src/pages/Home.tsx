@@ -44,14 +44,33 @@ const Home: React.FC = () => {
   useEffect(() => {
     if (isAuthenticated) {
       loadPetData();
+      loadLeaderboard();
+      if (user?.role === 'admin') {
+        loadAllPets();
+      } else {
+        loadMyClassPets();
+      }
     }
-    loadLeaderboard();
-    loadAllPets();
-  }, [isAuthenticated]);
+  }, [isAuthenticated, user]);
 
-  const loadAllPets = async () => {
+  const loadMyClassPets = async () => {
     try {
-      const response = await petAPI.getAllPets();
+      const res = await adminAPI.getClasses();
+      const classes = res.data.classes || [];
+      if (classes.length > 0) {
+        loadAllPets(classes[0].id);
+      } else {
+        setAllPets([]);
+      }
+    } catch (error) {
+      console.error('加载班级宠物失败:', error);
+    }
+  };
+
+  const loadAllPets = async (classId?: number) => {
+    try {
+      const params = classId ? { class_id: classId } : {};
+      const response = await petAPI.getAllPets(params);
       setAllPets(response.data.pets || []);
     } catch (error) {
       console.error('加载宠物列表失败:', error);
@@ -128,11 +147,6 @@ const Home: React.FC = () => {
       icon: <TrophyOutlined />,
       label: '成就',
     },
-    {
-      key: 'leaderboard',
-      icon: <DashboardOutlined />,
-      label: '排行榜',
-    },
   ];
 
   if (user?.role === 'admin') {
@@ -173,49 +187,87 @@ const Home: React.FC = () => {
     ],
   };
 
+  const [petsView, setPetsView] = useState<'card' | 'list'>('card');
+
+  const getPetsTitle = () => {
+    if (user?.role === 'admin') return '全校宠物';
+    return '全班宠物';
+  };
+
+  const petsColumns = [
+    { title: '宠物名', dataIndex: 'name', key: 'name' },
+    { title: '主人', dataIndex: 'owner_name', key: 'owner_name' },
+    { title: '等级', dataIndex: 'level', key: 'level' },
+    { title: '物种', dataIndex: 'species_name', key: 'species_name' },
+    { title: '经验', dataIndex: 'exp', key: 'exp' },
+  ];
+
   const allPetsChildren = (
-    <Row gutter={[16, 16]}>
-      {allPets.map((item: any) => (
-        <Col xs={24} sm={12} md={8} lg={6} key={item.id}>
-          <Card 
-            hoverable
-            onClick={() => handleViewPet(item)}
-            style={{ borderRadius: '12px', overflow: 'hidden', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', cursor: 'pointer' }}
-            styles={{ body: { padding: '16px' } }}
-            cover={
-              <div style={{ height: 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #f5f7fa 0%, #c3cfe2 100%)', padding: '20px' }}>
-                <img alt={item.name} src={(() => {
-                  try {
-                    const urls = typeof item.image_urls === 'string' ? JSON.parse(item.image_urls) : item.image_urls;
-                    return urls[item.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
-                  } catch (e) {
-                    return item.image_urls;
-                  }
-                })()} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', filter: 'drop-shadow(0 10px 8px rgba(0,0,0,0.2))' }} />
-              </div>
-            }
-            size="small" 
-          >
-            <Card.Meta 
-              title={<span style={{ fontSize: '16px', fontWeight: 'bold' }}>{item.name}</span>}
-              description={<span style={{ color: '#8c8c8c' }}>{item.owner_name}的宠物</span>}
-              style={{ marginBottom: '12px' }}
-            />
-            <Statistic 
-              title={<span style={{ fontSize: '12px' }}>当前等级</span>}
-              value={item.level} 
-              suffix={`级 (${item.species_name})`}
-              valueStyle={{ color: '#1890ff', fontSize: '20px', fontWeight: 'bold' }}
-            />
-          </Card>
-        </Col>
-      ))}
-      {allPets.length === 0 && (
-        <div style={{ textAlign: 'center', width: '100%', padding: '20px', color: '#999' }}>
-          暂无宠物数据
-        </div>
+    <div>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: 14, color: '#666' }}>{getPetsTitle()}</span>
+        <Segmented
+          options={[
+            { label: '卡片', value: 'card' },
+            { label: '列表', value: 'list' },
+          ]}
+          value={petsView}
+          onChange={(value) => setPetsView(value as 'card' | 'list')}
+        />
+      </div>
+      {petsView === 'card' ? (
+        <Row gutter={[16, 16]}>
+          {allPets.map((item: any) => (
+            <Col xs={24} sm={12} md={8} lg={6} key={item.id}>
+              <Card
+                hoverable
+                onClick={() => handleViewPet(item)}
+                style={{ borderRadius: '12px', overflow: 'hidden', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', cursor: 'pointer' }}
+                styles={{ body: { padding: '16px' } }}
+                cover={
+                  <div style={{ height: 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #f5f7fa 0%, #c3cfe2 100%)', padding: '20px' }}>
+                    <img alt={item.name} src={(() => {
+                      try {
+                        const urls = typeof item.image_urls === 'string' ? JSON.parse(item.image_urls) : item.image_urls;
+                        return urls[item.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
+                      } catch (e) {
+                        return item.image_urls;
+                      }
+                    })()} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', filter: 'drop-shadow(0 10px 8px rgba(0,0,0,0.2))' }} />
+                  </div>
+                }
+                size="small"
+              >
+                <Card.Meta
+                  title={<span style={{ fontSize: '16px', fontWeight: 'bold' }}>{item.name}</span>}
+                  description={<span style={{ color: '#8c8c8c' }}>{item.owner_name}的宠物</span>}
+                  style={{ marginBottom: '12px' }}
+                />
+                <Statistic
+                  title={<span style={{ fontSize: '12px' }}>当前等级</span>}
+                  value={item.level}
+                  suffix={`级 (${item.species_name})`}
+                  valueStyle={{ color: '#1890ff', fontSize: '20px', fontWeight: 'bold' }}
+                />
+              </Card>
+            </Col>
+          ))}
+          {allPets.length === 0 && (
+            <div style={{ textAlign: 'center', width: '100%', padding: '20px', color: '#999' }}>
+              暂无宠物数据
+            </div>
+          )}
+        </Row>
+      ) : (
+        <Table
+          dataSource={allPets}
+          columns={petsColumns}
+          rowKey="id"
+          pagination={{ pageSize: 10 }}
+          size="small"
+        />
       )}
-    </Row>
+    </div>
   );
 
   const getLeaderboardTitle = () => {

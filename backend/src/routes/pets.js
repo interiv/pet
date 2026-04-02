@@ -47,15 +47,24 @@ function checkLevelUp(pet) {
 // 获取所有学生的宠物
 router.get('/all', (req, res) => {
   try {
-    const pets = db.prepare(`
-      SELECT p.*, ps.name as species_name, ps.element_type, ps.image_urls, u.username as owner_name
+    const classId = req.query.class_id;
+    let sql = `
+      SELECT p.*, ps.name as species_name, ps.element_type, ps.image_urls, u.username as owner_name, u.class_id
       FROM pets p
       JOIN pet_species ps ON p.species_id = ps.id
       JOIN users u ON p.user_id = u.id
       WHERE u.role = 'student'
-      ORDER BY p.level DESC, p.exp DESC
-    `).all();
+    `;
+    const params = [];
 
+    if (classId) {
+      sql += ` AND u.class_id = ?`;
+      params.push(classId);
+    }
+
+    sql += ` ORDER BY p.level DESC, p.exp DESC`;
+
+    const pets = db.prepare(sql).all(...params);
     res.json({ pets });
   } catch (error) {
     console.error('获取所有宠物错误:', error);
