@@ -180,8 +180,36 @@ export const leaderboardAPI = {
 };
 
 export const adminAPI = {
+  // 教师管理
+  getTeachers: (params?: { status?: string; search?: string }) => api.get('/admin/teachers', { params }),
   getPendingTeachers: () => api.get('/admin/pending-teachers'),
   approveTeacher: (teacher_id: number, action: 'approve' | 'reject') => api.post('/admin/approve-teacher', { teacher_id, action }),
+  updateTeacher: (id: number, data: any) => api.put(`/admin/teachers/${id}`, data),
+  deleteTeacher: (id: number, action: 'delete' | 'disable') => api.delete(`/admin/teachers/${id}`, { data: { action } }),
+
+  // 学生管理
+  getStudents: (params?: { status?: string; class_id?: number; search?: string }) => api.get('/admin/students', { params }),
+  getStudentDetail: (id: number) => api.get(`/admin/students/${id}`),
+  updateStudent: (id: number, data: any) => api.put(`/admin/students/${id}`, data),
+  adjustStudentGold: (id: number, amount: number, reason?: string) => api.post(`/admin/students/${id}/gold`, { amount, reason }),
+  deleteStudent: (id: number, action: 'delete' | 'disable') => api.delete(`/admin/students/${id}`, { data: { action } }),
+
+  // 班级管理
+  getClasses: () => api.get('/admin/classes'),
+  createClass: (data: { name: string; grade?: string; teacher_id?: number }) => api.post('/admin/classes', data),
+  updateClass: (id: number, data: any) => api.put(`/admin/classes/${id}`, data),
+  deleteClass: (id: number) => api.delete(`/admin/classes/${id}`),
+
+  // 公告管理
+  getAnnouncements: () => api.get('/admin/announcements'),
+  createAnnouncement: (data: { title: string; content?: string; class_id?: number; priority?: number; expires_at?: string }) => api.post('/admin/announcements', data),
+  updateAnnouncement: (id: number, data: any) => api.put(`/admin/announcements/${id}`, data),
+  deleteAnnouncement: (id: number) => api.delete(`/admin/announcements/${id}`),
+
+  // 数据统计
+  getStatistics: () => api.get('/admin/statistics'),
+
+  // AI设置
   getAISettings: () => api.get('/admin/settings/ai'),
   saveAISettings: (settings: any) => api.post('/admin/settings/ai', settings),
 };

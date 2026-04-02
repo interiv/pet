@@ -234,11 +234,8 @@ router.post('/:id/grade', authenticateToken, authorizeRole('teacher', 'admin'), 
       };
     }
 
-    const expReward = Math.floor((aiScore / 100) * submission.max_exp);
-    
-    // 计算金币奖励 - 根据分数
-    const goldReward = Math.floor((aiScore / 100) * 100);
-    
+    const goldReward = Math.floor((aiScore / 100) * (submission.max_exp || 100));
+
     // 随机掉落物品 - 分数越高掉落概率越大
     let droppedItem = null;
     const dropChance = aiScore / 100;
@@ -257,46 +254,27 @@ router.post('/:id/grade', authenticateToken, authorizeRole('teacher', 'admin'), 
       }
     }
 
-    // 更新批改状态 - 安全更新
-    try {
-      db.prepare(`
-        UPDATE submissions 
-        SET status = 'graded', ai_score = ?, ai_feedback = ?, exp_reward = ?, graded_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(aiScore, JSON.stringify(aiFeedback), expReward, submissionId);
-    } catch (e) {
-      // 如果失败，尝试使用更简单的更新
-      db.prepare(`
-        UPDATE submissions 
-        SET status = 'graded', ai_score = ?, ai_feedback = ?, exp_reward = ?, graded_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(aiScore, JSON.stringify(aiFeedback), expReward, submissionId);
-    }
-
-    // 给用户宠物增加经验
+    // 更新批改状态
     db.prepare(`
-      UPDATE pets SET exp = exp + ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?
-    `).run(expReward, submission.user_id);
-    
-    // 尝试给用户增加金币（如果有gold字段）
-    try {
-      db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(goldReward, submission.user_id);
-    } catch (e) {
-      console.log('Gold column not found, skipping gold reward');
-    }
-    
-    // 检查宠物升级
+      UPDATE submissions
+      SET status = 'graded', ai_score = ?, ai_feedback = ?, exp_reward = 0, graded_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(aiScore, JSON.stringify(aiFeedback), submissionId);
+
+    // 给用户增加金币（作业只有金币奖励）
+    db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(goldReward, submission.user_id);
+
+    // 检查宠物升级（通过其他方式获取经验，这里不再通过作业）
     const updatedPet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(submission.user_id);
     const levelUp = checkLevelUp(updatedPet);
 
     res.json({
       message: '批改完成',
       score: aiScore,
-      expReward,
       goldReward,
       droppedItem,
       feedback: aiFeedback,
-      levelUp
+      levelUp: null
     });
   } catch (error) {
     console.error('批改作业错误:', error);

@@ -5,7 +5,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { checkLevelUp } = require('./pets');
 
 // 生成战斗日志
-function generateBattleLog(myPet, opponentPet, winner, myWinChance) {
+function generateBattleLog(myPet, opponentPet, winner, myWinChance, moodCriticalBonus = 0) {
   const log = [];
   const maxRounds = 3;
 
@@ -16,7 +16,8 @@ function generateBattleLog(myPet, opponentPet, winner, myWinChance) {
     const myDamage = Math.floor(myPet.attack * (0.8 + Math.random() * 0.4));
     const opponentDamage = Math.floor(opponentPet.attack * (0.8 + Math.random() * 0.4));
 
-    const isCritical = Math.random() < 0.1;
+    const baseCritChance = 0.1 + moodCriticalBonus;
+    const isCritical = Math.random() < baseCritChance;
     const finalMyDamage = isCritical ? Math.floor(myDamage * 1.5) : myDamage;
 
     opponentHp = Math.max(0, opponentHp - finalMyDamage);
@@ -48,11 +49,15 @@ router.post('/start', authenticateToken, (req, res) => {
       return res.status(404).json({ error: '还没有宠物' });
     }
 
-    if (myPet.hunger < 20) {
-      return res.status(400).json({ error: '宠物体力不足，需要喂食后才能战斗！' });
+    if (myPet.stamina < 20) {
+      return res.status(400).json({ error: '宠物体力不足，需要休息后才能战斗！' });
     }
 
-    if (myPet.status === 'unconscious') {
+    if (myPet.mood < 10) {
+      return res.status(400).json({ error: '宠物心情太差，无法战斗！请先喂食或恢复心情' });
+    }
+
+    if (myPet.health <= 20) {
       return res.status(400).json({ error: '宠物处于濒死状态，无法战斗' });
     }
 
@@ -69,37 +74,47 @@ router.post('/start', authenticateToken, (req, res) => {
     const myPower = myPet.attack + myPet.defense + myPet.speed;
     const opponentPower = opponentPet.attack + opponentPet.defense + opponentPet.speed;
 
+    // 心情影响胜率：心情每低10点，胜率-5%，心情>80时暴击率+5%
+    const moodBonus = (myPet.mood - 50) * 0.001;
+    const moodCriticalBonus = myPet.mood > 80 ? 0.05 : 0;
+
     const powerDiff = myPower - opponentPower;
-    const myWinChance = Math.max(0.1, Math.min(0.9, 0.5 + powerDiff * 0.001));
+    const myWinChance = Math.max(0.1, Math.min(0.9, 0.5 + powerDiff * 0.001 + moodBonus));
 
     const winner = Math.random() < myWinChance ? myPet.id : opponentPet.id;
 
     const levelDiff = opponentPet.level - myPet.level;
     const baseExp = 30;
-    const baseGold = 50;
 
     let rewardExp = 0;
-    let rewardGold = 0;
     let myExpGain = 0;
     let opponentExpGain = 0;
 
     if (winner === myPet.id) {
       rewardExp = Math.floor(baseExp * (1 + Math.max(0, levelDiff) * 0.1));
-      rewardGold = Math.floor(baseGold * (1 + Math.max(0, levelDiff) * 0.05));
       myExpGain = rewardExp;
     } else {
       rewardExp = 10;
-      rewardGold = 10;
       opponentExpGain = Math.floor(baseExp * (1 + Math.max(0, -levelDiff) * 0.1));
     }
 
-    const battleLog = generateBattleLog(myPet, opponentPet, winner, myWinChance);
+    const battleLog = generateBattleLog(myPet, opponentPet, winner, myWinChance, moodCriticalBonus);
 
     db.prepare(`
-      UPDATE battles SET winner_id = ?, reward_exp = ?, reward_gold = ?, battle_log = ? WHERE id = ?
-    `).run(winner, rewardExp, rewardGold, JSON.stringify(battleLog), result.lastInsertRowid);
+      UPDATE battles SET winner_id = ?, reward_exp = ?, reward_gold = 0, battle_log = ? WHERE id = ?
+    `).run(winner, rewardExp, JSON.stringify(battleLog), result.lastInsertRowid);
 
-    db.prepare('UPDATE pets SET hunger = hunger - 20 WHERE id = ?').run(myPet.id);
+    // 战斗后属性变化：消耗体力，心情变化
+    let moodChange = winner === myPet.id ? 10 : -5;
+    let newMood = Math.max(0, Math.min(100, myPet.mood + moodChange));
+
+    db.prepare(`
+      UPDATE pets SET
+        stamina = stamina - 20,
+        mood = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(newMood, myPet.id);
 
     if (winner === myPet.id) {
       db.prepare(`
@@ -110,16 +125,12 @@ router.post('/start', authenticateToken, (req, res) => {
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(myExpGain, myPet.id);
-
-      db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(rewardGold, req.user.userId);
     } else {
-      db.prepare('UPDATE pets SET total_battles = total_battles + 1 WHERE id = ?').run(myPet.id);
-      db.prepare('UPDATE pets SET exp = exp + 10 WHERE id = ?').run(myPet.id);
+      db.prepare('UPDATE pets SET total_battles = total_battles + 1, exp = exp + 10 WHERE id = ?').run(myPet.id);
     }
 
     if (opponentExpGain > 0) {
       db.prepare('UPDATE pets SET exp = exp + ? WHERE id = ?').run(opponentExpGain, opponentPet.id);
-
       const updatedOpponent = db.prepare('SELECT * FROM pets WHERE id = ?').get(opponentPet.id);
       checkLevelUp(updatedOpponent);
     }
@@ -131,7 +142,8 @@ router.post('/start', authenticateToken, (req, res) => {
       message: '战斗结束',
       winner: winner === myPet.id ? '我' : '对手',
       rewardExp: winner === myPet.id ? myExpGain : 10,
-      rewardGold: winner === myPet.id ? rewardGold : 0,
+      rewardGold: 0,
+      moodChange,
       myWinChance: Math.round(myWinChance * 100),
       levelUp: myLevelUp,
       battleLog

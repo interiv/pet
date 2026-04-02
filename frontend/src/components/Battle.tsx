@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Button, Tabs, List, Tag, Statistic, message, Avatar, TabsProps } from 'antd';
+import { Card, Row, Col, Button, Tabs, List, Tag, Statistic, message, Avatar, TabsProps, Modal } from 'antd';
 import { TrophyOutlined, FireOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { petAPI, battleAPI } from '../utils/api';
 import { usePetStore, useAuthStore } from '../store/authStore';
@@ -242,24 +242,32 @@ const Battle: React.FC = () => {
                   <div key={idx} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: idx < battleResult.battleLog.rounds.length - 1 ? '1px solid #ddd' : 'none' }}>
                     <div style={{ fontWeight: 'bold', color: '#667eea', marginBottom: 4 }}>第 {round.round} 回合</div>
                     <div style={{ fontSize: 13 }}>
-                      <div>你的宠物: -{round.myDamage} HP ({round.myAction})</div>
-                      <div>对手宠物: -{round.opponentDamage} HP ({round.opponentAction})</div>
+                      <div>你的宠物: -{round.myPet.damage} HP {round.myPet.critical && '🔥暴击!'}</div>
+                      <div>对手宠物: -{round.opponent.damage} HP</div>
                     </div>
                   </div>
                 ))}
               </div>
             )}
 
-            {battleResult.winner === '我' && (
-              <div style={{ display: 'flex', justifyContent: 'center', gap: 48 }}>
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: 24, color: '#52c41a', fontWeight: 'bold' }}>+{battleResult.rewardExp}</div>
-                  <div style={{ color: '#999' }}>经验</div>
-                </div>
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: 24, color: '#faad14', fontWeight: 'bold' }}>+{battleResult.rewardGold}</div>
-                  <div style={{ color: '#999' }}>金币</div>
-                </div>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 32, marginBottom: 16 }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 24, color: '#52c41a', fontWeight: 'bold' }}>+{battleResult.rewardExp}</div>
+                <div style={{ color: '#999' }}>经验</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 24, color: '#eb2f96', fontWeight: 'bold' }}>{battleResult.moodChange > 0 ? '+' : ''}{battleResult.moodChange}</div>
+                <div style={{ color: '#999' }}>心情</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 24, color: '#722ed1', fontWeight: 'bold' }}>-20</div>
+                <div style={{ color: '#999' }}>体力</div>
+              </div>
+            </div>
+
+            {battleResult.levelUp && (
+              <div style={{ textAlign: 'center', color: '#faad14', fontSize: 18, fontWeight: 'bold' }}>
+                🎉 升级了！当前等级: Lv.{battleResult.levelUp.newLevel}
               </div>
             )}
           </div>

@@ -276,7 +276,17 @@ router.post('/feed', authenticateToken, (req, res) => {
 
     if (updateQuery) {
       updateValues.push(req.user.userId);
-      db.prepare(`UPDATE pets SET ${updateQuery}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`).run(...updateValues);
+      let fullQuery = `UPDATE pets SET ${updateQuery}`;
+      let finalValues = [...updateValues];
+
+      if (userItem.effect_type === 'hunger') {
+        fullQuery += ', mood = mood + 5';
+      } else if (userItem.effect_type === 'stamina') {
+        fullQuery += ', mood = mood + 3';
+      }
+
+      fullQuery += ', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?';
+      db.prepare(fullQuery).run(...finalValues);
     }
 
     db.prepare('UPDATE user_items SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?').run(req.user.userId, item_id);

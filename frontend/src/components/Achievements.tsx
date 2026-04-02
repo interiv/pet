@@ -8,10 +8,10 @@ interface Achievement {
   id: number;
   name: string;
   description: string;
-  icon: string;
-  category: string;
-  requirement: string;
-  reward?: string;
+  icon?: string;
+  condition?: string;
+  reward_type?: string;
+  reward_value?: number;
 }
 
 interface UserAchievement {
@@ -37,6 +37,19 @@ const categoryColors: Record<string, string> = {
   'social': '#1890ff',
   'collection': '#faad14',
   'special': '#722ed1'
+};
+
+const inferCategory = (condition: string): string => {
+  try {
+    const cond = JSON.parse(condition);
+    if (cond.type.includes('battle') || cond.type.includes('win') || cond.type.includes('streak')) return 'battle';
+    if (cond.type.includes('pet') || cond.type.includes('level') || cond.type.includes('create_pet')) return 'pet';
+    if (cond.type.includes('friend') || cond.type.includes('social')) return 'social';
+    if (cond.type.includes('collect') || cond.type.includes('equipment')) return 'collection';
+    return 'special';
+  } catch {
+    return 'special';
+  }
 };
 
 const Achievements: React.FC = () => {
@@ -86,7 +99,7 @@ const Achievements: React.FC = () => {
   };
 
   const getProgressByCategory = (category: string) => {
-    const categoryAchievements = achievements.filter(a => a.category === category);
+    const categoryAchievements = achievements.filter(a => inferCategory(a.condition || '') === category);
     if (categoryAchievements.length === 0) return 0;
     const completed = categoryAchievements.filter(a => isCompleted(a.id));
     return Math.round((completed.length / categoryAchievements.length) * 100);
@@ -95,6 +108,7 @@ const Achievements: React.FC = () => {
   const renderAchievementCard = (achievement: Achievement) => {
     const completed = isCompleted(achievement.id);
     const userAch = getUserAchievement(achievement.id);
+    const category = inferCategory(achievement.condition || '');
 
     return (
       <Card
@@ -131,12 +145,12 @@ const Achievements: React.FC = () => {
               {achievement.description}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Tag color={categoryColors[achievement.category] || 'default'}>
-                {categoryNames[achievement.category] || achievement.category}
+              <Tag color={categoryColors[category] || 'default'}>
+                {categoryNames[category] || category}
               </Tag>
-              {achievement.reward && (
+              {achievement.reward_type && (
                 <span style={{ fontSize: 12, color: '#faad14' }}>
-                  奖励: {achievement.reward}
+                  奖励: {achievement.reward_type === 'exp' ? '经验' : achievement.reward_type === 'gold' ? '金币' : '物品'} x{achievement.reward_value}
                 </span>
               )}
             </div>
@@ -164,10 +178,11 @@ const Achievements: React.FC = () => {
 
   const groupedAchievements: Record<string, Achievement[]> = {};
   achievements.forEach(a => {
-    if (!groupedAchievements[a.category]) {
-      groupedAchievements[a.category] = [];
+    const category = inferCategory(a.condition || '');
+    if (!groupedAchievements[category]) {
+      groupedAchievements[category] = [];
     }
-    groupedAchievements[a.category].push(a);
+    groupedAchievements[category].push(a);
   });
 
   const tabItems: TabsProps['items'] = [

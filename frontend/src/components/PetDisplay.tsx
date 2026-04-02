@@ -382,29 +382,42 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet }) => {
               </Col>
               <Col span={12}>
                 <div style={{ textAlign: 'center', padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
-                  <HeartOutlined style={{ fontSize: 24, color: '#eb2f96' }} />
+                  <HeartOutlined style={{ fontSize: 24, color: pet.health <= 20 ? '#f5222d' : '#eb2f96' }} />
                   <div style={{ marginTop: 8, fontSize: 18, fontWeight: 'bold' }}>
-                    {pet.health}
+                    {pet.health}/100
                   </div>
+                  <Progress percent={pet.health} size="small" showInfo={false} strokeColor={pet.health <= 20 ? '#f5222d' : '#eb2f96'} style={{ marginTop: 4 }} />
                   <div style={{ color: '#999', fontSize: 12 }}>健康值</div>
                 </div>
               </Col>
               <Col span={12}>
                 <div style={{ textAlign: 'center', padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
-                  <SmileOutlined style={{ fontSize: 24, color: '#faad14' }} />
+                  <SmileOutlined style={{ fontSize: 24, color: pet.mood < 30 ? '#f5222d' : '#faad14' }} />
                   <div style={{ marginTop: 8, fontSize: 18, fontWeight: 'bold' }}>
-                    {pet.mood}
+                    {pet.mood}/100
                   </div>
+                  <Progress percent={pet.mood} size="small" showInfo={false} strokeColor={pet.mood < 30 ? '#f5222d' : '#faad14'} style={{ marginTop: 4 }} />
                   <div style={{ color: '#999', fontSize: 12 }}>心情值</div>
                 </div>
               </Col>
               <Col span={12}>
                 <div style={{ textAlign: 'center', padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
-                  <CoffeeOutlined style={{ fontSize: 24, color: '#722ed1' }} />
+                  <CoffeeOutlined style={{ fontSize: 24, color: pet.stamina < 20 ? '#f5222d' : '#722ed1' }} />
                   <div style={{ marginTop: 8, fontSize: 18, fontWeight: 'bold' }}>
-                    {pet.hunger}
+                    {pet.stamina}/100
                   </div>
-                  <div style={{ color: '#999', fontSize: 12 }}>饥饿度</div>
+                  <Progress percent={pet.stamina} size="small" showInfo={false} strokeColor={pet.stamina < 20 ? '#f5222d' : '#722ed1'} style={{ marginTop: 4 }} />
+                  <div style={{ color: '#999', fontSize: 12 }}>体力值</div>
+                </div>
+              </Col>
+              <Col span={12}>
+                <div style={{ textAlign: 'center', padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
+                  <ThunderboltOutlined style={{ fontSize: 24, color: pet.hunger < 30 ? '#f5222d' : '#1890ff' }} />
+                  <div style={{ marginTop: 8, fontSize: 18, fontWeight: 'bold' }}>
+                    {pet.hunger}/100
+                  </div>
+                  <Progress percent={pet.hunger} size="small" showInfo={false} strokeColor={pet.hunger < 30 ? '#f5222d' : '#1890ff'} style={{ marginTop: 4 }} />
+                  <div style={{ color: '#999', fontSize: 12 }}>饱腹度</div>
                 </div>
               </Col>
             </Row>

@@ -100,6 +100,41 @@ router.post('/login', async (req, res) => {
     // 更新最后登录时间
     db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
 
+    // 宠物属性每小时变化处理（登录时计算离线时间）
+    const myPet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(user.id);
+    if (myPet) {
+      const lastLogin = user.last_login ? new Date(user.last_login).getTime() : Date.now() - 3600000;
+      const hoursSinceLastLogin = Math.max(0, Math.floor((Date.now() - lastLogin) / (1000 * 60 * 60)));
+
+      if (hoursSinceLastLogin > 0) {
+        let newStamina = Math.min(100, myPet.stamina + hoursSinceLastLogin * 10);
+        let newHunger = Math.max(0, myPet.hunger - hoursSinceLastLogin * 5);
+        let newMood = myPet.mood;
+        let newHealth = myPet.health;
+
+        // 饱腹度低于30时，心情下降
+        if (newHunger < 30) {
+          newMood = Math.max(0, newMood - hoursSinceLastLogin * 3);
+        }
+
+        // 饱腹度为0或心情为0持续时，健康值下降
+        if (newHunger === 0 || newMood === 0) {
+          newHealth = Math.max(0, newHealth - hoursSinceLastLogin * 10);
+        }
+
+        // 更新宠物属性
+        db.prepare(`
+          UPDATE pets SET
+            stamina = ?,
+            hunger = ?,
+            mood = ?,
+            health = ?,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(newStamina, newHunger, newMood, newHealth, myPet.id);
+      }
+    }
+
     // 生成 JWT token
     const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
     const token = jwt.sign(
