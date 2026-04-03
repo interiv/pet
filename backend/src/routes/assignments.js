@@ -244,21 +244,24 @@ JSON格式：
       ? insertedIds.map((id, idx) => ({
           tempId: id,
           content: questions[idx].content,
-          options: questions[idx].options || null,
-          type: question_type
+          options: questions[idx].options ? (typeof questions[idx].options === 'string' ? JSON.parse(questions[idx].options) : questions[idx].options) : null,
+          type: question_type,
+          hasVariants: false
         }))
       : [];
 
-    for (let g = 0; g < (isSubjective ? 1 : count); g++) {
-      const baseIdx = g * 3;
-      displayQuestions.push({
-        tempId: insertedIds[baseIdx],
-        variantIds: [insertedIds[baseIdx], insertedIds[baseIdx + 1], insertedIds[baseIdx + 2]],
-        content: questions[baseIdx].content,
-        options: questions[baseIdx].options ? JSON.parse(questions[baseIdx].options) : null,
-        type: question_type,
-        hasVariants: true
-      });
+    if (!isSubjective) {
+      for (let g = 0; g < count; g++) {
+        const baseIdx = g * 3;
+        displayQuestions.push({
+          tempId: insertedIds[baseIdx],
+          variantIds: [insertedIds[baseIdx], insertedIds[baseIdx + 1], insertedIds[baseIdx + 2]],
+          content: questions[baseIdx].content,
+          options: questions[baseIdx].options ? JSON.parse(questions[baseIdx].options) : null,
+          type: question_type,
+          hasVariants: true
+        });
+      }
     }
 
     res.json({
@@ -386,13 +389,16 @@ router.get('/', authenticateToken, (req, res) => {
       assignments = db.prepare(`
         SELECT a.*, u.username as teacher_name, c.name as class_name,
           (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count,
-          (SELECT id FROM submissions WHERE assignment_id = a.id AND user_id = ? LIMIT 1) as my_submission_id
+          (SELECT id FROM submissions WHERE assignment_id = a.id AND user_id = ? LIMIT 1) as my_submission_id,
+          (SELECT status FROM submissions WHERE assignment_id = a.id AND user_id = ? ORDER BY id DESC LIMIT 1) as my_submission_status,
+          (SELECT MAX(total_score) FROM submissions WHERE assignment_id = a.id AND user_id = ?) as my_score,
+          (SELECT SUM(gold_reward) FROM submissions WHERE assignment_id = a.id AND user_id = ?) as my_gold_reward
         FROM assignments a
         JOIN users u ON a.teacher_id = u.id
         LEFT JOIN classes c ON a.class_id = c.id
         WHERE a.class_id = ?
         ORDER BY a.created_at DESC
-      `).all(req.user.userId, student.class_id);
+      `).all(req.user.userId, req.user.userId, req.user.userId, req.user.userId, student.class_id);
     }
 
     res.json({ assignments });
@@ -521,7 +527,7 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
 
         if (!isCorrect && q.variant_group_id) {
           const variants = db.prepare(`
-            id, content, options, answer, explanation, analysis, variant_index
+            SELECT id, content, options, answer, explanation, analysis, variant_index
             FROM question_bank WHERE variant_group_id = ? ORDER BY variant_index
           `).all(q.variant_group_id);
 
@@ -544,12 +550,14 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
 
       const totalScore = Math.round((correctCount / questions.length) * 100);
       const goldReward = Math.floor((totalScore / 100) * (assignment.max_exp || 30));
+      const hasWrongQuestions = wrongQuestions.length > 0;
 
       if (!submissionId) {
+        const finalStatus = hasWrongQuestions ? 'retry_available' : 'completed';
         const result = db.prepare(`
           INSERT INTO submissions (assignment_id, user_id, answers, status, total_score, total_max_score, gold_reward, attempt_count, review_status)
-          VALUES (?, ?, ?, 'completed', ?, 100, ?, 1, 'completed')
-        `).run(req.params.id, req.user.userId, JSON.stringify(answers), totalScore, goldReward);
+          VALUES (?, ?, ?, ?, ?, 100, ?, 1, ?)
+        `).run(req.params.id, req.user.userId, JSON.stringify(answers), finalStatus, totalScore, goldReward, finalStatus);
 
         const newSubId = result.lastInsertRowid;
         const insertQA = db.prepare(`
@@ -561,21 +569,30 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
         }
 
         for (const wq of wrongQuestions) {
-          db.prepare(`
-            INSERT OR IGNORE INTO wrong_questions (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed)
-            VALUES (?, ?, ?, ?, ?, ?, 0)
-          `).run(req.user.userId, req.params.id, wq.original_question_id, results.find(r => r.question_id === wq.original_question_id)?.user_answer, results.find(r => r.question_id === wq.original_question_id)?.correct_answer, results.find(r => r.question_id === wq.original_question_id)?.analysis);
+          const r = results.find(r => r.question_id === wq.original_question_id);
+          if (!r) continue;
+          const existingWQ = db.prepare('SELECT id, wrong_count FROM wrong_questions WHERE user_id = ? AND question_id = ?')
+            .get(req.user.userId, wq.original_question_id);
+          if (existingWQ) {
+            db.prepare('UPDATE wrong_questions SET wrong_count = wrong_count + 1 WHERE id = ?').run(existingWQ.id);
+          } else {
+            db.prepare(`
+              INSERT INTO wrong_questions (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed, wrong_count)
+              VALUES (?, ?, ?, ?, ?, ?, 0, 1)
+            `).run(req.user.userId, req.params.id, wq.original_question_id, r.user_answer, r.correct_answer, r.analysis);
+          }
         }
       } else {
-        db.prepare(`UPDATE submissions SET status = 'completed', total_score = ?, gold_reward = gold_reward + ?, attempt_count = attempt_count + 1 WHERE id = ?`)
-          .run(totalScore, goldReward, submissionId);
+        const retryFinalStatus = wrongQuestions.length > 0 ? 'retry_available' : 'completed';
+        db.prepare(`UPDATE submissions SET status = ?, total_score = ?, gold_reward = gold_reward + ?, attempt_count = attempt_count + 1 WHERE id = ?`)
+          .run(retryFinalStatus, totalScore, goldReward, submissionId);
 
         const insertQA = db.prepare(`
           INSERT INTO question_answers (submission_id, question_bank_id, attempt_number, student_answer, is_correct, score, max_score, answered_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         `);
         for (const r of results) {
-          insertQA.run(submissionId, r.question_id, (existingSubmission?.attempt_count || 0) + 1, r.user_answer, r.isCorrect ? 1 : 0, r.score, 100 / questions.length);
+          insertQA.run(submissionId, r.question_id, (existingSubmission?.attempt_count || 0) + 1, r.user_answer, r.is_correct ? 1 : 0, r.score, 100 / questions.length);
         }
       }
 
@@ -645,7 +662,7 @@ async function reviewSubjectiveAssignment(submissionId, assignmentId, userId) {
     db.prepare("UPDATE submissions SET review_status = 'reviewing' WHERE id = ?").run(submissionId);
 
     const questionAnswers = db.prepare(`
-      qa.id, qa.question_bank_id, qa.student_answer, qa.image_url,
+      SELECT qa.id, qa.question_bank_id, qa.student_answer, qa.image_url,
       qb.content as question_content, qb.answer as reference_answer, qb.explanation, qb.analysis
       FROM question_answers qa
       JOIN question_bank qb ON qa.question_bank_id = qb.id
@@ -745,7 +762,7 @@ ${qa.student_answer || '(未提供文字答案)'}
 router.get('/submissions/:id', authenticateToken, (req, res) => {
   try {
     const submission = db.prepare(`
-      s.*, a.title, a.subject, a.max_exp, a.question_type
+      SELECT s.*, a.title, a.subject, a.max_exp, a.question_type
       FROM submissions s
       JOIN assignments a ON s.assignment_id = a.id
       WHERE s.id = ? AND s.user_id = ?

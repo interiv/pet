@@ -60,6 +60,7 @@ const Assignments: React.FC = () => {
   const [generatedData, setGeneratedData] = useState<GeneratedResult | null>(null);
   const [submitResult, setSubmitResult] = useState<any>(null);
   const [statsData, setStatsData] = useState<any>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
   
   const [form] = Form.useForm();
   const [submitForm] = Form.useForm();
@@ -245,11 +246,15 @@ const Assignments: React.FC = () => {
 
   const handleViewStatistics = async (record: any) => {
     try {
+      setStatsLoading(true);
+      setIsStatsModalVisible(true);
+      setStatsData(null);
       const res = await assignmentAPI.getStatistics(record.id);
       setStatsData(res.data);
-      setIsStatsModalVisible(true);
     } catch (e: any) {
       message.error(e.response?.data?.error || '获取统计失败');
+    } finally {
+      setStatsLoading(false);
     }
   };
 
@@ -354,17 +359,16 @@ const Assignments: React.FC = () => {
           <div style={{ marginBottom: 4 }}>
             <strong>第{index + 1}题</strong>
             {r.is_correct ? (
-              <Tag icon={<CheckCircleOutlined />} color="success">正确</Tag>
+              <Tag icon={<CheckCircleOutlined />} color="success">正确 ✓</Tag>
             ) : (
-              <Tag icon={<CloseCircleOutlined />} color="error">错误</Tag>
+              <Tag icon={<CloseCircleOutlined />} color="error">错误 ✗</Tag>
             )}
           </div>
-          <div style={{ color: '#666', marginBottom: 4 }}>{r.question_content}</div>
-          <div>
-            <span style={{ color: '#999' }}>你的答案：</span>
-            <span style={{ color: r.is_correct ? '#52c41a' : '#ff4d4f', fontWeight: 500 }}>{String(r.user_answer || '(未作答)')}</span>
-            {!r.is_correct && (
-              <span style={{ marginLeft: 16, color: '#999' }}>正确答案：<span style={{ color: '#52c41a', fontWeight: 500 }}>{r.correct_answer}</span></span>
+          <div style={{ color: '#666', marginBottom: 6, lineHeight: 1.6 }}>{r.question_content}</div>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            <span>你的答案：<span style={{ color: r.is_correct ? '#52c41a' : '#ff4d4f', fontWeight: 600, fontSize: 14 }}>{String(r.user_answer || '(未作答)')}</span></span>
+            {!r.is_correct && r.correct_answer && (
+              <span>正确答案：<span style={{ color: '#52c41a', fontWeight: 600, fontSize: 14 }}>{String(r.correct_answer)}</span></span>
             )}
           </div>
         </div>
@@ -372,39 +376,88 @@ const Assignments: React.FC = () => {
           <Statistic title="得分" value={Math.round(r.score || 0)} suffix={`/ ${Math.round(r.max_score || 0)}`} valueStyle={{ fontSize: 18, color: r.is_correct ? '#52c41a' : '#ff4d4f' }} />
         </div>
       </div>
-      {r.explanation && (
-        <div style={{ marginTop: 8, padding: '8px 12px', background: '#fafafa', borderRadius: 6, fontSize: 13 }}>
-          <strong style={{ color: '#1890ff' }}>解析：</strong><span style={{ color: '#555' }}>{r.explanation}</span>
+      {(r.explanation || r.analysis) && (
+        <div style={{ marginTop: 10, padding: '10px 14px', background: '#f6ffed', borderRadius: 8, fontSize: 13, lineHeight: 1.7, border: '1px solid #b7eb8f' }}>
+          <strong style={{ color: '#389e0d' }}>💡 解析：</strong><span style={{ color: '#333' }}>{r.explanation || r.analysis}</span>
         </div>
       )}
     </Card>
   );
 
+  const getEncouragement = (score: number) => {
+    if (score >= 95) return { text: '太棒了！满分接近！继续保持！🎉', color: '#52c41a' };
+    if (score >= 80) return { text: '很不错！再接再厉，争取更好！👍', color: '#1890ff' };
+    if (score >= 60) return { text: '及格了！多复习错题，下次会更好！💪', color: '#faad14' };
+    return { text: '别灰心！查看错题本，弄懂每道题！📚', color: '#ff4d4f' };
+  };
+
+  const isOverdue = (date: string) => dayjs(date).isBefore(dayjs());
+
+  const getStatusTag = (record: any) => {
+    if (!record.my_submission_id) {
+      if (isOverdue(record.due_date)) return <Tag color="error" icon={<CloseCircleOutlined />}>已过期</Tag>;
+      return <Tag color="processing">待完成</Tag>;
+    }
+    if (record.my_submission_status === 'retry_available') return <Tag color="warning" icon={<ReloadOutlined />}>可重做</Tag>;
+    const score = record.my_score;
+    if (score >= 90) return <Tag color="success" icon={<CheckCircleOutlined />}>优秀 {score}分</Tag>;
+    if (score >= 60) return <Tag color="blue">及格 {score}分</Tag>;
+    return <Tag color="error">需努力 {score}分</Tag>;
+  };
+
   const columns = [
-    { title: '作业标题', dataIndex: 'title', key: 'title', render: (text: string) => <a>{text}</a> },
+    { title: '作业标题', dataIndex: 'title', key: 'title', render: (text: string, r: any) => (
+      <div>
+        <a style={{ fontWeight: 500 }}>{text}</a>
+        {r.my_submission_id && (
+          <div style={{ fontSize: 12, color: '#999' }}>
+            最高得分：<span style={{ color: '#52c41a', fontWeight: 'bold' }}>{r.my_score || 0}</span> 分
+            {r.my_gold_reward > 0 && <span style={{ color: '#faad14', marginLeft: 8 }}>+{r.my_gold_reward}💰</span>}
+          </div>
+        )}
+      </div>
+    )},
     { title: '班级', dataIndex: 'class_name', key: 'class_name', render: (name: string) => name ? <Tag color="green">{name}</Tag> : <Tag>未分班</Tag> },
     { title: '科目', dataIndex: 'subject', key: 'subject', render: (subject: string) => <Tag color="blue">{subject}</Tag> },
     { title: '题型', dataIndex: 'question_type', key: 'question_type', render: (type: string) => <Tag color="purple">{typeOptions.find(t => t.value === type)?.label || type}</Tag> },
     { title: '题目数', dataIndex: 'question_count', key: 'question_count', render: (count: number) => count ?? '-' },
     { title: '金币奖励', dataIndex: 'max_exp', key: 'max_exp', render: (exp: number) => <span style={{ color: '#faad14', fontWeight: 'bold' }}>+{exp} 金币</span> },
-    { title: '截止日期', dataIndex: 'due_date', key: 'due_date', render: (date: string) => dayjs(date).format('YYYY-MM-DD HH:mm') },
+    { 
+      title: '截止日期', dataIndex: 'due_date', key: 'due_date', 
+      render: (date: string) => {
+        const d = dayjs(date);
+        const overdue = d.isBefore(dayjs());
+        return <span style={{ color: overdue ? '#ff4d4f' : undefined, fontWeight: overdue ? 'bold' : undefined }}>
+          {d.format('YYYY-MM-DD HH:mm')}
+          {overdue && <span style={{ marginLeft: 4 }}>(已过期)</span>}
+        </span>;
+      }
+    },
+    { title: '状态', key: 'status', width: 100, render: (_: any, record: any) => getStatusTag(record) },
     {
       title: '操作',
       key: 'action',
-      width: 220,
+      width: 260,
       render: (_: any, record: any) => (
         <Space size="small">
-          {!isTeacher && record.my_submission_id ? (
-            <Button type="link" size="small" onClick={async () => {
+          {!isTeacher && !record.my_submission_id && !isOverdue(record.due_date) && (
+            <Button type="primary" size="small" onClick={() => handleStartDoing(record)}>去完成</Button>
+          )}
+          {!isTeacher && !record.my_submission_id && isOverdue(record.due_date) && (
+            <Button type="primary" size="small" danger onClick={() => handleStartDoing(record)}>补交</Button>
+          )}
+          {!isTeacher && record.my_submission_id && record.my_submission_status === 'retry_available' && (
+            <Button type="primary" size="small" style={{ background: '#faad14', borderColor: '#faad14' }} onClick={() => handleStartDoing(record)}>重做错题</Button>
+          )}
+          {!isTeacher && record.my_submission_id && (
+            <Button size="small" icon={<EyeOutlined />} onClick={async () => {
               try {
                 const res = await assignmentAPI.getSubmissionDetail(record.my_submission_id);
                 setSubmitResult({ results: res.data.answers, total_score: res.data.submission.total_score, total_max_score: res.data.submission.total_max_score, gold_reward: res.data.submission.gold_reward, correct_count: res.data.answers.filter((a: any) => a.is_correct).length, total_count: res.data.answers.length });
                 setIsResultModalVisible(true);
               } catch(e) { message.error('获取结果失败'); }
             }}>查看结果</Button>
-          ) : !isTeacher ? (
-            <Button type="primary" size="small" onClick={() => handleStartDoing(record)}>去完成</Button>
-          ) : null}
+          )}
           {isTeacher && (
             <>
               <Button size="small" icon={<EyeOutlined />} onClick={() => handleStartDoing(record)}>预览</Button>
@@ -612,15 +665,18 @@ const Assignments: React.FC = () => {
 
       {/* 作答结果弹窗 */}
       <Modal
-        title={`✅ 作答完成！`}
+        title={submitResult?.message?.includes('等待') ? '📝 提交成功' : '✅ 作答完成！'}
         open={isResultModalVisible}
         onCancel={() => setIsResultModalVisible(false)}
-        width={650}
+        width={680}
         destroyOnClose
         footer={
           <Space>
             {submitResult?.can_retry && (
               <Button type="primary" icon={<ReloadOutlined />} onClick={handleRetryWrong}>重做错题</Button>
+            )}
+            {!isTeacher && (
+              <Button onClick={() => { setIsResultModalVisible(false); window.location.href = '/wrong-questions'; }}>去错题本</Button>
             )}
             <Button onClick={() => setIsResultModalVisible(false)}>关闭</Button>
           </Space>
@@ -628,12 +684,34 @@ const Assignments: React.FC = () => {
       >
         {submitResult && (
           <div>
+            {!submitResult.message?.includes('等待') && (
+              <>
+                <Alert
+                  type={submitResult.total_score >= 60 ? 'success' : 'warning'}
+                  showIcon
+                  message={getEncouragement(submitResult.total_score).text}
+                  style={{ marginBottom: 16, fontSize: 15 }}
+                />
+                <div style={{ marginBottom: 20, padding: '12px 16px', background: '#fafafa', borderRadius: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontWeight: 500 }}>总进度</span>
+                    <span style={{ fontWeight: 'bold', color: submitResult.total_score >= 60 ? '#52c41a' : '#ff4d4f' }}>{submitResult.total_score}分 / {submitResult.total_max_score}分</span>
+                  </div>
+                  <Progress
+                    percent={submitResult.total_score}
+                    strokeColor={submitResult.total_score >= 80 ? '#52c41a' : submitResult.total_score >= 60 ? '#faad14' : '#ff4d4f'}
+                    size={[ '100%', 20 ]}
+                    format={(percent) => `${percent}分`}
+                  />
+                </div>
+              </>
+            )}
             <Row gutter={16} style={{ marginBottom: 20 }}>
               <Col span={8}>
                 <Card size="small"><Statistic title="总分" value={submitResult.total_score} suffix={`/ ${submitResult.total_max_score}`} valueStyle={{ color: submitResult.total_score >= 60 ? '#52c41a' : '#ff4d4f', fontSize: 28 }} /></Card>
               </Col>
               <Col span={8}>
-                <Card size="small"><Statistic title="获得金币" value={submitResult.gold_reward} prefix="+" suffix="枚" valueStyle={{ color: '#faad14', fontSize: 28 }} /></Card>
+                <Card size="small"><Statistic title="获得金币" value={submitResult.gold_reward} prefix="+" suffix="枚 💰" valueStyle={{ color: '#faad14', fontSize: 28 }} /></Card>
               </Col>
               <Col span={8}>
                 <Card size="small"><Statistic title="正确率" value={submitResult.total_count > 0 ? Math.round(submitResult.correct_count / submitResult.total_count * 100) : 0} suffix="%" valueStyle={{ fontSize: 28 }} /></Card>
@@ -664,14 +742,19 @@ const Assignments: React.FC = () => {
 
       {/* 统计面板弹窗 */}
       <Modal
-        title={`📊 作业统计: ${statsData ? assignments.find(a => a.id === statsData.assignment_id)?.title : ''}`}
+        title={`📊 作业统计: ${statsData ? assignments.find(a => a.id === statsData.assignment_id)?.title : '加载中...'}`}
         open={isStatsModalVisible}
         onCancel={() => setIsStatsModalVisible(false)}
         width={800}
         destroyOnClose
         footer={<Button onClick={() => setIsStatsModalVisible(false)}>关闭</Button>}
       >
-        {statsData && (
+        {statsLoading ? (
+          <div style={{ textAlign: 'center', padding: 60 }}>
+            <LoadingOutlined style={{ fontSize: 36, color: '#1890ff' }} spin />
+            <div style={{ marginTop: 16, color: '#999' }}>正在统计数据...</div>
+          </div>
+        ) : statsData ? (
           <div>
             <Row gutter={16} style={{ marginBottom: 20 }}>
               <Col span={6}><Card size="small"><Statistic title="全班人数" value={statsData.total_students} /></Card></Col>
@@ -722,7 +805,7 @@ const Assignments: React.FC = () => {
               }
             ]} />
           </div>
-        )}
+        ) : null}
       </Modal>
     </div>
   );

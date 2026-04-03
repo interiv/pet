@@ -115,6 +115,18 @@ try {
     console.log('   - upload_files 表已存在，跳过');
   }
 
+  console.log('\n4.5 为 wrong_questions 表添加 wrong_count 字段...');
+  try {
+    db.exec(`ALTER TABLE wrong_questions ADD COLUMN wrong_count INTEGER DEFAULT 1`);
+    console.log('   ✓ wrong_questions.wrong_count 字段添加成功');
+  } catch (e) {
+    if (e.message.includes('duplicate column')) {
+      console.log('   - wrong_questions.wrong_count 字段已存在，跳过');
+    } else {
+      throw e;
+    }
+  }
+
   console.log('\n5. 为 assignments 表添加 class_id 字段...');
   try {
     db.exec(`ALTER TABLE assignments ADD COLUMN class_id INTEGER`);

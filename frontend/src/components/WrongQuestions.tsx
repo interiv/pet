@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Tag, Button, Card, Empty, Space, message, Modal, Alert, Badge, Select, Row, Col } from 'antd';
+import { Table, Tag, Button, Card, Empty, Space, message, Modal, Alert, Badge, Select, Row, Col, Statistic, Progress } from 'antd';
 import { assignmentAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
-import { BookOutlined, CheckCircleOutlined, EyeOutlined } from '@ant-design/icons';
+import { BookOutlined, CheckCircleOutlined, EyeOutlined, AimOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
 
@@ -133,6 +133,44 @@ const WrongQuestions: React.FC = () => {
         message="做错的题目会自动收录到错题本，建议定期回顾。已复习的题目会自动标记为绿色。"
         style={{ marginBottom: 16 }}
       />
+
+      {wrongQuestions.length > 0 && (
+        <Row gutter={16} style={{ marginBottom: 16 }}>
+          <Col span={6}>
+            <Card size="small"><Statistic title="错题总数" value={wrongQuestions.length} prefix={<BookOutlined />} /></Card>
+          </Col>
+          <Col span={6}>
+            <Card size="small">
+              <Statistic
+                title="待复习"
+                value={wrongQuestions.filter((w: any) => !w.reviewed).length}
+                prefix={<AimOutlined />}
+                valueStyle={{ color: '#ff4d4f' }}
+              />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card size="small">
+              <Statistic
+                title="已复习"
+                value={wrongQuestions.filter((w: any) => w.reviewed).length}
+                prefix={<CheckCircleOutlined />}
+                valueStyle={{ color: '#52c41a' }}
+              />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card size="small">
+              <div style={{ marginBottom: 4 }}>复习进度</div>
+              <Progress
+                percent={wrongQuestions.length > 0 ? Math.round(wrongQuestions.filter((w: any) => w.reviewed).length / wrongQuestions.length * 100) : 0}
+                size="small"
+                status={wrongQuestions.filter((w: any) => w.reviewed).length === wrongQuestions.length ? 'success' : 'active'}
+              />
+            </Card>
+          </Col>
+        </Row>
+      )}
 
       <Table
         columns={columns}
