@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, TabsProps, Modal, Spin, Table, Tag, Segmented, Space } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, TabsProps, Modal, Spin, Table, Tag, Segmented, Space, Drawer, Button } from 'antd';
 import {
   HomeOutlined,
   BookOutlined,
@@ -15,6 +15,9 @@ import {
   BellOutlined,
   ForumOutlined,
   NotificationOutlined,
+  MenuOutlined,
+  MenuFoldOutlined,
+  CloseOutlined,
 } from '@ant-design/icons';
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
@@ -35,11 +38,22 @@ import Notifications from '../components/Notifications';
 
 const { Header, Content, Sider } = Layout;
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 
 const Home: React.FC = () => {
   const navigate = useNavigate();
   const { user, logout, isAuthenticated } = useAuthStore();
   const { pet, setPet, hasPet } = usePetStore();
+  const isMobile = useMobile();
 
   const [activeMenu, setActiveMenu] = useState('home');
   const [leaderboard, setLeaderboard] = useState([]);
@@ -50,6 +64,7 @@ const Home: React.FC = () => {
   const [petEquipments, setPetEquipments] = useState<any[]>([]);
   const [petBonus, setPetBonus] = useState<any>(null);
   const [leaderboardView, setLeaderboardView] = useState<'card' | 'list'>('card');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -408,19 +423,30 @@ const Home: React.FC = () => {
         background: '#fff',
         boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
         zIndex: 1,
+        padding: isMobile ? '0 12px' : '0 24px',
+        height: isMobile ? 56 : 64,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-          <span style={{ fontSize: 24 }}>🐾</span>
-          <span style={{ fontSize: 18, fontWeight: 'bold' }}>班级宠物养成系统</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 20 }}>
+          {isMobile && (
+            <Button
+              type="text"
+              icon={<MenuOutlined />}
+              onClick={() => setMobileMenuOpen(true)}
+              size="large"
+            />
+          )}
+          <span style={{ fontSize: isMobile ? 20 : 24 }}>🐾</span>
+          <span style={{ fontSize: isMobile ? 14 : 18, fontWeight: 'bold', display: isMobile ? 'none' : 'block' }}>班级宠物养成系统</span>
         </div>
         
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 16 }}>
           {isAuthenticated ? (
             <>
-              <span style={{ color: '#666' }}>欢迎，{user?.username}</span>
+              {!isMobile && <span style={{ color: '#666' }}>欢迎，{user?.username}</span>}
+              {isMobile && <span style={{ color: '#666', fontSize: 13, maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.username}</span>}
               <Dropdown menu={userMenu} placement="bottomRight">
                 <Avatar 
-                  size={40} 
+                  size={isMobile ? 32 : 40} 
                   icon={<UserOutlined />} 
                   src={user?.avatar}
                   style={{ cursor: 'pointer', background: '#87d068' }}
@@ -428,71 +454,165 @@ const Home: React.FC = () => {
               </Dropdown>
             </>
           ) : (
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <a onClick={() => navigate('/login')} style={{ color: '#1890ff' }}>登录</a>
-              <a onClick={() => navigate('/register')} style={{ color: '#1890ff' }}>注册</a>
+            <div style={{ display: 'flex', gap: isMobile ? 8 : 10 }}>
+              <a onClick={() => navigate('/login')} style={{ color: '#1890ff', fontSize: isMobile ? 13 : undefined }}>登录</a>
+              <a onClick={() => navigate('/register')} style={{ color: '#1890ff', fontSize: isMobile ? 13 : undefined }}>注册</a>
             </div>
           )}
         </div>
       </Header>
 
       <Layout>
-        <Sider width={200} style={{ background: '#fff', boxShadow: '2px 0 8px rgba(0,0,0,0.05)', zIndex: 0 }}>
-          <Menu
-            mode="inline"
-            selectedKeys={[activeMenu]}
-            style={{ height: '100%', borderRight: 0, padding: '16px 0' }}
-            items={menuItems}
-            onClick={({ key }) => {
-              if (key === 'profile') return;
-              setActiveMenu(key);
-            }}
-          />
-        </Sider>
+        {isMobile ? (
+          <>
+            {/* 移动端侧边栏抽屉 */}
+            <Drawer
+              title={
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>🐾</span>
+                  <span>导航菜单</span>
+                </div>
+              }
+              placement="left"
+              onClose={() => setMobileMenuOpen(false)}
+              open={mobileMenuOpen}
+              width={260}
+              styles={{
+                body: { padding: 0 },
+                header: { borderBottom: '1px solid #f0f0f0' }
+              }}
+            >
+              <Menu
+                mode="inline"
+                selectedKeys={[activeMenu]}
+                style={{ borderRight: 0 }}
+                items={menuItems}
+                onClick={({ key }) => {
+                  if (key === 'profile') return;
+                  setActiveMenu(key);
+                  setMobileMenuOpen(false);
+                }}
+              />
+            </Drawer>
 
-        <Content style={{ padding: '24px 40px', background: '#f0f2f5', minHeight: 'calc(100vh - 64px)' }}>
-          <div style={{ background: '#fff', padding: 32, borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.05)', minHeight: '100%' }}>
-            {activeMenu === 'assignment' ? (
-              <Assignments />
-            ) : activeMenu === 'wrong_questions' ? (
-              <WrongQuestions />
-            ) : activeMenu === 'battle' ? (
-              <Battle />
-            ) : activeMenu === 'shop' ? (
-              <ShopAndBackpack />
-            ) : activeMenu === 'friends' ? (
-              <Friends />
-            ) : activeMenu === 'achievements' ? (
-              <Achievements />
-            ) : activeMenu === 'posts' ? (
-              <Posts />
-            ) : activeMenu === 'chat' ? (
-              <ChatRoom />
-            ) : activeMenu === 'forum' ? (
-              <Forum />
-            ) : activeMenu === 'notifications' ? (
-              <Notifications />
-            ) : activeMenu === 'admin' ? (
-              <Admin />
-            ) : activeMenu === 'applications' ? (
-              <Admin defaultTab="applications" />
-            ) : activeMenu === 'profile' ? (
-              <Profile />
-            ) : isAuthenticated ? (
-              <Tabs 
-                activeKey={['home', 'pet', 'all_pets', 'leaderboard'].includes(activeMenu) ? activeMenu === 'home' ? 'pet' : activeMenu : 'pet'} 
-                onChange={(key) => setActiveMenu(key)}
-                items={authTabItems}
+            <Content style={{ 
+              padding: isMobile ? '12px' : '24px 40px', 
+              background: '#f0f2f5', 
+              minHeight: 'calc(100vh - 56px)' 
+            }}>
+              <div style={{ 
+                background: '#fff', 
+                padding: isMobile ? 16 : 32, 
+                borderRadius: 12, 
+                boxShadow: '0 4px 12px rgba(0,0,0,0.05)', 
+                minHeight: '100%' 
+              }}>
+                {activeMenu === 'assignment' ? (
+                  <Assignments />
+                ) : activeMenu === 'wrong_questions' ? (
+                  <WrongQuestions />
+                ) : activeMenu === 'battle' ? (
+                  <Battle />
+                ) : activeMenu === 'shop' ? (
+                  <ShopAndBackpack />
+                ) : activeMenu === 'friends' ? (
+                  <Friends />
+                ) : activeMenu === 'achievements' ? (
+                  <Achievements />
+                ) : activeMenu === 'posts' ? (
+                  <Posts />
+                ) : activeMenu === 'chat' ? (
+                  <ChatRoom />
+                ) : activeMenu === 'forum' ? (
+                  <Forum />
+                ) : activeMenu === 'notifications' ? (
+                  <Notifications />
+                ) : activeMenu === 'admin' ? (
+                  <Admin />
+                ) : activeMenu === 'applications' ? (
+                  <Admin defaultTab="applications" />
+                ) : activeMenu === 'profile' ? (
+                  <Profile />
+                ) : isAuthenticated ? (
+                  <Tabs 
+                    activeKey={['home', 'pet', 'all_pets', 'leaderboard'].includes(activeMenu) ? activeMenu === 'home' ? 'pet' : activeMenu : 'pet'} 
+                    onChange={(key) => setActiveMenu(key)}
+                    items={authTabItems}
+                    size={isMobile ? 'small' : 'middle'}
+                    centered={isMobile}
+                  />
+                ) : (
+                  <Tabs 
+                    activeKey={['all_pets', 'leaderboard'].includes(activeMenu) ? activeMenu : 'all_pets'} 
+                    onChange={(key) => setActiveMenu(key)}
+                    items={unauthTabItems}
+                    size={isMobile ? 'small' : 'middle'}
+                    centered={isMobile}
+                  />
+                )}
+              </div>
+            </Content>
+          </>
+        ) : (
+          <>
+            <Sider width={200} style={{ background: '#fff', boxShadow: '2px 0 8px rgba(0,0,0,0.05)', zIndex: 0 }}>
+              <Menu
+                mode="inline"
+                selectedKeys={[activeMenu]}
+                style={{ height: '100%', borderRight: 0, padding: '16px 0' }}
+                items={menuItems}
+                onClick={({ key}) => {
+                  if (key === 'profile') return;
+                  setActiveMenu(key);
+                }}
               />
-            ) : (
-              <Tabs 
-                activeKey={['all_pets', 'leaderboard'].includes(activeMenu) ? activeMenu : 'all_pets'} 
-                onChange={(key) => setActiveMenu(key)}
-                items={unauthTabItems}
-              />
-            )}
-          </div>
-        </Content>
+            </Sider>
+
+            <Content style={{ padding: '24px 40px', background: '#f0f2f5', minHeight: 'calc(100vh - 64px)' }}>
+              <div style={{ background: '#fff', padding: 32, borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.05)', minHeight: '100%' }}>
+                {activeMenu === 'assignment' ? (
+                  <Assignments />
+                ) : activeMenu === 'wrong_questions' ? (
+                  <WrongQuestions />
+                ) : activeMenu === 'battle' ? (
+                  <Battle />
+                ) : activeMenu === 'shop' ? (
+                  <ShopAndBackpack />
+                ) : activeMenu === 'friends' ? (
+                  <Friends />
+                ) : activeMenu === 'achievements' ? (
+                  <Achievements />
+                ) : activeMenu === 'posts' ? (
+                  <Posts />
+                ) : activeMenu === 'chat' ? (
+                  <ChatRoom />
+                ) : activeMenu === 'forum' ? (
+                  <Forum />
+                ) : activeMenu === 'notifications' ? (
+                  <Notifications />
+                ) : activeMenu === 'admin' ? (
+                  <Admin />
+                ) : activeMenu === 'applications' ? (
+                  <Admin defaultTab="applications" />
+                ) : activeMenu === 'profile' ? (
+                  <Profile />
+                ) : isAuthenticated ? (
+                  <Tabs 
+                    activeKey={['home', 'pet', 'all_pets', 'leaderboard'].includes(activeMenu) ? activeMenu === 'home' ? 'pet' : activeMenu : 'pet'} 
+                    onChange={(key) => setActiveMenu(key)}
+                    items={authTabItems}
+                  />
+                ) : (
+                  <Tabs 
+                    activeKey={['all_pets', 'leaderboard'].includes(activeMenu) ? activeMenu : 'all_pets'} 
+                    onChange={(key) => setActiveMenu(key)}
+                    items={unauthTabItems}
+                  />
+                )}
+              </div>
+            </Content>
+          </>
+        )}
       </Layout>
 
       <Modal
@@ -500,7 +620,8 @@ const Home: React.FC = () => {
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         footer={null}
-        width={900}
+        width={isMobile ? '95%' : 900}
+        centered={isMobile}
       >
         <Spin spinning={loadingPetDetail}>
           {selectedPet && (

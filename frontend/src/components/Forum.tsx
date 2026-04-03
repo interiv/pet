@@ -1,13 +1,24 @@
 import React, { useEffect, useState } from 'react';
 import { Card, List, Avatar, Button, Input, message, Space, Tag, Modal, Empty, Spin, Tabs, Segmented, Popconfirm, Tooltip } from 'antd';
-import { LikeOutlined, LikeFilled, MessageOutlined, DeleteOutlined, SendOutlined, PlusOutlined, StarOutlined, StarFilled, EyeOutlined, FireOutlined, ClockCircleOutlined, EditOutlined, SearchOutlined } from '@ant-design/icons';
+import { LikeOutlined, LikeFilled, MessageOutlined, DeleteOutlined, SendOutlined, PlusOutlined, StarOutlined, StarFilled, EyeOutlined, FireOutlined, ClockCircleOutlined, EditOutlined, SearchOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { forumAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
 const { TextArea } = Input;
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 const Forum: React.FC = () => {
   const { user, isAuthenticated } = useAuthStore();
+  const isMobile = useMobile();
   const [forums, setForums] = useState<any[]>([]);
   const [threads, setThreads] = useState<any[]>([]);
   const [activeForumId, setActiveForumId] = useState<number | null>(null);
@@ -175,9 +186,9 @@ const Forum: React.FC = () => {
   return (
     <div>
       {/* 头部 */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <h2 style={{ margin: 0 }}>📋 班级论坛</h2>
-        <Space>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isMobile ? 12 : 20, flexWrap: 'wrap', gap: 8 }}>
+        <h2 style={{ margin: 0, fontSize: isMobile ? 18 : undefined }}>📋 班级论坛</h2>
+        <Space size={isMobile ? 4 : 8} wrap>
           <Input.Search
             placeholder="搜索帖子..."
             value={searchKeyword}
@@ -185,17 +196,17 @@ const Forum: React.FC = () => {
             onSearch={() => loadThreads()}
             enterButton={<SearchOutlined />}
             allowClear
-            style={{ width: 220 }}
+            style={isMobile ? { width: 140 } : { width: 220 }}
           />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => { setShowCreateModal(true); setSelectedForumId(activeForumId); }}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => { setShowCreateModal(true); setSelectedForumId(activeForumId); }} size={isMobile ? 'small' : 'middle'}>
             发帖
           </Button>
         </Space>
       </div>
 
-      <div style={{ display: 'flex', gap: 16 }}>
+      <div style={{ display: isMobile ? 'block' : 'flex', gap: isMobile ? 12 : 16 }}>
         {/* 左侧 - 板块列表 */}
-        <Card title="📁 板块" style={{ width: 220, flexShrink: 0 }} bodyStyle={{ padding: '8px 0' }}>
+        <Card title="📁 板块" style={isMobile ? { width: '100%', marginBottom: 12 } : { width: 220, flexShrink: 0 }} bodyStyle={{ padding: '8px 0' }}>
           <List
             dataSource={forums}
             size="small"
@@ -203,17 +214,17 @@ const Forum: React.FC = () => {
               <div
                 onClick={() => setActiveForumId(f.id)}
                 style={{
-                  padding: '10px 14px',
+                  padding: isMobile ? '8px 10px' : '10px 14px',
                   cursor: 'pointer',
                   background: activeForumId === f.id ? '#e6f7ff' : 'transparent',
                   borderLeft: `3px solid ${activeForumId === f.id ? '#1890ff' : 'transparent'}`,
                   transition: 'all 0.2s',
                 }}
               >
-                <Space>
-                  <span>{f.icon}</span>
-                  <span style={{ fontWeight: activeForumId === f.id ? 600 : 400 }}>{f.name}</span>
-                  <Tag style={{ fontSize: 10, marginLeft: 'auto' }}>{f.thread_count || 0}</Tag>
+                <Space size={isMobile ? 4 : 8}>
+                  <span style={{ fontSize: isMobile ? 16 : undefined }}>{f.icon}</span>
+                  <span style={{ fontWeight: activeForumId === f.id ? 600 : 400, fontSize: isMobile ? 13 : undefined }}>{f.name}</span>
+                  <Tag style={{ fontSize: isMobile ? 9 : 10, marginLeft: 'auto' }}>{f.thread_count || 0}</Tag>
                 </Space>
               </div>
             )}
@@ -222,7 +233,7 @@ const Forum: React.FC = () => {
 
         {/* 右侧 - 帖子列表 / 详情 */}
         {!showThreadDetail ? (
-          <Card style={{ flex: 1 }} bodyStyle={{ padding: 12 }}>
+          <Card style={isMobile ? { width: '100%' } : { flex: 1 }} bodyStyle={{ padding: isMobile ? 8 : 12 }}>
             {/* 排序栏 */}
             <Segmented
               options={[
@@ -232,7 +243,8 @@ const Forum: React.FC = () => {
               ]}
               value={sortType}
               onChange={(v) => setSortType(v as string)}
-              style={{ marginBottom: 16 }}
+              style={{ marginBottom: isMobile ? 12 : 16, width: isMobile ? '100%' : undefined }}
+              block={isMobile}
             />
 
             <Spin spinning={threadsLoading}>
@@ -246,33 +258,33 @@ const Forum: React.FC = () => {
                       key={thread.id}
                       size="small"
                       hoverable
-                      style={{ marginBottom: 8, borderRadius: 8 }}
-                      bodyStyle={{ padding: 12 }}
+                      style={{ marginBottom: isMobile ? 6 : 8, borderRadius: 8 }}
+                      bodyStyle={{ padding: isMobile ? 10 : 12 }}
                       onClick={() => openThreadDetail(thread)}
                     >
-                      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                        <Avatar src={thread.avatar} size={36} style={{ background: '#1890ff' }}>
+                      <div style={{ display: 'flex', gap: isMobile ? 8 : 12, alignItems: 'flex-start' }}>
+                        <Avatar src={thread.avatar} size={isMobile ? 30 : 36} style={{ background: '#1890ff', flexShrink: 0 }}>
                           {thread.username?.[0]}
                         </Avatar>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                            <span style={{ fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>{thread.title}</span>
-                            {thread.is_top && <Tag color="red">置顶</Tag>}
-                            {thread.is_essence && <Tag color="gold">精华</Tag>}
+                            <span style={{ fontWeight: 600, fontSize: isMobile ? 13 : 14, cursor: 'pointer' }}>{thread.title}</span>
+                            {thread.is_top && <Tag color="red" style={{ fontSize: isMobile ? 10 : undefined }}>置顶</Tag>}
+                            {thread.is_essence && <Tag color="gold" style={{ fontSize: isMobile ? 10 : undefined }}>精华</Tag>}
                           </div>
 
                           {/* 标签 */}
                           {thread.tags && thread.tags.length > 0 && (
                             <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                               {thread.tags.map((tag: string, idx: number) => (
-                                <Tag key={idx} color="blue" style={{ fontSize: 11, margin: 0 }}>{tag}</Tag>
+                                <Tag key={idx} color="blue" style={{ fontSize: isMobile ? 10 : 11, margin: 0 }}>{tag}</Tag>
                               ))}
                             </div>
                           )}
 
-                          <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginTop: 6, color: '#999', fontSize: 12 }}>
+                          <div style={{ display: 'flex', gap: isMobile ? 8 : 16, alignItems: 'center', marginTop: 6, color: '#999', fontSize: isMobile ? 11 : 12, flexWrap: 'wrap' }}>
                             <span>{thread.username}</span>
-                            <Space size={12}>
+                            <Space size={isMobile ? 8 : 12}>
                               <Tooltip title="浏览"><EyeOutlined /> {thread.view_count}</Tooltip>
                               <Tooltip title="回复"><MessageOutlined /> {(thread.reply_count || 0)}</Tooltip>
                               <Tooltip title="点赞">
@@ -283,7 +295,7 @@ const Forum: React.FC = () => {
                                   {thread.is_liked ? <LikeFilled /> : <LikeOutlined />} {thread.like_count || 0}
                                 </span>
                               </Tooltip>
-                              <ClockCircleOutlined /> {formatTime(thread.last_reply_at || thread.created_at)}
+                              {!isMobile && <ClockCircleOutlined />}{formatTime(thread.last_reply_at || thread.created_at)}
                             </Space>
                           </div>
                         </div>
@@ -297,35 +309,35 @@ const Forum: React.FC = () => {
         ) : (
           /* 帖子详情 */
           <Card
-            style={{ flex: 1 }}
+            style={isMobile ? { width: '100%' } : { flex: 1 }}
             extra={
-              <Button onClick={() => { setShowThreadDetail(false); setViewingThread(null); }}>
-                ← 返回列表
+              <Button icon={<ArrowLeftOutlined />} onClick={() => { setShowThreadDetail(false); setViewingThread(null); }} size={isMobile ? 'small' : 'middle'}>
+                {isMobile ? '' : '← 返回列表'}
               </Button>
             }
           >
             {viewingThread && (
               <>
                 {/* 标题区 */}
-                <div style={{ borderBottom: '1px solid #f0f0f0', paddingBottom: 16, marginBottom: 16 }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                    {viewingThread.is_top && <Tag color="red">置顶</Tag>}
-                    {viewingThread.is_essence && <Tag color="gold">精华</Tag>}
+                <div style={{ borderBottom: '1px solid #f0f0f0', paddingBottom: isMobile ? 12 : 16, marginBottom: isMobile ? 12 : 16 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+                    {viewingThread.is_top && <Tag color="red" style={{ fontSize: isMobile ? 10 : undefined }}>置顶</Tag>}
+                    {viewingThread.is_essence && <Tag color="gold" style={{ fontSize: isMobile ? 10 : undefined }}>精华</Tag>}
                     {viewingThread.tags && viewingThread.tags.map((tag: string, idx: number) => (
-                      <Tag key={idx} color="blue">{tag}</Tag>
+                      <Tag key={idx} color="blue" style={{ fontSize: isMobile ? 10 : undefined }}>{tag}</Tag>
                     ))}
                   </div>
-                  <h2 style={{ margin: 0 }}>{viewingThread.title}</h2>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, color: '#999', fontSize: 13 }}>
-                    <Space>
-                      <Avatar size={24} src={viewingThread.avatar} style={{ background: '#1890ff' }}>
+                  <h2 style={{ margin: 0, fontSize: isMobile ? 18 : undefined }}>{viewingThread.title}</h2>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, color: '#999', fontSize: isMobile ? 12 : 13, flexWrap: 'wrap', gap: 4 }}>
+                    <Space size={isMobile ? 4 : 8} wrap>
+                      <Avatar size={isMobile ? 20 : 24} src={viewingThread.avatar} style={{ background: '#1890ff' }}>
                         {viewingThread.username?.[0]}
                       </Avatar>
                       <span>{viewingThread.username}</span>
-                      <span>·</span>
+                      {!isMobile && <span>·</span>}
                       <span>{formatTime(viewingThread.created_at)}</span>
                     </Space>
-                    <Space>
+                    <Space size={isMobile ? 6 : 12}>
                       <EyeOutlined /> {viewingThread.view_count}
                       <LikeOutlined /> {viewingThread.like_count}
                       <MessageOutlined /> {viewingThread.reply_count}
@@ -333,53 +345,55 @@ const Forum: React.FC = () => {
                   </div>
 
                   {/* 操作按钮 */}
-                  <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                  <div style={{ marginTop: isMobile ? 10 : 12, display: 'flex', gap: isMobile ? 4 : 8, flexWrap: 'wrap' }}>
                     <Button
                       icon={viewingThread.is_liked ? <LikeFilled style={{ color: '#1890ff' }} /> : <LikeOutlined />}
                       onClick={() => handleToggleLike(viewingThread.id)}
+                      size={isMobile ? 'small' : 'middle'}
                     >
                       {viewingThread.is_liked ? '已赞' : '点赞'}
                     </Button>
                     <Button
                       icon={viewingThread.is_favorited ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
                       onClick={() => handleToggleFavorite(viewingThread.id)}
+                      size={isMobile ? 'small' : 'middle'}
                     >
                       {viewingThread.is_favorited ? '已收藏' : '收藏'}
                     </Button>
                     {(user?.id === viewingThread.user_id || user?.role === 'admin') && (
                       <Popconfirm title="确定删除此帖子？" onConfirm={() => handleDeleteThread(viewingThread.id)} okText="确定" cancelText="取消">
-                        <Button danger icon={<DeleteOutlined />}>删除</Button>
+                        <Button danger icon={<DeleteOutlined />} size={isMobile ? 'small' : 'middle'}>删除</Button>
                       </Popconfirm>
                     )}
                   </div>
                 </div>
 
                 {/* 主楼内容 */}
-                <div style={{ background: '#fafafa', borderRadius: 8, padding: 16, marginBottom: 20 }}>
-                  <p style={{ lineHeight: 1.8, whiteSpace: 'pre-wrap', margin: 0 }}>{viewingThread.content}</p>
+                <div style={{ background: '#fafafa', borderRadius: 8, padding: isMobile ? 12 : 16, marginBottom: isMobile ? 14 : 20 }}>
+                  <p style={{ lineHeight: 1.8, whiteSpace: 'pre-wrap', margin: 0, fontSize: isMobile ? 14 : undefined }}>{viewingThread.content}</p>
                 </div>
 
                 {/* 回复列表 */}
-                <h3 style={{ margin: '0 0 12px' }}>💬 回复 ({(viewingThread.reply_count || 0)})</h3>
+                <h3 style={{ margin: `0 0 ${isMobile ? 10 : 12}px`, fontSize: isMobile ? 15 : undefined }}>💬 回复 ({(viewingThread.reply_count || 0)})</h3>
                 <Spin spinning={threadsLoading}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 400, overflowY: 'auto', paddingRight: 4 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 8 : 12, maxHeight: isMobile ? 300 : 400, overflowY: 'auto', paddingRight: 4 }}>
                     {(!viewingThread.replies || viewingThread.replies.length === 0) ? (
                       <Empty description="暂无回复，抢沙发！" image={Empty.PRESENTED_IMAGE_SIMPLE} />
                     ) : (
                       viewingThread.replies.map((post: any) => (
-                        <Card key={post.id} size="small" style={{ borderRadius: 8 }}>
-                          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                            <Avatar src={post.avatar} size={32} style={{ background: '#1890ff' }}>
+                        <Card key={post.id} size="small" style={{ borderRadius: 8 }} bodyStyle={{ padding: isMobile ? 10 : undefined }}>
+                          <div style={{ display: 'flex', gap: isMobile ? 8 : 10, alignItems: 'flex-start' }}>
+                            <Avatar src={post.avatar} size={isMobile ? 28 : 32} style={{ background: '#1890ff', flexShrink: 0 }}>
                               {post.username?.[0]}
                             </Avatar>
-                            <div style={{ flex: 1 }}>
-                              <Space size={6}>
-                                <span style={{ fontWeight: 600, fontSize: 13 }}>{post.username}</span>
-                                {post.is_first_post && <Tag color="green" style={{ fontSize: 10 }}>楼主</Tag>}
-                                <span style={{ fontSize: 11, color: '#bbb' }}>{formatTime(post.created_at)}</span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <Space size={isMobile ? 4 : 6}>
+                                <span style={{ fontWeight: 600, fontSize: isMobile ? 12 : 13 }}>{post.username}</span>
+                                {post.is_first_post && <Tag color="green" style={{ fontSize: isMobile ? 9 : 10 }}>楼主</Tag>}
+                                <span style={{ fontSize: isMobile ? 10 : 11, color: '#bbb' }}>{formatTime(post.created_at)}</span>
                               </Space>
-                              <p style={{ margin: '6px 0 0', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{post.content}</p>
-                              <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
+                              <p style={{ margin: `${isMobile ? 4 : 6}px 0 0`, lineHeight: 1.7, whiteSpace: 'pre-wrap', fontSize: isMobile ? 13 : undefined }}>{post.content}</p>
+                              <div style={{ marginTop: 6, display: 'flex', gap: isMobile ? 4 : 8 }}>
                                 <Button
                                   type="text"
                                   size="small"
@@ -413,22 +427,23 @@ const Forum: React.FC = () => {
                 </Spin>
 
                 {/* 回复输入框 */}
-                <div style={{ marginTop: 16, borderTop: '1px solid #f0f0f0', paddingTop: 16 }}>
+                <div style={{ marginTop: isMobile ? 12 : 16, borderTop: '1px solid #f0f0f0', paddingTop: isMobile ? 12 : 16 }}>
                   {replyToPostId && (
-                    <Tag closable onClose={() => setReplyToPostId(undefined)} style={{ marginBottom: 8 }}>
+                    <Tag closable onClose={() => setReplyToPostId(undefined)} style={{ marginBottom: 8, fontSize: isMobile ? 11 : undefined }}>
                       回复 #{replyToPostId}
                     </Tag>
                   )}
                   <TextArea
-                    rows={3}
+                    rows={isMobile ? 3 : 3}
                     placeholder="写下你的回复..."
                     value={replyContent}
                     onChange={(e) => setReplyContent(e.target.value)}
                     maxLength={2000}
                     showCount
+                    style={{ fontSize: isMobile ? 14 : undefined }}
                   />
                   <div style={{ textAlign: 'right', marginTop: 8 }}>
-                    <Button type="primary" icon={<SendOutlined />} onClick={handleReply} disabled={!replyContent.trim()}>
+                    <Button type="primary" icon={<SendOutlined />} onClick={handleReply} disabled={!replyContent.trim()} size={isMobile ? 'small' : 'middle'}>
                       发布回复
                     </Button>
                   </div>

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Card, List, Badge, Button, Tag, Empty, Spin, Popconfirm, Tabs, message } from 'antd';
+import { Card, List, Badge, Button, Tag, Empty, Spin, Popconfirm, Tabs, message, Space } from 'antd';
 import {
   BellOutlined,
   CheckOutlined,
@@ -15,6 +15,16 @@ import {
 } from '@ant-design/icons';
 import { notificationAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
 
 const typeConfig: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
   friend_request: { icon: <UserAddOutlined />, color: 'blue', label: '好友请求' },
@@ -44,6 +54,7 @@ interface NotificationItem {
 
 const Notifications: React.FC = () => {
   const { isAuthenticated } = useAuthStore();
+  const isMobile = useMobile();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [unreadByType, setUnreadByType] = useState<Record<string, number>>({});
@@ -161,20 +172,20 @@ const Notifications: React.FC = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <h2 style={{ margin: 0 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isMobile ? 12 : 20, flexWrap: 'wrap', gap: 8 }}>
+        <h2 style={{ margin: 0, fontSize: isMobile ? 18 : undefined }}>
           <Badge count={unreadCount} size="small">
-            <BellOutlined style={{ marginRight: 8 }} />
+            <BellOutlined style={{ marginRight: isMobile ? 4 : 8 }} />
           </Badge>
           通知中心
         </h2>
-        <Space>
+        <Space size={isMobile ? 4 : 8} wrap>
           {unreadCount > 0 && (
-            <Button size="small" onClick={handleMarkAllAsRead}>
-              全部标为已读
+            <Button size={isMobile ? 'small' : 'small'} onClick={handleMarkAllAsRead}>
+              全部已读
             </Button>
           )}
-          <Button size="small" onClick={handleClearRead}>
+          <Button size={isMobile ? 'small' : 'small'} onClick={handleClearRead}>
             清空已读
           </Button>
         </Space>
@@ -186,12 +197,13 @@ const Notifications: React.FC = () => {
           onChange={(k) => setActiveTab(k)}
           items={tabItems}
           size="small"
-          style={{ paddingLeft: 16 }}
+          style={{ paddingLeft: isMobile ? 10 : 16 }}
+          centered={isMobile}
         />
 
         <Spin spinning={loading}>
           {notifications.length === 0 ? (
-            <Empty description="暂无通知" style={{ padding: 40 }} />
+            <Empty description="暂无通知" style={{ padding: isMobile ? 30 : 40 }} />
           ) : (
             <List
               dataSource={notifications}
@@ -202,7 +214,7 @@ const Notifications: React.FC = () => {
                     style={{
                       background: notif.is_read ? 'transparent' : '#f6ffed',
                       borderBottom: '1px solid #f5f5f5',
-                      padding: '14px 20px',
+                      padding: isMobile ? '10px 14px' : '14px 20px',
                       cursor: notif.is_read ? 'default' : 'pointer',
                     }}
                     actions={[
@@ -212,8 +224,9 @@ const Notifications: React.FC = () => {
                           size="small"
                           icon={<CheckOutlined />}
                           onClick={() => handleMarkAsRead(notif.id)}
+                          style={{ fontSize: isMobile ? 11 : undefined }}
                         >
-                          已读
+                          {isMobile ? '' : '已读'}
                         </Button>
                       ),
                       <Popconfirm
@@ -222,7 +235,9 @@ const Notifications: React.FC = () => {
                         okText="确定"
                         cancelText="取消"
                       >
-                        <Button type="link" danger size="small" icon={<DeleteOutlined />}>删除</Button>
+                        <Button type="link" danger size="small" icon={<DeleteOutlined />} style={{ fontSize: isMobile ? 11 : undefined }}>
+                          {isMobile ? '' : '删除'}
+                        </Button>
                       </Popconfirm>,
                     ]}
                     onClick={() => !notif.is_read && handleMarkAsRead(notif.id)}
@@ -231,14 +246,14 @@ const Notifications: React.FC = () => {
                       avatar={
                         <div
                           style={{
-                            width: 42,
-                            height: 42,
+                            width: isMobile ? 36 : 42,
+                            height: isMobile ? 36 : 42,
                             borderRadius: '50%',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                             background: notif.is_read ? '#f5f5f5' : '#e6f7ff',
-                            fontSize: 18,
+                            fontSize: isMobile ? 16 : 18,
                             flexShrink: 0,
                           }}
                         >
@@ -246,20 +261,20 @@ const Notifications: React.FC = () => {
                         </div>
                       }
                       title={
-                        <Space size={6}>
-                          <span style={{ fontWeight: notif.is_read ? 400 : 600 }}>{notif.title}</span>
+                        <Space size={isMobile ? 4 : 6} wrap>
+                          <span style={{ fontWeight: notif.is_read ? 400 : 600, fontSize: isMobile ? 13 : undefined }}>{notif.title}</span>
                           {!notif.is_read && <Badge status="processing" />}
-                          <Tag color={config.color} style={{ fontSize: 10, margin: 0 }}>{config.label}</Tag>
+                          <Tag color={config.color} style={{ fontSize: isMobile ? 9 : 10, margin: 0 }}>{config.label}</Tag>
                         </Space>
                       }
                       description={
                         <div>
                           {notif.content && (
-                            <p style={{ margin: '4px 0 2px', color: '#666', lineHeight: 1.5, fontSize: 13 }}>
+                            <p style={{ margin: '4px 0 2px', color: '#666', lineHeight: 1.5, fontSize: isMobile ? 12 : 13 }}>
                               {notif.content}
                             </p>
                           )}
-                          <span style={{ fontSize: 11, color: '#bbb' }}>{formatTime(notif.created_at)}</span>
+                          <span style={{ fontSize: isMobile ? 10 : 11, color: '#bbb' }}>{formatTime(notif.created_at)}</span>
                         </div>
                       }
                     />
