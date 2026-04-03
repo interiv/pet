@@ -11,7 +11,7 @@ import {
   SettingOutlined,
   TeamOutlined
 } from '@ant-design/icons';
-import { petAPI, leaderboardAPI } from '../utils/api';
+import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
 import PetDisplay from '../components/PetDisplay';
 import CreatePet from '../components/CreatePet';

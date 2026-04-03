@@ -227,6 +227,10 @@ const Assignments: React.FC = () => {
               <Option value="英语">英语</Option>
               <Option value="物理">物理</Option>
               <Option value="化学">化学</Option>
+              <Option value="生物">生物</Option>
+              <Option value="历史">历史</Option>
+              <Option value="地理">地理</Option>
+              <Option value="政治">政治</Option>
               <Option value="其他">其他</Option>
             </Select>
           </Form.Item>
