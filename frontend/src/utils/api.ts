@@ -93,14 +93,34 @@ export const assignmentAPI = {
   
   getAssignment: (id: number) => api.get(`/assignments/${id}`),
   
+  generateQuestions: (data: { subject: string; topic: string; difficulty?: string; question_type: string; count?: number; grade_level?: string }) =>
+    api.post('/assignments/generate', data),
+  
   createAssignment: (data: any) => 
     api.post('/assignments', data),
   
-  submitAssignment: (id: number, data: { answers: any; attachments?: any[] }) => 
+  submitAssignment: (id: number, data: { answers: any[]; attachments?: any[] }) => 
     api.post(`/assignments/${id}/submit`, data),
   
-  gradeAssignment: (data: { submission_id: number }) => 
-    api.post('/assignments/grade', data),
+  getSubmissionDetail: (id: number) => 
+    api.get(`/assignments/submissions/${id}`),
+  
+  getStatistics: (id: number) => 
+    api.get(`/assignments/${id}/statistics`),
+  
+  getMyWrongQuestions: (params?: { subject?: string }) => 
+    api.get('/assignments/wrong/my', { params }),
+  
+  markWrongQuestionReviewed: (id: number) => 
+    api.post(`/assignments/wrong/${id}/review`),
+  
+  uploadImage: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/assignments/upload/image', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+  },
 };
 
 // 战斗相关 API

@@ -9,13 +9,15 @@ import {
   LogoutOutlined,
   DashboardOutlined,
   SettingOutlined,
-  TeamOutlined
+  TeamOutlined,
+  ExclamationCircleOutlined
 } from '@ant-design/icons';
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
 import PetDisplay from '../components/PetDisplay';
 import CreatePet from '../components/CreatePet';
 import Assignments from '../components/Assignments';
+import WrongQuestions from '../components/WrongQuestions';
 import Battle from '../components/Battle';
 import ShopAndBackpack from '../components/ShopAndBackpack';
 import Friends from '../components/Friends';
@@ -126,6 +128,11 @@ const Home: React.FC = () => {
       key: 'assignment',
       icon: <BookOutlined />,
       label: '作业',
+    },
+    {
+      key: 'wrong_questions',
+      icon: <ExclamationCircleOutlined />,
+      label: '错题本',
     },
     {
       key: 'battle',
@@ -419,6 +426,8 @@ const Home: React.FC = () => {
           <div style={{ background: '#fff', padding: 32, borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.05)', minHeight: '100%' }}>
             {activeMenu === 'assignment' ? (
               <Assignments />
+            ) : activeMenu === 'wrong_questions' ? (
+              <WrongQuestions />
             ) : activeMenu === 'battle' ? (
               <Battle />
             ) : activeMenu === 'shop' ? (
