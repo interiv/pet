@@ -256,4 +256,81 @@ export const equipmentAPI = {
   upgradePart: (data: { user_equip_id: number }) => api.post('/equipment/upgrade', data),
 };
 
+// 动态/留言板相关 API
+export const postAPI = {
+  getPosts: (params?: { type?: string; class_id?: number; page?: number; limit?: number }) =>
+    api.get('/posts/posts', { params }),
+
+  createPost: (data: { content: string; images?: string[]; scope?: string; class_id?: number }) =>
+    api.post('/posts/posts', data),
+
+  deletePost: (id: number) => api.delete(`/posts/posts/${id}`),
+
+  toggleLike: (id: number) => api.post(`/posts/posts/${id}/like`),
+
+  addComment: (postId: number, data: { content: string; parent_id?: number }) =>
+    api.post(`/posts/posts/${postId}/comments`, data),
+
+  deleteComment: (commentId: number) => api.delete(`/posts/comments/${commentId}`),
+
+  togglePin: (id: number, is_top: boolean) => api.put(`/posts/posts/${id}/pin`, { is_top }),
+};
+
+// 聊天系统相关 API
+export const chatAPI = {
+  getConversations: () => api.get('/chat/conversations'),
+
+  getMessages: (params: { room_type: 'class' | 'private'; room_id?: number; target_user_id?: number; page?: number; limit?: number }) =>
+    api.get('/chat/messages', { params }),
+
+  sendMessage: (data: { content: string; room_type: 'class' | 'private'; room_id?: number; target_user_id?: number; msg_type?: string }) =>
+    api.post('/chat/messages', data),
+
+  searchUsers: (keyword: string) => api.get('/chat/search-users', { params: { keyword } }),
+
+  deleteMessage: (msgId: number) => api.delete(`/chat/messages/${msgId}`),
+};
+
+// 论坛相关 API
+export const forumAPI = {
+  getForums: () => api.get('/forum/forums'),
+
+  getThreads: (params?: { forum_id?: number; keyword?: string; sort?: string; page?: number; limit?: number }) =>
+    api.get('/forum/threads', { params }),
+
+  getThreadDetail: (threadId: number) => api.get(`/forum/threads/${threadId}`),
+
+  createThread: (data: { title: string; content: string; forum_id: number; tags?: string[] }) =>
+    api.post('/forum/threads', data),
+
+  replyThread: (threadId: number, data: { content: string; parent_id?: number }) =>
+    api.post(`/forum/threads/${threadId}/reply`, data),
+
+  toggleThreadLike: (threadId: number) => api.post(`/forum/threads/${threadId}/like`),
+
+  togglePostLike: (postId: number) => api.post(`/forum/posts/${postId}/like`),
+
+  toggleFavorite: (threadId: number) => api.post(`/forum/threads/${threadId}/favorite`),
+
+  getFavorites: () => api.get('/forum/favorites'),
+
+  deleteThread: (threadId: number) => api.delete(`/forum/threads/${threadId}`),
+};
+
+// 通知系统相关 API
+export const notificationAPI = {
+  getNotifications: (params?: { type?: string; page?: number; limit?: number }) =>
+    api.get('/notifications/', { params }),
+
+  getUnreadCount: () => api.get('/notifications/unread-count'),
+
+  markAsRead: (notificationId: number) => api.put(`/notifications/${notificationId}/read`),
+
+  markAllAsRead: () => api.put('/notifications/read-all'),
+
+  deleteNotification: (notificationId: number) => api.delete(`/notifications/${notificationId}`),
+
+  clearReadNotifications: () => api.delete('/notifications/clear-read'),
+};
+
 export default api;

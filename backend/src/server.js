@@ -20,6 +20,10 @@ const achievementRoutes = require('./routes/achievements');
 const leaderboardRoutes = require('./routes/leaderboard');
 const equipmentRoutes = require('./routes/equipment');
 const adminRoutes = require('./routes/admin');
+const postRoutes = require('./routes/posts');
+const chatRoutes = require('./routes/chat');
+const forumRoutes = require('./routes/forum');
+const notificationRoutes = require('./routes/notifications');
 
 // 初始化数据库
 initDatabase();
@@ -62,6 +66,10 @@ app.use('/api/achievements', achievementRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/equipment', equipmentRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/posts', postRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/forum', forumRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {
@@ -99,6 +107,50 @@ io.on('connection', (socket) => {
   // 宠物互动
   socket.on('pet-interaction', (data) => {
     socket.to(`user:${data.targetUserId}`).emit('pet-interaction', data);
+  });
+
+  // ==================== 聊天系统 ====================
+
+  // 加入班级群聊房间
+  socket.on('join-class-chat', (classId) => {
+    socket.join(`class:${classId}`);
+    console.log(`用户 ${socket.id} 加入班级群聊：${classId}`);
+  });
+
+  // 离开班级群聊
+  socket.on('leave-class-chat', (classId) => {
+    socket.leave(`class:${classId}`);
+    console.log(`用户 ${socket.id} 离开班级群聊：${classId}`);
+  });
+
+  // 班级群聊消息（实时广播）
+  socket.on('send-class-message', (data) => {
+    const { classId, message } = data;
+    io.to(`class:${classId}`).emit('new-class-message', message);
+  });
+
+  // 加入私聊房间（用两个用户的ID排序组合作为房间名）
+  socket.on('join-private-chat', ({ userId1, userId2 }) => {
+    const roomId = `private:${[userId1, userId2].sort((a, b) => a - b).join('-')}`;
+    socket.join(roomId);
+    console.log(`用户 ${socket.id} 加入私聊房间：${roomId}`);
+  });
+
+  // 私聊消息（实时推送）
+  socket.on('send-private-message', (data) => {
+    const { targetUserId, message } = data;
+    const roomId = `private:${[message.user_id, targetUserId].sort((a, b) => a - b).join('-')}`;
+    io.to(roomId).emit('new-private-message', message);
+  });
+
+  // 用户正在输入中
+  socket.on('typing-in-class', (data) => {
+    socket.to(`class:${data.classId}`).emit('user-typing', { username: data.username });
+  });
+
+  socket.on('typing-in-private', (data) => {
+    const roomId = `private:${[data.userId, data.targetUserId].sort((a, b) => a - b).join('-')}`;
+    socket.to(roomId).emit('user-typing', { username: data.username });
   });
 
   // 断开连接

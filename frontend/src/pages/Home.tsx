@@ -10,7 +10,11 @@ import {
   DashboardOutlined,
   SettingOutlined,
   TeamOutlined,
-  ExclamationCircleOutlined
+  ExclamationCircleOutlined,
+  MessageOutlined,
+  BellOutlined,
+  ForumOutlined,
+  NotificationOutlined,
 } from '@ant-design/icons';
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
@@ -24,6 +28,10 @@ import Friends from '../components/Friends';
 import Admin from '../components/Admin';
 import Profile from '../components/Profile';
 import Achievements from '../components/Achievements';
+import Posts from '../components/Posts';
+import ChatRoom from '../components/ChatRoom';
+import Forum from '../components/Forum';
+import Notifications from '../components/Notifications';
 
 const { Header, Content, Sider } = Layout;
 
@@ -153,6 +161,26 @@ const Home: React.FC = () => {
       key: 'achievements',
       icon: <TrophyOutlined />,
       label: '成就',
+    },
+    {
+      key: 'posts',
+      icon: <NotificationOutlined />,
+      label: '班级动态',
+    },
+    {
+      key: 'chat',
+      icon: <MessageOutlined />,
+      label: '群聊',
+    },
+    {
+      key: 'forum',
+      icon: <ForumOutlined />,
+      label: '论坛',
+    },
+    {
+      key: 'notifications',
+      icon: <BellOutlined />,
+      label: '通知中心',
     },
   ];
 
@@ -436,6 +464,14 @@ const Home: React.FC = () => {
               <Friends />
             ) : activeMenu === 'achievements' ? (
               <Achievements />
+            ) : activeMenu === 'posts' ? (
+              <Posts />
+            ) : activeMenu === 'chat' ? (
+              <ChatRoom />
+            ) : activeMenu === 'forum' ? (
+              <Forum />
+            ) : activeMenu === 'notifications' ? (
+              <Notifications />
             ) : activeMenu === 'admin' ? (
               <Admin />
             ) : activeMenu === 'applications' ? (
