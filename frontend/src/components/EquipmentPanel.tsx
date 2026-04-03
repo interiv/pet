@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Button, List, Tag, Badge, message, Tooltip, Divider } from 'antd';
+import { Card, Row, Col, Button, List, Tag, Badge, message, Tooltip } from 'antd';
 import { SkinOutlined, ArrowUpOutlined, SafetyCertificateOutlined, ThunderboltOutlined, HeartOutlined, RocketOutlined } from '@ant-design/icons';
-import { equipmentAPI, petAPI } from '../utils/api';
+import { equipmentAPI } from '../utils/api';
 
 interface EquipmentPanelProps {
   onEquipChange?: () => void;

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Progress, Tag, Badge, message, List, Tabs, TabsProps } from 'antd';
-import { TrophyOutlined, CheckCircleOutlined, ClockCircleOutlined, StarOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Progress, Tag, message, Tabs, TabsProps } from 'antd';
+import { TrophyOutlined, CheckCircleOutlined, StarOutlined } from '@ant-design/icons';
 import { achievementAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
@@ -56,7 +56,6 @@ const Achievements: React.FC = () => {
   const { isAuthenticated } = useAuthStore();
   const [achievements, setAchievements] = useState<Achievement[]>([]);
   const [myAchievements, setMyAchievements] = useState<UserAchievement[]>([]);
-  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -66,7 +65,6 @@ const Achievements: React.FC = () => {
 
   const loadAchievements = async () => {
     if (!isAuthenticated) return;
-    setLoading(true);
     try {
       const [allRes, myRes] = await Promise.all([
         achievementAPI.getAchievements(),
@@ -77,8 +75,6 @@ const Achievements: React.FC = () => {
     } catch (error) {
       console.error('加载成就失败:', error);
       message.error('加载成就失败');
-    } finally {
-      setLoading(false);
     }
   };
 

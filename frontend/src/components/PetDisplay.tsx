@@ -11,7 +11,6 @@ import {
   RetweetOutlined,
   RiseOutlined,
   MedicineBoxOutlined,
-  SkillStateError
 } from '@ant-design/icons';
 import { petAPI, equipmentAPI, petExtendedAPI, itemAPI } from '../utils/api';
 import { usePetStore } from '../store/authStore';

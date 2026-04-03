@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, List, Avatar, Button, Input, message, Space, Tag, Modal, Popconfirm, Empty, Spin, Segmented } from 'antd';
-import { LikeOutlined, LikeFilled, MessageOutlined, DeleteOutlined, SendOutlined, PlusOutlined, PinFilled } from '@ant-design/icons';
+import { LikeOutlined, LikeFilled, MessageOutlined, DeleteOutlined, SendOutlined, PlusOutlined } from '@ant-design/icons';
 import { postAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
@@ -155,7 +155,7 @@ const Posts: React.FC = () => {
             dataSource={posts}
             renderItem={(post: any) => (
               <Card key={post.id} style={{ marginBottom: isMobile ? 10 : 16, borderRadius: 12 }} bodyStyle={{ padding: isMobile ? 12 : 16 }}>
-                {post.is_top && <Tag color="red" icon={<PinFilled />} style={{ marginBottom: 6 }}>置顶</Tag>}
+                {post.is_top && <Tag color="red" style={{ marginBottom: 6 }}>置顶</Tag>}
 
                 {/* 帖子头部 */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>

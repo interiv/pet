@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Button, Input, List, Avatar, message, Modal, Form, Spin, Row, Col, Statistic, Popconfirm, Select } from 'antd';
 import { UserAddOutlined, TeamOutlined, HeartFilled, DeleteOutlined, GiftOutlined, FireOutlined, EyeOutlined } from '@ant-design/icons';
-import { friendAPI, petAPI, itemAPI, battleAPI } from '../utils/api';
+import { friendAPI, petAPI, itemAPI } from '../utils/api';
 
 import { useAuthStore, usePetStore } from '../store/authStore';
 
@@ -49,7 +49,7 @@ const Friends: React.FC = () => {
       await friendAPI.addFriend({ friend_username: values.username });
       message.success('好友添加成功！');
       setIsModalVisible(false);
-      form.resetForm();
+      form.resetFields();
       loadFriends();
     } catch (error: any) {
       message.error(error.response?.data?.error || '添加好友失败');

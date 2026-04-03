@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Card, List, Avatar, Button, Input, message, Space, Tag, Modal, Empty, Spin, Tabs, Segmented, Popconfirm, Tooltip } from 'antd';
-import { LikeOutlined, LikeFilled, MessageOutlined, DeleteOutlined, SendOutlined, PlusOutlined, StarOutlined, StarFilled, EyeOutlined, FireOutlined, ClockCircleOutlined, EditOutlined, SearchOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { Card, List, Avatar, Button, Input, message, Space, Tag, Modal, Empty, Spin, Segmented, Popconfirm, Tooltip } from 'antd';
+import { LikeOutlined, LikeFilled, MessageOutlined, DeleteOutlined, SendOutlined, PlusOutlined, StarOutlined, StarFilled, EyeOutlined, ClockCircleOutlined, SearchOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { forumAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
@@ -120,7 +120,7 @@ const Forum: React.FC = () => {
     try {
       const res = await forumAPI.toggleThreadLike(threadId);
       if (viewingThread && viewingThread.id === threadId) {
-        setViewingThread(prev => ({ ...prev, like_count: res.data.like_count, is_liked: res.data.liked }));
+        setViewingThread((prev: any) => ({ ...prev, like_count: res.data.like_count, is_liked: res.data.liked }));
       }
       setThreads(prev => prev.map(t =>
         t.id === threadId ? { ...t, like_count: res.data.like_count, is_liked: res.data.liked } : t
@@ -132,7 +132,7 @@ const Forum: React.FC = () => {
     try {
       const res = await forumAPI.toggleFavorite(threadId);
       if (viewingThread && viewingThread.id === threadId) {
-        setViewingThread(prev => ({ ...prev, is_favorited: res.data.favorited }));
+        setViewingThread((prev: any) => ({ ...prev, is_favorited: res.data.favorited }));
       }
       message.success(res.data.favorited ? '已收藏' : '取消收藏');
     } catch (e) {}
@@ -144,7 +144,7 @@ const Forum: React.FC = () => {
       const data: any = { content: replyContent.trim() };
       if (replyToPostId) data.parent_id = replyToPostId;
 
-      const res = await forumAPI.replyThread(viewingThread.id, data);
+      await forumAPI.replyThread(viewingThread.id, data);
       message.success('回复成功');
       setReplyContent('');
       setReplyToPostId(undefined);
@@ -400,11 +400,11 @@ const Forum: React.FC = () => {
                                   icon={post.is_liked ? <LikeFilled style={{ color: '#1890ff' }} /> : <LikeOutlined />}
                                   onClick={async () => {
                                     try {
-                                      const r = await forumAPI.togglePostLike(post.id);
-                                      const updated = viewingThread.replies.map((r: any) =>
-                                        r.id === post.id ? { ...r, like_count: r.data.like_count, is_liked: r.data.liked } : r
+                                      const res = await forumAPI.togglePostLike(post.id);
+                                      const updated = viewingThread.replies.map((reply: any) =>
+                                        reply.id === post.id ? { ...reply, like_count: res.data.like_count, is_liked: res.data.liked } : reply
                                       );
-                                      setViewingThread(prev => ({ ...prev, replies: updated }));
+                                      setViewingThread((prev: any) => ({ ...prev, replies: updated }));
                                     } catch {}
                                   }}
                                 >

@@ -4,14 +4,12 @@ import {
   BellOutlined,
   CheckOutlined,
   DeleteOutlined,
-  ClearOutlined,
   MessageOutlined,
   HeartOutlined,
   GiftOutlined,
   TrophyOutlined,
   UserAddOutlined,
   NotificationOutlined,
-  FireOutlined,
 } from '@ant-design/icons';
 import { notificationAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';

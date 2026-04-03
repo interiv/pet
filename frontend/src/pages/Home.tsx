@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, TabsProps, Modal, Spin, Table, Tag, Segmented, Space, Drawer, Button } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, TabsProps, Modal, Spin, Table, Segmented, Drawer, Button } from 'antd';
 import {
   HomeOutlined,
   BookOutlined,
@@ -13,11 +13,8 @@ import {
   ExclamationCircleOutlined,
   MessageOutlined,
   BellOutlined,
-  ForumOutlined,
   NotificationOutlined,
   MenuOutlined,
-  MenuFoldOutlined,
-  CloseOutlined,
 } from '@ant-design/icons';
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
@@ -189,7 +186,6 @@ const Home: React.FC = () => {
     },
     {
       key: 'forum',
-      icon: <ForumOutlined />,
       label: '论坛',
     },
     {

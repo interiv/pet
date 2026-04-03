@@ -4,8 +4,6 @@ import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, Setti
 import { adminAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
-const { TabPane } = Tabs;
-
 interface AdminProps {
   defaultTab?: string;
 }
@@ -471,7 +469,6 @@ const StudentManagement: React.FC = () => {
   const [goldModalVisible, setGoldModalVisible] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [studentDetail, setStudentDetail] = useState<any>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [form] = Form.useForm();
   const [goldForm] = Form.useForm();
 
@@ -502,7 +499,6 @@ const StudentManagement: React.FC = () => {
   };
 
   const viewDetail = async (id: number) => {
-    setDetailLoading(true);
     setDetailModalVisible(true);
     setSelectedStudent(students.find(s => s.id === id));
     try {
@@ -510,8 +506,6 @@ const StudentManagement: React.FC = () => {
       setStudentDetail(res.data);
     } catch (error) {
       message.error('加载学生详情失败');
-    } finally {
-      setDetailLoading(false);
     }
   };
 
@@ -1094,14 +1088,11 @@ const AISettings: React.FC = () => {
 };
 
 const DataView: React.FC = () => {
-  const { user } = useAuthStore();
   const [battles, setBattles] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
   const [shopRecords, setShopRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('battles');
-
-  const isAdmin = user?.role === 'admin';
 
   useEffect(() => {
     loadData();
