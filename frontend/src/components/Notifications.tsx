@@ -189,7 +189,7 @@ const Notifications: React.FC = () => {
         </Space>
       </div>
 
-      <Card bodyStyle={{ padding: 0 }} style={{ borderRadius: 12 }}>
+      <Card styles={{ body: { padding: 0 } }} style={{ borderRadius: 12 }}>
         <Tabs
           activeKey={activeTab}
           onChange={(k) => setActiveTab(k)}

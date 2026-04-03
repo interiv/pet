@@ -206,7 +206,7 @@ const Forum: React.FC = () => {
 
       <div style={{ display: isMobile ? 'block' : 'flex', gap: isMobile ? 12 : 16 }}>
         {/* 左侧 - 板块列表 */}
-        <Card title="📁 板块" style={isMobile ? { width: '100%', marginBottom: 12 } : { width: 220, flexShrink: 0 }} bodyStyle={{ padding: '8px 0' }}>
+        <Card title="📁 板块" style={isMobile ? { width: '100%', marginBottom: 12 } : { width: 220, flexShrink: 0 }} styles={{ body: { padding: '8px 0' } }}>
           <List
             dataSource={forums}
             size="small"
@@ -233,7 +233,7 @@ const Forum: React.FC = () => {
 
         {/* 右侧 - 帖子列表 / 详情 */}
         {!showThreadDetail ? (
-          <Card style={isMobile ? { width: '100%' } : { flex: 1 }} bodyStyle={{ padding: isMobile ? 8 : 12 }}>
+          <Card style={isMobile ? { width: '100%' } : { flex: 1 }} styles={{ body: { padding: isMobile ? 8 : 12 } }}>
             {/* 排序栏 */}
             <Segmented
               options={[
@@ -259,7 +259,7 @@ const Forum: React.FC = () => {
                       size="small"
                       hoverable
                       style={{ marginBottom: isMobile ? 6 : 8, borderRadius: 8 }}
-                      bodyStyle={{ padding: isMobile ? 10 : 12 }}
+                      styles={{ body: { padding: isMobile ? 10 : 12 } }}
                       onClick={() => openThreadDetail(thread)}
                     >
                       <div style={{ display: 'flex', gap: isMobile ? 8 : 12, alignItems: 'flex-start' }}>
@@ -381,7 +381,7 @@ const Forum: React.FC = () => {
                       <Empty description="暂无回复，抢沙发！" image={Empty.PRESENTED_IMAGE_SIMPLE} />
                     ) : (
                       viewingThread.replies.map((post: any) => (
-                        <Card key={post.id} size="small" style={{ borderRadius: 8 }} bodyStyle={{ padding: isMobile ? 10 : undefined }}>
+                        <Card key={post.id} size="small" style={{ borderRadius: 8 }} styles={{ body: { padding: isMobile ? 10 : undefined } }}>
                           <div style={{ display: 'flex', gap: isMobile ? 8 : 10, alignItems: 'flex-start' }}>
                             <Avatar src={post.avatar} size={isMobile ? 28 : 32} style={{ background: '#1890ff', flexShrink: 0 }}>
                               {post.username?.[0]}

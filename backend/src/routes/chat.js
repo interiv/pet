@@ -39,7 +39,7 @@ router.get('/conversations', authenticateToken, (req, res) => {
           type: 'class',
           room_id: cls.id,
           name: `${cls.name} 班级群`,
-          last_message: lastMsg,
+          last_message: lastMsg?.content || '',
           unread_count: unreadCount,
           member_count: db.prepare('SELECT COUNT(*) as cnt FROM users WHERE class_id = ? AND status = "active"').get(cls.id).cnt
         });
@@ -82,9 +82,11 @@ router.get('/conversations', authenticateToken, (req, res) => {
       return {
         type: 'private',
         user_id: chat.other_user_id,
+        target_user_id: chat.other_user_id,
         name: chat.username,
         avatar: chat.avatar,
-        last_message: lastMsg,
+        last_message: lastMsg?.content || '',
+        last_time: chat.last_msg_time || lastMsg?.created_at || '',
         unread_count: unreadCount
       };
     });

@@ -7,7 +7,6 @@ import {
   TrophyOutlined,
   UserOutlined,
   LogoutOutlined,
-  DashboardOutlined,
   SettingOutlined,
   TeamOutlined,
   ExclamationCircleOutlined,
@@ -15,6 +14,8 @@ import {
   BellOutlined,
   NotificationOutlined,
   MenuOutlined,
+  CommentOutlined,
+  ShoppingOutlined,
 } from '@ant-design/icons';
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
@@ -62,27 +63,80 @@ const Home: React.FC = () => {
   const [petBonus, setPetBonus] = useState<any>(null);
   const [leaderboardView, setLeaderboardView] = useState<'card' | 'list'>('card');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [myClasses, setMyClasses] = useState<any[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
+  const [taughtClassPets, setTaughtClassPets] = useState<any[]>([]);
+
+  const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
+  const isStudent = user?.role === 'student';
 
   useEffect(() => {
     if (isAuthenticated) {
-      loadPetData();
-      loadLeaderboard();
-      if (user?.role === 'admin') {
-        loadAllPets();
-      } else {
+      if (isStudent) {
+        loadPetData();
         loadMyClassPets();
+      } else if (isTeacher) {
+        loadTeacherClasses();
+      } else {
+        loadPetData();
+        loadAllPets();
       }
     }
   }, [isAuthenticated, user]);
+
+  const loadTeacherClasses = async () => {
+    try {
+      const res = await adminAPI.getClasses();
+      const classes = res.data.classes || [];
+      setMyClasses(classes);
+      if (classes.length > 0) {
+        setSelectedClassId(classes[0].id);
+        loadClassPetsForTeacher(classes[0].id);
+        loadAllTaughtClassPets(classes);
+      }
+    } catch (error) {
+      console.error('加载教师班级失败:', error);
+    }
+  };
+
+  const loadAllTaughtClassPets = async (classes: any[]) => {
+    const classIds = classes.map((c: any) => c.id);
+    const allPetLists = await Promise.all(
+      classIds.map((cid: number) => petAPI.getAllPets({ class_id: cid }).then(r => r.data.pets || []).catch(() => []))
+    );
+    const merged = allPetLists.flat();
+    const uniquePets = Array.from(new Map(merged.map(p => [p.id, p])).values());
+    setTaughtClassPets(uniquePets);
+  };
+
+  const loadClassPetsForTeacher = async (classId: number) => {
+    try {
+      const response = await petAPI.getAllPets({ class_id: classId });
+      const pets = response.data.pets || [];
+      setAllPets(pets);
+      const sorted = [...pets].sort((a: any, b: any) => b.level - a.level || b.exp - a.exp).slice(0, 10);
+      setLeaderboard(sorted);
+    } catch (error) {
+      console.error('加载班级宠物失败:', error);
+    }
+  };
 
   const loadMyClassPets = async () => {
     try {
       const res = await adminAPI.getClasses();
       const classes = res.data.classes || [];
       if (classes.length > 0) {
-        loadAllPets(classes[0].id);
+        const classIds = classes.map((c: any) => c.id);
+        const allPetLists = await Promise.all(
+          classIds.map((cid: number) => petAPI.getAllPets({ class_id: cid }).then(r => r.data.pets || []).catch(() => []))
+        );
+        const merged = allPetLists.flat();
+        const uniquePets = Array.from(new Map(merged.map(p => [p.id, p])).values());
+        setAllPets(uniquePets);
+        loadLeaderboard(uniquePets);
       } else {
         setAllPets([]);
+        loadLeaderboard();
       }
     } catch (error) {
       console.error('加载班级宠物失败:', error);
@@ -93,7 +147,9 @@ const Home: React.FC = () => {
     try {
       const params = classId ? { class_id: classId } : {};
       const response = await petAPI.getAllPets(params);
-      setAllPets(response.data.pets || []);
+      const pets = response.data.pets || [];
+      setAllPets(pets);
+      loadLeaderboard(pets);
     } catch (error) {
       console.error('加载宠物列表失败:', error);
     }
@@ -108,10 +164,15 @@ const Home: React.FC = () => {
     }
   };
 
-  const loadLeaderboard = async () => {
+  const loadLeaderboard = async (classPets?: any[]) => {
     try {
-      const response = await leaderboardAPI.getLevelLeaderboard();
-      setLeaderboard(response.data.leaderboard);
+      if (classPets && classPets.length > 0) {
+        const sorted = [...classPets].sort((a: any, b: any) => b.level - a.level || b.exp - a.exp).slice(0, 10);
+        setLeaderboard(sorted);
+      } else {
+        const response = await leaderboardAPI.getLevelLeaderboard();
+        setLeaderboard(response.data.leaderboard);
+      }
     } catch (error) {
       console.error('加载排行榜失败:', error);
     }
@@ -133,67 +194,35 @@ const Home: React.FC = () => {
     }
   };
 
-  const menuItems = [
+  const menuItems: any[] = [
     {
       key: 'home',
       icon: <HomeOutlined />,
       label: '首页',
     },
-    {
-      key: 'pet',
-      icon: <HomeOutlined />,
-      label: '我的宠物',
-    },
-    {
-      key: 'assignment',
-      icon: <BookOutlined />,
-      label: '作业',
-    },
-    {
-      key: 'wrong_questions',
-      icon: <ExclamationCircleOutlined />,
-      label: '错题本',
-    },
-    {
-      key: 'battle',
-      icon: <TrophyOutlined />,
-      label: '战斗',
-    },
-    {
-      key: 'shop',
-      icon: <DashboardOutlined />,
-      label: '商店与背包',
-    },
-    {
-      key: 'friends',
-      icon: <UserOutlined />,
-      label: '我的好友',
-    },
-    {
-      key: 'achievements',
-      icon: <TrophyOutlined />,
-      label: '成就',
-    },
-    {
-      key: 'posts',
-      icon: <NotificationOutlined />,
-      label: '班级动态',
-    },
-    {
-      key: 'chat',
-      icon: <MessageOutlined />,
-      label: '群聊',
-    },
-    {
-      key: 'forum',
-      label: '论坛',
-    },
-    {
-      key: 'notifications',
-      icon: <BellOutlined />,
-      label: '通知中心',
-    },
   ];
+
+  if (isStudent) {
+    menuItems.push(
+      { key: 'pet', icon: <HomeOutlined />, label: '我的宠物' },
+      { key: 'assignment', icon: <BookOutlined />, label: '作业' },
+      { key: 'wrong_questions', icon: <ExclamationCircleOutlined />, label: '错题本' },
+      { key: 'battle', icon: <TrophyOutlined />, label: '战斗' },
+    );
+  } else if (isTeacher) {
+    menuItems.push(
+      { key: 'assignment', icon: <BookOutlined />, label: '作业' },
+    );
+  }
+
+  menuItems.push(
+    { key: 'friends', icon: <UserOutlined />, label: '我的好友' },
+    { key: 'achievements', icon: <TrophyOutlined />, label: '成就' },
+    { key: 'posts', icon: <NotificationOutlined />, label: '班级动态' },
+    { key: 'chat', icon: <MessageOutlined />, label: '群聊' },
+    { key: 'forum', icon: <CommentOutlined />, label: '论坛' },
+    { key: 'notifications', icon: <BellOutlined />, label: '通知中心' },
+  );
 
   if (user?.role === 'admin') {
     menuItems.push({
@@ -207,7 +236,7 @@ const Home: React.FC = () => {
     menuItems.push({
       key: 'applications',
       icon: <TeamOutlined />,
-      label: '入学申请',
+      label: '教师工作台',
     });
   }
 
@@ -399,15 +428,107 @@ const Home: React.FC = () => {
     </div>
   );
 
-  const authTabItems: TabsProps['items'] = [
-    { key: 'pet', label: '我的宠物', children: hasPet ? <PetDisplay pet={pet} /> : <CreatePet onSuccess={loadPetData} /> },
-    { key: 'all_pets', label: user?.role === 'admin' ? '全校宠物' : '全班宠物', children: allPetsChildren },
-    { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }
+  const taughtLeaderboardChildren = (
+    <div>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: 14, color: '#666' }}>任教各班宠物排行榜</span>
+        {myClasses.length > 1 && (
+          <Segmented
+            options={myClasses.map((c: any) => ({ label: c.name, value: c.id }))}
+            value={selectedClassId || undefined}
+            onChange={(value) => { setSelectedClassId(value as number); loadClassPetsForTeacher(value as number); }}
+          />
+        )}
+        <Segmented
+          options={[
+            { label: '卡片', value: 'card' },
+            { label: '列表', value: 'list' },
+          ]}
+          value={leaderboardView}
+          onChange={(value) => setLeaderboardView(value as 'card' | 'list')}
+        />
+      </div>
+      {leaderboardView === 'card' ? (
+        <Row gutter={[16, 16]}>
+          {leaderboard.map((item: any, index: number) => (
+            <Col xs={24} sm={12} md={8} lg={6} key={item.id}>
+              <Card
+                hoverable
+                onClick={() => handleViewPet(item)}
+                style={{ borderRadius: '12px', overflow: 'hidden', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', cursor: 'pointer' }}
+                styles={{ body: { padding: '16px' } }}
+                cover={
+                  <div style={{ height: 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #fdfbfb 0%, #ebedee 100%)', padding: '20px', position: 'relative' }}>
+                    <div style={{ position: 'absolute', top: 10, left: 10, fontSize: '24px', fontWeight: 'bold', color: '#faad14', textShadow: '2px 2px 4px rgba(0,0,0,0.1)' }}>#{index + 1}</div>
+                    <img alt={item.name} src={(() => {
+                      try {
+                        const urls = typeof item.image_urls === 'string' ? JSON.parse(item.image_urls) : item.image_urls;
+                        return urls[item.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
+                      } catch (e) { return item.image_urls; }
+                    })()} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', filter: 'drop-shadow(0 10px 8px rgba(0,0,0,0.2))' }} />
+                  </div>
+                }
+                size="small"
+              >
+                <Card.Meta title={<span style={{ fontSize: '16px', fontWeight: 'bold' }}>{item.name}</span>} description={<span style={{ color: '#8c8c8c' }}>{item.owner_name}的宠物</span>} style={{ marginBottom: '12px' }} />
+                <Statistic title={<span style={{ fontSize: '12px' }}>当前等级</span>} value={item.level} suffix={`级 (${item.species_name})`} valueStyle={{ color: '#faad14', fontSize: '20px', fontWeight: 'bold' }} />
+              </Card>
+            </Col>
+          ))}
+          {leaderboard.length === 0 && <div style={{ textAlign: 'center', width: '100%', padding: '20px', color: '#999' }}>该班级暂无宠物</div>}
+        </Row>
+      ) : (
+        <Table dataSource={leaderboard} columns={leaderboardColumns} rowKey="id" pagination={{ pageSize: 10 }} size="small" />
+      )}
+    </div>
+  );
+
+  const allTaughtLeaderboardChildren = (
+    <div>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: 14, color: '#666' }}>任教各班宠物总排行</span>
+        <Segmented options={[{ label: '卡片', value: 'card' }, { label: '列表', value: 'list' }]} value={leaderboardView} onChange={(value) => setLeaderboardView(value as 'card' | 'list')} />
+      </div>
+      {(() => {
+        const sorted = [...taughtClassPets].sort((a: any, b: any) => b.level - a.level || b.exp - a.exp).slice(0, 10);
+        if (leaderboardView === 'card') {
+          return (
+            <Row gutter={[16, 16]}>
+              {sorted.map((item: any, index: number) => (
+                <Col xs={24} sm={12} md={8} lg={6} key={item.id}>
+                  <Card hoverable onClick={() => handleViewPet(item)} style={{ borderRadius: '12px', overflow: 'hidden', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', cursor: 'pointer' }} styles={{ body: { padding: '16px' } }} cover={
+                    <div style={{ height: 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #fdfbfb 0%, #ebedee 100%)', padding: '20px', position: 'relative' }}>
+                      <div style={{ position: 'absolute', top: 10, left: 10, fontSize: '24px', fontWeight: 'bold', color: '#faad14', textShadow: '2px 2px 4px rgba(0,0,0,0.1)' }}>#{index + 1}</div>
+                      <img alt={item.name} src={(() => { try { const urls = typeof item.image_urls === 'string' ? JSON.parse(item.image_urls) : item.image_urls; return urls[item.growth_stage] || urls['成年期'] || Object.values(urls)[0] || ''; } catch (e) { return item.image_urls; } })()} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', filter: 'drop-shadow(0 10px 8px rgba(0,0,0,0.2))' }} />
+                    </div>
+                  } size="small">
+                    <Card.Meta title={<span style={{ fontSize: '16px', fontWeight: 'bold' }}>{item.name}</span>} description={<span style={{ color: '#8c8c8c' }}>{item.owner_name}的宠物</span>} style={{ marginBottom: '12px' }} />
+                    <Statistic title={<span style={{ fontSize: '12px' }}>当前等级</span>} value={item.level} suffix={`级 (${item.species_name})`} valueStyle={{ color: '#faad14', fontSize: '20px', fontWeight: 'bold' }} />
+                  </Card>
+                </Col>
+              ))}
+              {sorted.length === 0 && <div style={{ textAlign: 'center', width: '100%', padding: '20px', color: '#999' }}>暂无宠物数据</div>}
+            </Row>
+          );
+        }
+        return <Table dataSource={sorted} columns={leaderboardColumns} rowKey="id" pagination={{ pageSize: 10 }} size="small" />;
+      })()}
+    </div>
+  );
+
+  const teacherTabItems: TabsProps['items'] = [
+    { key: 'class_leaderboard', label: '本班宠物排行', children: taughtLeaderboardChildren },
+    { key: 'all_taught_leaderboard', label: '任教各班排行', children: allTaughtLeaderboardChildren },
   ];
 
-  const unauthTabItems: TabsProps['items'] = [
-    { key: 'all_pets', label: '全校宠物', children: allPetsChildren },
-    { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }
+  const studentHomeTabItems: TabsProps['items'] = [
+    { key: 'class_leaderboard', label: '本班宠物排行', children: leaderboardChildren },
+  ];
+
+  const studentPetTabItems: TabsProps['items'] = [
+    { key: 'pet', label: '我的宠物', children: hasPet ? <PetDisplay pet={pet} /> : <CreatePet onSuccess={loadPetData} /> },
+    { key: 'shop', label: '道具商店', children: <ShopAndBackpack defaultTab="shop" /> },
+    { key: 'backpack', label: '我的背包', children: <ShopAndBackpack defaultTab="backpack" /> },
   ];
 
   return (
@@ -509,8 +630,6 @@ const Home: React.FC = () => {
                   <WrongQuestions />
                 ) : activeMenu === 'battle' ? (
                   <Battle />
-                ) : activeMenu === 'shop' ? (
-                  <ShopAndBackpack />
                 ) : activeMenu === 'friends' ? (
                   <Friends />
                 ) : activeMenu === 'achievements' ? (
@@ -529,11 +648,33 @@ const Home: React.FC = () => {
                   <Admin defaultTab="applications" />
                 ) : activeMenu === 'profile' ? (
                   <Profile />
-                ) : isAuthenticated ? (
-                  <Tabs 
-                    activeKey={['home', 'pet', 'all_pets', 'leaderboard'].includes(activeMenu) ? activeMenu === 'home' ? 'pet' : activeMenu : 'pet'} 
+                ) : isAuthenticated && isTeacher ? (
+                  <Tabs
+                    activeKey={activeMenu === 'home' ? 'class_leaderboard' : activeMenu}
                     onChange={(key) => setActiveMenu(key)}
-                    items={authTabItems}
+                    items={teacherTabItems}
+                    size={isMobile ? 'small' : 'middle'}
+                    centered={isMobile}
+                  />
+                ) : isAuthenticated && isStudent ? (
+                  <Tabs
+                    activeKey={['pet', 'shop', 'backpack'].includes(activeMenu) ? activeMenu : 'class_leaderboard'}
+                    onChange={(key) => {
+                      if (['pet', 'shop', 'backpack'].includes(key)) {
+                        setActiveMenu('pet');
+                      } else {
+                        setActiveMenu(key);
+                      }
+                    }}
+                    items={['pet', 'shop', 'backpack'].includes(activeMenu) ? studentPetTabItems : studentHomeTabItems}
+                    size={isMobile ? 'small' : 'middle'}
+                    centered={isMobile}
+                  />
+                ) : isAuthenticated ? (
+                  <Tabs
+                    activeKey="all_pets"
+                    onChange={(key) => setActiveMenu(key)}
+                    items={[{ key: 'all_pets', label: '全校宠物', children: allPetsChildren }, { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }]}
                     size={isMobile ? 'small' : 'middle'}
                     centered={isMobile}
                   />
@@ -572,8 +713,6 @@ const Home: React.FC = () => {
                   <WrongQuestions />
                 ) : activeMenu === 'battle' ? (
                   <Battle />
-                ) : activeMenu === 'shop' ? (
-                  <ShopAndBackpack />
                 ) : activeMenu === 'friends' ? (
                   <Friends />
                 ) : activeMenu === 'achievements' ? (
@@ -592,17 +731,35 @@ const Home: React.FC = () => {
                   <Admin defaultTab="applications" />
                 ) : activeMenu === 'profile' ? (
                   <Profile />
-                ) : isAuthenticated ? (
-                  <Tabs 
-                    activeKey={['home', 'pet', 'all_pets', 'leaderboard'].includes(activeMenu) ? activeMenu === 'home' ? 'pet' : activeMenu : 'pet'} 
+                ) : isAuthenticated && isTeacher ? (
+                  <Tabs
+                    activeKey={activeMenu === 'home' ? 'class_leaderboard' : activeMenu}
                     onChange={(key) => setActiveMenu(key)}
-                    items={authTabItems}
+                    items={teacherTabItems}
+                  />
+                ) : isAuthenticated && isStudent ? (
+                  <Tabs
+                    activeKey={['pet', 'shop', 'backpack'].includes(activeMenu) ? activeMenu : 'class_leaderboard'}
+                    onChange={(key) => {
+                      if (['pet', 'shop', 'backpack'].includes(key)) {
+                        setActiveMenu('pet');
+                      } else {
+                        setActiveMenu(key);
+                      }
+                    }}
+                    items={['pet', 'shop', 'backpack'].includes(activeMenu) ? studentPetTabItems : studentHomeTabItems}
+                  />
+                ) : isAuthenticated ? (
+                  <Tabs
+                    activeKey="all_pets"
+                    onChange={(key) => setActiveMenu(key)}
+                    items={[{ key: 'all_pets', label: '全校宠物', children: allPetsChildren }, { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }]}
                   />
                 ) : (
                   <Tabs 
-                    activeKey={['all_pets', 'leaderboard'].includes(activeMenu) ? activeMenu : 'all_pets'} 
+                    activeKey="all_pets"
                     onChange={(key) => setActiveMenu(key)}
-                    items={unauthTabItems}
+                    items={[{ key: 'all_pets', label: '全校宠物', children: allPetsChildren }, { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }]}
                   />
                 )}
               </div>

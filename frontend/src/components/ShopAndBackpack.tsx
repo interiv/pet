@@ -6,14 +6,18 @@ import { useAuthStore, usePetStore } from '../store/authStore';
 
 
 
-const ShopAndBackpack: React.FC = () => {
+interface Props {
+  defaultTab?: string;
+}
+
+const ShopAndBackpack: React.FC<Props> = ({ defaultTab = 'shop' }) => {
   const { user } = useAuthStore();
   const { pet, setPet } = usePetStore();
   
   const [shopItems, setShopItems] = useState<any[]>([]);
   const [myItems, setMyItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('shop');
+  const [activeTab, setActiveTab] = useState(defaultTab);
 
   useEffect(() => {
     if (user) {

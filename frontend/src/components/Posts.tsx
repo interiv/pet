@@ -154,7 +154,7 @@ const Posts: React.FC = () => {
           <List
             dataSource={posts}
             renderItem={(post: any) => (
-              <Card key={post.id} style={{ marginBottom: isMobile ? 10 : 16, borderRadius: 12 }} bodyStyle={{ padding: isMobile ? 12 : 16 }}>
+              <Card key={post.id} style={{ marginBottom: isMobile ? 10 : 16, borderRadius: 12 }} styles={{ body: { padding: isMobile ? 12 : 16 } }}>
                 {post.is_top && <Tag color="red" style={{ marginBottom: 6 }}>置顶</Tag>}
 
                 {/* 帖子头部 */}

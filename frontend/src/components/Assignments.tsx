@@ -514,7 +514,7 @@ const Assignments: React.FC = () => {
         open={isCreateModalVisible}
         onCancel={() => { setIsCreateModalVisible(false); setGeneratedData(null); }}
         width={720}
-        destroyOnClose
+        destroyOnHidden
         footer={null}
       >
         <Tabs defaultActiveKey="generate" items={[
@@ -627,7 +627,7 @@ const Assignments: React.FC = () => {
         open={isDoModalVisible}
         onCancel={() => setIsDoModalVisible(false)}
         width={700}
-        destroyOnClose
+        destroyOnHidden
         okText={submitting ? "提交中..." : "提交答案"}
         cancelText="取消"
         onOk={handleSubmitAnswers}
@@ -669,7 +669,7 @@ const Assignments: React.FC = () => {
         open={isResultModalVisible}
         onCancel={() => setIsResultModalVisible(false)}
         width={680}
-        destroyOnClose
+        destroyOnHidden
         footer={
           <Space>
             {submitResult?.can_retry && (
@@ -746,7 +746,7 @@ const Assignments: React.FC = () => {
         open={isStatsModalVisible}
         onCancel={() => setIsStatsModalVisible(false)}
         width={800}
-        destroyOnClose
+        destroyOnHidden
         footer={<Button onClick={() => setIsStatsModalVisible(false)}>关闭</Button>}
       >
         {statsLoading ? (

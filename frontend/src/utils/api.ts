@@ -148,6 +148,8 @@ export const friendAPI = {
   addFriend: (data: { friend_username: string }) =>
     api.post('/friends/add', data),
 
+  searchFriends: (keyword: string) => api.get('/friends/search', { params: { keyword } }),
+
   visitFriend: (data: { friend_id: number }) =>
     api.post('/friends/visit', data),
 

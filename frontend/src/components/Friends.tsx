@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Button, Input, List, Avatar, message, Modal, Form, Spin, Row, Col, Statistic, Popconfirm, Select } from 'antd';
-import { UserAddOutlined, TeamOutlined, HeartFilled, DeleteOutlined, GiftOutlined, FireOutlined, EyeOutlined } from '@ant-design/icons';
+import { UserAddOutlined, TeamOutlined, HeartFilled, DeleteOutlined, GiftOutlined, FireOutlined, EyeOutlined, SearchOutlined } from '@ant-design/icons';
 import { friendAPI, petAPI, itemAPI } from '../utils/api';
 
 import { useAuthStore, usePetStore } from '../store/authStore';
@@ -12,6 +12,9 @@ const Friends: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [form] = Form.useForm();
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [petModalVisible, setPetModalVisible] = useState(false);
   const [selectedPet, setSelectedPet] = useState<any>(null);
   const [loadingPetDetail, setLoadingPetDetail] = useState(false);
@@ -49,6 +52,40 @@ const Friends: React.FC = () => {
       await friendAPI.addFriend({ friend_username: values.username });
       message.success('好友添加成功！');
       setIsModalVisible(false);
+      form.resetFields();
+      loadFriends();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '添加好友失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSearchFriends = async (keyword: string) => {
+    setSearchKeyword(keyword);
+    if (!keyword || keyword.trim().length < 1) {
+      setSearchResults([]);
+      return;
+    }
+    try {
+      setSearchLoading(true);
+      const res = await friendAPI.searchFriends(keyword.trim());
+      setSearchResults(res.data.users || []);
+    } catch (e) {
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleAddFromSearch = async (targetUser: any) => {
+    try {
+      setLoading(true);
+      await friendAPI.addFriend({ friend_username: targetUser.username });
+      message.success(`已添加 ${targetUser.username} 为好友！`);
+      setIsModalVisible(false);
+      setSearchKeyword('');
+      setSearchResults([]);
       form.resetFields();
       loadFriends();
     } catch (error: any) {
@@ -197,20 +234,41 @@ const Friends: React.FC = () => {
       <Modal
         title="添加好友"
         open={isModalVisible}
-        onOk={() => form.submit()}
-        onCancel={() => setIsModalVisible(false)}
-        confirmLoading={loading}
-        destroyOnClose
+        onCancel={() => { setIsModalVisible(false); setSearchKeyword(''); setSearchResults([]); }}
+        footer={null}
+        destroyOnHidden
       >
-        <Form form={form} layout="vertical" onFinish={handleAddFriend}>
-          <Form.Item 
-            name="username" 
-            label="好友用户名" 
-            rules={[{ required: true, message: '请输入好友的用户名' }]}
-          >
-            <Input prefix={<UserAddOutlined />} placeholder="输入同学的用户名" />
-          </Form.Item>
-        </Form>
+        <Input.Search
+          placeholder="输入用户名搜索..."
+          value={searchKeyword}
+          onChange={(e) => handleSearchFriends(e.target.value)}
+          onSearch={handleSearchFriends}
+          enterButton={<SearchOutlined />}
+          style={{ marginBottom: 12 }}
+          allowClear
+        />
+        <Spin spinning={searchLoading}>
+          {searchResults.length > 0 ? (
+            <List
+              dataSource={searchResults}
+              renderItem={(u: any) => (
+                <List.Item
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => handleAddFromSearch(u)}
+                  actions={[<Button type="link" size="small" icon={<UserAddOutlined />}>添加</Button>]}
+                >
+                  <List.Item.Meta
+                    avatar={<Avatar src={u.avatar}>{u.username?.[0]}</Avatar>}
+                    title={u.username}
+                    description={`${u.role === 'teacher' ? '教师' : '学生'} · ${u.class_name || ''}`}
+                  />
+                </List.Item>
+              )}
+            />
+          ) : searchKeyword.trim().length >= 1 && !searchLoading ? (
+            <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>未找到匹配的用户</div>
+          ) : null}
+        </Spin>
       </Modal>
 
       <Modal
@@ -352,7 +410,7 @@ const Friends: React.FC = () => {
         onOk={() => giftForm.submit()}
         onCancel={() => setGiftModalVisible(false)}
         confirmLoading={loading}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={giftForm} layout="vertical" onFinish={handleGift}>
           <Form.Item

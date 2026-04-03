@@ -135,9 +135,12 @@ const ChatRoom: React.FC = () => {
       if (conv.type === 'class') {
         params.room_id = conv.class_id;
         socketRef.current?.emit('join-class-chat', conv.class_id);
-      } else if (conv.type === 'private' && conv.target_user_id) {
-        params.target_user_id = conv.target_user_id;
-        socketRef.current?.emit('join-private-chat', { userId1: user!.id, userId2: conv.target_user_id });
+      } else if (conv.type === 'private') {
+        const targetId = (conv as any).target_user_id || (conv as any).user_id;
+        if (targetId) {
+          params.target_user_id = targetId;
+          socketRef.current?.emit('join-private-chat', { userId1: user!.id, userId2: targetId });
+        }
       }
 
       const res = await chatAPI.getMessages(params);
@@ -165,8 +168,9 @@ const ChatRoom: React.FC = () => {
 
       if (activeChat.type === 'class') {
         data.room_id = activeChat.class_id;
-      } else if (activeChat.type === 'private' && activeChat.target_user_id) {
-        data.target_user_id = activeChat.target_user_id;
+      } else if (activeChat.type === 'private') {
+        const targetId = (activeChat as any).target_user_id || (activeChat as any).user_id;
+        if (targetId) data.target_user_id = targetId;
       }
 
       const res = await chatAPI.sendMessage(data);
@@ -174,7 +178,8 @@ const ChatRoom: React.FC = () => {
       if (activeChat.type === 'class') {
         socketRef.current?.emit('send-class-message', { classId: activeChat.class_id, message: res.data.message });
       } else {
-        socketRef.current?.emit('send-private-message', { targetUserId: activeChat.target_user_id, message: res.data.message });
+        const targetId = (activeChat as any).target_user_id || (activeChat as any).user_id;
+        socketRef.current?.emit('send-private-message', { targetUserId: targetId, message: res.data.message });
       }
 
       setInputValue('');
@@ -199,12 +204,14 @@ const ChatRoom: React.FC = () => {
     if (existingConv) {
       loadMessages(existingConv);
     } else {
-      loadMessages({
+      const newConv: Conversation = {
         type: 'private',
         name: targetUser.username,
         avatar: targetUser.avatar,
         target_user_id: targetUser.id,
-      });
+      };
+      setConversations(prev => [newConv, ...prev]);
+      loadMessages(newConv);
     }
     setShowSearchModal(false);
     setSearchKeyword('');
@@ -215,8 +222,10 @@ const ChatRoom: React.FC = () => {
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
   };
 
-  const formatTime = (timeStr: string) => {
+  const formatTime = (timeStr: string | null | undefined) => {
+    if (!timeStr) return '';
     const date = new Date(timeStr);
+    if (isNaN(date.getTime())) return '';
     const now = new Date();
     const isToday = date.toDateString() === now.toDateString();
     if (isToday) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -349,19 +358,15 @@ const ChatRoom: React.FC = () => {
                           {msg.user_id !== user!.id && (
                             <span style={{ fontSize: 10, color: '#999', marginLeft: 4 }}>{msg.username}</span>
                           )}
-                          <div
-                            style={{
-                              marginTop: 2,
-                              padding: '8px 12px',
-                              borderRadius: msg.user_id === user!.id ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                              background: msg.user_id === user!.id ? '#1890ff' : '#f0f0f0',
-                              color: msg.user_id === user!.id ? '#fff' : '#333',
-                              wordBreak: 'break-word',
-                              lineHeight: 1.5,
-                              fontSize: 14,
-                            }}
-                          >
-                            {msg.content}
+                          <div style={{
+                            marginTop: 2,
+                            padding: '8px 12px',
+                            borderRadius: msg.user_id === user!.id ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                            background: msg.user_id === user!.id ? '#1890ff' : '#f0f0f0',
+                            color: msg.user_id === user!.id ? '#fff' : '#333',
+                            wordBreak: 'break-word', lineHeight: 1.5, fontSize: 14,
+                          }}>
+                            {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)}
                           </div>
                           <span style={{ fontSize: 9, color: '#bbb', marginLeft: 6, display: 'block', marginTop: 1 }}>
                             {formatTime(msg.created_at)}
@@ -450,7 +455,7 @@ const ChatRoom: React.FC = () => {
           </Space>
         }
         style={{ width: 280, borderRadius: '12px 0 0 12px', borderRight: 0 }}
-        bodyStyle={{ padding: 0, overflowY: 'auto', height: 'calc(100% - 57px)' }}
+        styles={{ body: { padding: 0, overflowY: 'auto', height: 'calc(100% - 57px)' } }}
       >
         <Spin spinning={loading}>
           <List
@@ -501,7 +506,7 @@ const ChatRoom: React.FC = () => {
           </Space>
         ) : '选择一个对话开始聊天'}
         style={{ flex: 1, borderRadius: '0 12px 12px 0' }}
-        bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 57px)' }}
+        styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column', height: 'calc(100% - 57px)' } }}
       >
         {!activeChat ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -529,7 +534,7 @@ const ChatRoom: React.FC = () => {
                             color: msg.user_id === user!.id ? '#fff' : '#333',
                             wordBreak: 'break-word', lineHeight: 1.6,
                           }}>
-                            {msg.content}
+                            {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)}
                           </div>
                           <span style={{ fontSize: 10, color: '#bbb', marginLeft: 8, display: 'block', marginTop: 2 }}>{formatTime(msg.created_at)}</span>
                         </div>

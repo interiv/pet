@@ -21,27 +21,28 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
   const isAdmin = user?.role === 'admin';
   const isTeacher = user?.role === 'teacher';
 
-  const renderTabs = () => {
-    const tabs = [];
-
+  const getTabItems = () => {
     if (isAdmin) {
-      tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 总览</span>} key="dashboard"><Dashboard /></Tabs.TabPane>);
-      tabs.push(<Tabs.TabPane tab={<span><UserOutlined /> 教师管理</span>} key="teachers"><TeacherManagement /></Tabs.TabPane>);
-      tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 学生管理</span>} key="students"><StudentManagement /></Tabs.TabPane>);
-      tabs.push(<Tabs.TabPane tab={<span><FolderOutlined /> 班级管理</span>} key="classes"><ClassManagement /></Tabs.TabPane>);
-      tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 入学申请</span>} key="applications"><ApplicationManagement /></Tabs.TabPane>);
-      tabs.push(<Tabs.TabPane tab={<span><NotificationOutlined /> 公告管理</span>} key="announcements"><AnnouncementManagement /></Tabs.TabPane>);
-      tabs.push(<Tabs.TabPane tab={<span><DatabaseOutlined /> 数据查看</span>} key="dataview"><DataView /></Tabs.TabPane>);
-      tabs.push(<Tabs.TabPane tab={<span><SettingOutlined /> AI设置</span>} key="settings"><AISettings /></Tabs.TabPane>);
+      return [
+        { key: 'dashboard', label: <span><TeamOutlined /> 总览</span>, children: <Dashboard /> },
+        { key: 'teachers', label: <span><UserOutlined /> 教师管理</span>, children: <TeacherManagement /> },
+        { key: 'students', label: <span><TeamOutlined /> 学生管理</span>, children: <StudentManagement /> },
+        { key: 'classes', label: <span><FolderOutlined /> 班级管理</span>, children: <ClassManagement /> },
+        { key: 'applications', label: <span><TeamOutlined /> 入学申请</span>, children: <ApplicationManagement /> },
+        { key: 'announcements', label: <span><NotificationOutlined /> 公告管理</span>, children: <AnnouncementManagement /> },
+        { key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> },
+        { key: 'settings', label: <span><SettingOutlined /> AI设置</span>, children: <AISettings /> },
+      ];
     } else if (isTeacher) {
-      tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 总览</span>} key="dashboard"><Dashboard /></Tabs.TabPane>);
-      tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 学生管理</span>} key="students"><StudentManagement /></Tabs.TabPane>);
-      tabs.push(<Tabs.TabPane tab={<span><FolderOutlined /> 班级管理</span>} key="classes"><ClassManagement /></Tabs.TabPane>);
-      tabs.push(<Tabs.TabPane tab={<span><TeamOutlined /> 入学申请</span>} key="applications"><ApplicationManagement /></Tabs.TabPane>);
-      tabs.push(<Tabs.TabPane tab={<span><DatabaseOutlined /> 数据查看</span>} key="dataview"><DataView /></Tabs.TabPane>);
+      return [
+        { key: 'dashboard', label: <span><TeamOutlined /> 总览</span>, children: <Dashboard /> },
+        { key: 'students', label: <span><TeamOutlined /> 学生管理</span>, children: <StudentManagement /> },
+        { key: 'classes', label: <span><FolderOutlined /> 班级管理</span>, children: <ClassManagement /> },
+        { key: 'applications', label: <span><TeamOutlined /> 入学申请</span>, children: <ApplicationManagement /> },
+        { key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> },
+      ];
     }
-
-    return tabs;
+    return [];
   };
 
   const getTitle = () => {
@@ -53,9 +54,7 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
   return (
     <div style={{ padding: 24 }}>
       <h2 style={{ marginBottom: 24 }}>{getTitle()}</h2>
-      <Tabs activeKey={activeTab} onChange={setActiveTab}>
-        {renderTabs()}
-      </Tabs>
+      <Tabs activeKey={activeTab} onChange={setActiveTab} items={getTabItems()} />
     </div>
   );
 };
@@ -871,7 +870,7 @@ const ClassManagement: React.FC = () => {
       </Modal>
 
       <Modal title={`为班级「${selectedClass?.name}」添加教师`} open={addTeacherModalVisible} onOk={handleAddTeacher} onCancel={() => setAddTeacherModalVisible(false)}>
-        <Form form={addTeacherForm} layout="vertical">
+        <Form form={addTeacherForm} layout="vertical" initialValues={{ role: 'teacher' }}>
           <Form.Item name="teacher_id" label="选择教师" rules={[{ required: true, message: '请选择教师' }]}>
             <Select placeholder="选择要添加的教师" filterOption={(input, option) => String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())}>
               {teachers
@@ -881,7 +880,7 @@ const ClassManagement: React.FC = () => {
             </Select>
           </Form.Item>
           <Form.Item name="role" label="角色">
-            <Select defaultValue="teacher">
+            <Select>
               <Select.Option value="head_teacher">班主任</Select.Option>
               <Select.Option value="teacher">任课教师</Select.Option>
             </Select>
@@ -998,7 +997,7 @@ const AnnouncementManagement: React.FC = () => {
       <Table columns={columns} dataSource={announcements} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
 
       <Modal title="发布公告" open={modalVisible} onOk={handleCreate} onCancel={() => setModalVisible(false)} width={600}>
-        <Form form={form} layout="vertical">
+        <Form form={form} layout="vertical" initialValues={{ priority: 0 }}>
           <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
             <Input />
           </Form.Item>
@@ -1011,7 +1010,7 @@ const AnnouncementManagement: React.FC = () => {
             </Select>
           </Form.Item>
           <Form.Item name="priority" label="优先级">
-            <InputNumber min={0} max={10} defaultValue={0} style={{ width: '100%' }} />
+            <InputNumber min={0} max={10} style={{ width: '100%' }} />
           </Form.Item>
         </Form>
       </Modal>
@@ -1147,19 +1146,15 @@ const DataView: React.FC = () => {
     { title: '时间', dataIndex: 'obtained_at', key: 'obtained_at', render: (v: string) => new Date(v).toLocaleString() },
   ];
 
+  const dataViewTabItems = [
+    { key: 'battles', label: '战斗记录', children: <Table dataSource={battles} columns={battleColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" /> },
+    { key: 'assignments', label: '作业记录', children: <Table dataSource={assignments} columns={assignmentColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" /> },
+    { key: 'shop', label: '购买记录', children: <Table dataSource={shopRecords} columns={shopColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" /> },
+  ];
+
   return (
     <div>
-      <Tabs activeKey={activeTab} onChange={setActiveTab}>
-        <Tabs.TabPane tab="战斗记录" key="battles">
-          <Table dataSource={battles} columns={battleColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" />
-        </Tabs.TabPane>
-        <Tabs.TabPane tab="作业记录" key="assignments">
-          <Table dataSource={assignments} columns={assignmentColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" />
-        </Tabs.TabPane>
-        <Tabs.TabPane tab="购买记录" key="shop">
-          <Table dataSource={shopRecords} columns={shopColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" />
-        </Tabs.TabPane>
-      </Tabs>
+      <Tabs activeKey={activeTab} onChange={setActiveTab} items={dataViewTabItems} />
     </div>
   );
 };

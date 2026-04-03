@@ -445,7 +445,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet }) => {
         onOk={() => form.submit()}
         onCancel={() => setReviveModalVisible(false)}
         confirmLoading={loading}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={handleRevive}>
           <p style={{ marginBottom: 16 }}>请选择复活道具（可选，不选则使用金币复活）</p>
@@ -467,7 +467,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet }) => {
         onOk={() => form.submit()}
         onCancel={() => setRebirthModalVisible(false)}
         confirmLoading={loading}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={handleRebirth}>
           <p style={{ marginBottom: 16 }}>转生需要消耗一个「转生之证」，转生后宠物将重置为1级，但保留部分属性加成。</p>

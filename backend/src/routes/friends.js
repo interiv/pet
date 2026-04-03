@@ -44,6 +44,28 @@ router.post('/add', authenticateToken, (req, res) => {
   }
 });
 
+router.get('/search', authenticateToken, (req, res) => {
+  try {
+    const { keyword } = req.query;
+    if (!keyword || keyword.trim().length < 1) {
+      return res.json({ users: [] });
+    }
+    const kw = `%${keyword.trim()}%`;
+    const users = db.prepare(`
+      SELECT u.id, u.username, u.avatar, u.role, c.name as class_name
+      FROM users u
+      LEFT JOIN classes c ON u.class_id = c.id
+      WHERE u.id != ? AND u.username LIKE ? AND u.status = 'active'
+      ORDER BY u.username
+      LIMIT 20
+    `).all(req.user.userId, kw);
+    res.json({ users });
+  } catch (error) {
+    console.error('搜索用户错误:', error);
+    res.status(500).json({ error: '搜索失败' });
+  }
+});
+
 // 访问好友宠物（增加亲密度）
 router.post('/visit', authenticateToken, (req, res) => {
   try {
