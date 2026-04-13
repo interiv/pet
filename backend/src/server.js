@@ -24,6 +24,7 @@ const postRoutes = require('./routes/posts');
 const chatRoutes = require('./routes/chat');
 const forumRoutes = require('./routes/forum');
 const notificationRoutes = require('./routes/notifications');
+const classRoutes = require('./routes/classes');
 
 // 初始化数据库
 initDatabase();
@@ -70,6 +71,7 @@ app.use('/api/posts', postRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/forum', forumRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/classes', classRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {

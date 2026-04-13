@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { Form, Input, Button, Card, message, Typography, Select } from 'antd';
-import { UserOutlined, LockOutlined, MailOutlined } from '@ant-design/icons';
-import { authAPI, adminAPI } from '../utils/api';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { Form, Input, Button, Card, message, Typography, Select, Alert } from 'antd';
+import { UserOutlined, LockOutlined, MailOutlined, LinkOutlined } from '@ant-design/icons';
+import { authAPI, adminAPI, classAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
 const { Title } = Typography;
@@ -10,14 +10,23 @@ const { Option } = Select;
 
 const Register: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const login = useAuthStore((state) => state.login);
   const [loading, setLoading] = useState(false);
   const [classes, setClasses] = useState<any[]>([]);
   const [selectedRole, setSelectedRole] = useState('student');
+  const [inviteCode, setInviteCode] = useState('');
+  const [inviteInfo, setInviteInfo] = useState<any>(null);
 
   useEffect(() => {
     loadClasses();
-  }, []);
+    // 从 URL 参数中获取邀请码
+    const code = searchParams.get('invite');
+    if (code) {
+      setInviteCode(code);
+      validateInviteCode(code);
+    }
+  }, [searchParams]);
 
   const loadClasses = async () => {
     try {
@@ -28,21 +37,52 @@ const Register: React.FC = () => {
     }
   };
 
+  const validateInviteCode = async (code: string) => {
+    if (!code) return;
+    try {
+      const res = await classAPI.validateInvitation(code);
+      setInviteInfo(res.data);
+      // 如果邀请码限制了角色，自动选择对应角色
+      if (res.data.role_filter !== 'any') {
+        setSelectedRole(res.data.role_filter);
+      }
+      message.success('邀请码验证成功');
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '邀请码无效');
+      setInviteInfo(null);
+    }
+  };
+
   const onFinish = async (values: any) => {
     setLoading(true);
     try {
       const { confirmPassword, role, ...registerData } = values;
-      const response = await authAPI.register({
-        ...registerData,
-        requested_class_ids: values.requested_class_ids
-      });
-      if (response.data.pending) {
-        message.success(response.data.message);
-        navigate('/login');
-      } else {
+      
+      // 如果有邀请码，使用邀请注册 API
+      if (inviteCode && inviteInfo) {
+        const response = await classAPI.registerWithInvite({
+          ...registerData,
+          role: role || 'student',
+          invitation_code: inviteCode
+        });
+        
         login(response.data.token, response.data.user);
-        message.success('注册成功！');
+        message.success('注册成功并已加入班级！');
         navigate('/');
+      } else {
+        // 普通注册流程
+        const response = await authAPI.register({
+          ...registerData,
+          requested_class_ids: values.requested_class_ids
+        });
+        if (response.data.pending) {
+          message.success(response.data.message);
+          navigate('/login');
+        } else {
+          login(response.data.token, response.data.user);
+          message.success('注册成功！');
+          navigate('/');
+        }
       }
     } catch (error: any) {
       message.error(error.response?.data?.error || '注册失败');
@@ -136,13 +176,54 @@ const Register: React.FC = () => {
             name="role"
             initialValue="student"
           >
-            <Select placeholder="选择角色" onChange={(value) => setSelectedRole(value)}>
+            <Select placeholder="选择角色" onChange={(value) => setSelectedRole(value)} disabled={!!inviteInfo && inviteInfo.role_filter !== 'any'}>
               <Option value="student">学生</Option>
               <Option value="teacher">教师</Option>
             </Select>
           </Form.Item>
 
-          {selectedRole === 'student' && (
+          {/* 推荐码信息展示 */}
+          {inviteInfo && (
+            <Alert
+              message="通过班级推荐码注册"
+              description={
+                <div>
+                  <p><strong>班级：</strong>{inviteInfo.class_name} {inviteInfo.grade ? `(${inviteInfo.grade})` : ''}</p>
+                  <p><strong>班主任：</strong>{inviteInfo.creator_name}</p>
+                  {inviteInfo.role_filter !== 'any' && (
+                    <p><strong>适用对象：</strong>{inviteInfo.role_filter === 'student' ? '学生' : '教师'}</p>
+                  )}
+                  <p style={{ marginTop: 8, color: '#52c41a' }}>✓ 注册后将自动加入该班级，无需审批</p>
+                </div>
+              }
+              type="success"
+              style={{ marginBottom: 16 }}
+              icon={<LinkOutlined />}
+            />
+          )}
+
+          {/* 手动输入推荐码 */}
+          {!inviteInfo && (
+            <Form.Item
+              name="invitation_code"
+              label="班级推荐码（可选）"
+              tooltip="如果老师给了你推荐码或邀请链接，请在这里输入推荐码"
+            >
+              <Input
+                prefix={<LinkOutlined />}
+                placeholder="输入老师给你的推荐码"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+                onBlur={(e) => {
+                  if (e.target.value) {
+                    validateInviteCode(e.target.value.toUpperCase());
+                  }
+                }}
+              />
+            </Form.Item>
+          )}
+
+          {!inviteInfo && selectedRole === 'student' && (
             <Form.Item
               name="requested_class_id"
               label="选择要加入的班级"
@@ -156,7 +237,7 @@ const Register: React.FC = () => {
             </Form.Item>
           )}
 
-          {selectedRole === 'teacher' && (
+          {!inviteInfo && selectedRole === 'teacher' && (
             <Form.Item
               name="requested_class_ids"
               label="选择要申请的班级（可多选）"

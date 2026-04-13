@@ -15,7 +15,6 @@ import {
   NotificationOutlined,
   MenuOutlined,
   CommentOutlined,
-  ShoppingOutlined,
 } from '@ant-design/icons';
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
@@ -33,6 +32,7 @@ import Posts from '../components/Posts';
 import ChatRoom from '../components/ChatRoom';
 import Forum from '../components/Forum';
 import Notifications from '../components/Notifications';
+import ClassInvitationManager from '../components/ClassInvitationManager';
 
 const { Header, Content, Sider } = Layout;
 
@@ -54,8 +54,8 @@ const Home: React.FC = () => {
   const isMobile = useMobile();
 
   const [activeMenu, setActiveMenu] = useState('home');
-  const [leaderboard, setLeaderboard] = useState([]);
-  const [allPets, setAllPets] = useState([]);
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [allPets, setAllPets] = useState<any[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedPet, setSelectedPet] = useState<any>(null);
   const [loadingPetDetail, setLoadingPetDetail] = useState(false);
@@ -237,6 +237,11 @@ const Home: React.FC = () => {
       key: 'applications',
       icon: <TeamOutlined />,
       label: '教师工作台',
+    });
+    menuItems.push({
+      key: 'class-management',
+      icon: <TeamOutlined />,
+      label: '班级管理',
     });
   }
 
@@ -646,6 +651,8 @@ const Home: React.FC = () => {
                   <Admin />
                 ) : activeMenu === 'applications' ? (
                   <Admin defaultTab="applications" />
+                ) : activeMenu === 'class-management' ? (
+                  <ClassInvitationManager />
                 ) : activeMenu === 'profile' ? (
                   <Profile />
                 ) : isAuthenticated && isTeacher ? (
@@ -682,7 +689,7 @@ const Home: React.FC = () => {
                   <Tabs 
                     activeKey={['all_pets', 'leaderboard'].includes(activeMenu) ? activeMenu : 'all_pets'} 
                     onChange={(key) => setActiveMenu(key)}
-                    items={unauthTabItems}
+                    items={[{ key: 'all_pets', label: '全校宠物', children: allPetsChildren }, { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }]}
                     size={isMobile ? 'small' : 'middle'}
                     centered={isMobile}
                   />

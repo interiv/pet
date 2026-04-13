@@ -335,4 +335,38 @@ export const notificationAPI = {
   clearReadNotifications: () => api.delete('/notifications/clear-read'),
 };
 
+// 班级邀请系统相关 API
+export const classAPI = {
+  // 教师创建班级
+  createClass: (data: { name: string; grade?: string }) =>
+    api.post('/classes/create', data),
+
+  // 获取教师作为班主任的班级
+  getMyClass: () => api.get('/classes/my-class'),
+
+  // 生成邀请码
+  createInvitation: (classId: number, data?: { role_filter?: string; max_uses?: number; expires_at?: string }) =>
+    api.post(`/classes/${classId}/invitations`, data),
+
+  // 获取班级邀请码列表
+  getInvitations: (classId: number) =>
+    api.get(`/classes/${classId}/invitations`),
+
+  // 启用/禁用邀请码
+  toggleInvitation: (invitationId: number) =>
+    api.put(`/classes/invitations/${invitationId}/toggle`),
+
+  // 验证邀请码
+  validateInvitation: (invitationCode: string) =>
+    api.post('/classes/invitations/validate', { invitation_code: invitationCode }),
+
+  // 通过邀请码注册（新用户）
+  registerWithInvite: (data: { username: string; password: string; email?: string; role: string; invitation_code: string }) =>
+    api.post('/classes/register-with-invite', data),
+
+  // 已注册用户通过邀请码加入班级
+  joinWithInvite: (invitationCode: string) =>
+    api.post('/classes/join-with-invite', { invitation_code: invitationCode }),
+};
+
 export default api;
