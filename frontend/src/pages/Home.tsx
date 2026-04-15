@@ -81,6 +81,8 @@ const Home: React.FC = () => {
         loadPetData();
         loadAllPets();
       }
+    } else {
+      loadAllPets();
     }
   }, [isAuthenticated, user]);
 
