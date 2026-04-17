@@ -6,9 +6,17 @@ const db = new Database(dbPath);
 
 console.log('开始宠物技能系统迁移...');
 
+// 检查旧表是否存在并删除
+const oldTableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='skills'").get();
+if (oldTableExists) {
+  console.log('⚠️  检测到旧版skills表,正在删除...');
+  db.prepare('DROP TABLE IF EXISTS skills').run();
+  db.prepare('DROP TABLE IF EXISTS pet_skills').run();
+}
+
 // 创建技能表
 db.prepare(`
-  CREATE TABLE IF NOT EXISTS skills (
+  CREATE TABLE skills (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     description TEXT,
@@ -30,7 +38,7 @@ console.log('✅ skills 表创建成功');
 
 // 创建宠物技能关联表
 db.prepare(`
-  CREATE TABLE IF NOT EXISTS pet_skills (
+  CREATE TABLE pet_skills (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     pet_id INTEGER NOT NULL,
     skill_id INTEGER NOT NULL,
