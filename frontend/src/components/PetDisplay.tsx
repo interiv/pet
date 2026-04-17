@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Progress, Button, message, Input, Modal, Form, Select, Tag, Badge, Divider } from 'antd';
+import { Card, Row, Col, Progress, Button, message, Input, Modal, Form, Select, Tag, Badge, Divider, Alert } from 'antd';
 import {
   ThunderboltOutlined,
   RocketOutlined,
@@ -11,6 +11,7 @@ import {
   RetweetOutlined,
   RiseOutlined,
   MedicineBoxOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import { petAPI, equipmentAPI, petExtendedAPI, itemAPI } from '../utils/api';
 import { usePetStore } from '../store/authStore';
@@ -330,6 +331,30 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet }) => {
         {/* 右侧属性面板 */}
         <Col xs={24} md={8}>
           <Card title="宠物属性">
+            {/* 状态异常警告 */}
+            {(pet.hunger < 30 || pet.mood < 30) && (
+              <Alert
+                type="warning"
+                message={
+                  <span>
+                    <WarningOutlined style={{ marginRight: 8 }} />
+                    宠物状态异常！
+                  </span>
+                }
+                description={
+                  <div>
+                    {pet.hunger < 30 && <div>• 饱腹度过低 ({pet.hunger}/100)，请尽快喂食</div>}
+                    {pet.mood < 30 && <div>• 心情值过低 ({pet.mood}/100)，请多陪伴宠物</div>}
+                    <div style={{ marginTop: 8, color: '#999', fontSize: 12 }}>
+                      状态异常会影响战斗经验和属性成长
+                    </div>
+                  </div>
+                }
+                showIcon={false}
+                style={{ marginBottom: 16, border: '1px solid #faad14' }}
+              />
+            )}
+            
             {isPetUnconscious && (
               <div style={{ background: '#fff1f0', padding: 12, borderRadius: 8, marginBottom: 16, textAlign: 'center' }}>
                 <Badge status="error" text={<span style={{ color: '#f5222d', fontWeight: 'bold' }}>宠物处于濒死状态，需要复活！</span>} />

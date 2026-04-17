@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Progress, Tag, message, Tabs, TabsProps } from 'antd';
-import { TrophyOutlined, CheckCircleOutlined, StarOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Progress, Tag, message, Tabs, TabsProps, Badge, Tooltip, Empty, Statistic } from 'antd';
+import { TrophyOutlined, CheckCircleOutlined, StarOutlined, LockOutlined, CrownOutlined, FireOutlined } from '@ant-design/icons';
 import { achievementAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
@@ -105,62 +105,80 @@ const Achievements: React.FC = () => {
     const completed = isCompleted(achievement.id);
     const userAch = getUserAchievement(achievement.id);
     const category = inferCategory(achievement.condition || '');
+    const completedAt = userAch?.completed_at;
 
     return (
-      <Card
-        size="small"
-        style={{
-          borderRadius: 12,
-          background: completed ? 'linear-gradient(135deg, #f6ffed 0%, #d9f7be 100%)' : '#fafafa',
-          border: completed ? '2px solid #52c41a' : '1px solid #f0f0f0'
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          <div style={{
-            fontSize: 36,
-            width: 56,
-            height: 56,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: completed ? '#fff' : '#f5f5f5',
-            borderRadius: 12,
-            filter: completed ? 'none' : 'grayscale(100%)',
-            opacity: completed ? 1 : 0.5
-          }}>
-            {achievement.icon || '🏆'}
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <span style={{ fontWeight: 'bold', fontSize: 15, color: completed ? '#389e0d' : '#333' }}>
-                {achievement.name}
-              </span>
-              {completed && <CheckCircleOutlined style={{ color: '#52c41a' }} />}
+      <Tooltip title={completed && completedAt ? `完成时间: ${new Date(completedAt).toLocaleString('zh-CN')}` : ''}>
+        <Badge.Ribbon
+          text={completed ? <><CheckCircleOutlined /> 已解锁</> : <><LockOutlined /> 未解锁</>}
+          color={completed ? 'green' : 'default'}
+          style={{ display: completed ? 'block' : 'none' }}
+        >
+          <Card
+            size="small"
+            hoverable
+            style={{
+              borderRadius: 12,
+              background: completed 
+                ? 'linear-gradient(135deg, #f6ffed 0%, #d9f7be 100%)' 
+                : '#fafafa',
+              border: completed ? '2px solid #52c41a' : '1px solid #f0f0f0',
+              transition: 'all 0.3s ease',
+              animation: completed ? 'achievement-glow 2s ease-in-out infinite' : 'none'
+            }}
+            className={completed ? 'achievement-unlocked' : 'achievement-locked'}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              <div style={{
+                fontSize: 36,
+                width: 56,
+                height: 56,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: completed ? '#fff' : '#f5f5f5',
+                borderRadius: 12,
+                filter: completed ? 'none' : 'grayscale(100%)',
+                opacity: completed ? 1 : 0.5,
+                boxShadow: completed ? '0 4px 12px rgba(82, 196, 26, 0.3)' : 'none',
+                transition: 'all 0.3s ease'
+              }}>
+                {achievement.icon || '🏆'}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontWeight: 'bold', fontSize: 15, color: completed ? '#389e0d' : '#333' }}>
+                    {achievement.name}
+                  </span>
+                  {completed && <CrownOutlined style={{ color: '#faad14' }} />}
+                </div>
+                <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
+                  {achievement.description}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <Tag color={categoryColors[category] || 'default'}>
+                    {categoryNames[category] || category}
+                  </Tag>
+                  {achievement.reward_type && (
+                    <Tag color="gold">
+                      🎁 {achievement.reward_value} {achievement.reward_type === 'exp' ? '经验' : achievement.reward_type === 'gold' ? '金币' : '物品'}
+                    </Tag>
+                  )}
+                </div>
+                {userAch?.progress !== undefined && !completed && (
+                  <Progress
+                    percent={userAch.progress}
+                    size="small"
+                    style={{ marginTop: 8, marginBottom: 0 }}
+                    strokeColor="#52c41a"
+                    format={(percent) => `${percent}%`}
+                  />
+                )}
+              </div>
             </div>
-            <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
-              {achievement.description}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Tag color={categoryColors[category] || 'default'}>
-                {categoryNames[category] || category}
-              </Tag>
-              {achievement.reward_type && (
-                <span style={{ fontSize: 12, color: '#faad14' }}>
-                  奖励: {achievement.reward_type === 'exp' ? '经验' : achievement.reward_type === 'gold' ? '金币' : '物品'} x{achievement.reward_value}
-                </span>
-              )}
-            </div>
-            {userAch?.progress !== undefined && !completed && (
-              <Progress
-                percent={userAch.progress}
-                size="small"
-                style={{ marginTop: 8, marginBottom: 0 }}
-                strokeColor="#52c41a"
-              />
-            )}
-          </div>
-        </div>
-      </Card>
+          </Card>
+        </Badge.Ribbon>
+      </Tooltip>
     );
   };
 
@@ -248,6 +266,28 @@ const Achievements: React.FC = () => {
       </div>
 
       <Tabs defaultActiveKey="all" items={tabItems} />
+      
+      {/* CSS动画 */}
+      <style>{`
+        @keyframes achievement-glow {
+          0%, 100% {
+            box-shadow: 0 0 5px rgba(82, 196, 26, 0.3);
+          }
+          50% {
+            box-shadow: 0 0 20px rgba(82, 196, 26, 0.6);
+          }
+        }
+        
+        .achievement-unlocked:hover {
+          transform: translateY(-4px);
+          box-shadow: 0 8px 16px rgba(82, 196, 26, 0.3);
+        }
+        
+        .achievement-locked:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+      `}</style>
     </div>
   );
 };

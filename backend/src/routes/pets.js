@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { updateTaskProgress } = require('./daily-tasks');
 
 // 检查升级
 function checkLevelUp(pet) {
@@ -299,6 +300,13 @@ router.post('/feed', authenticateToken, (req, res) => {
     }
 
     db.prepare('UPDATE user_items SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?').run(req.user.userId, item_id);
+
+    // 更新每日任务进度
+    try {
+      updateTaskProgress(req.user.userId, 'feed_pet', 1);
+    } catch (error) {
+      console.error('更新每日任务进度失败:', error);
+    }
 
     const updatedPet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(req.user.userId);
     const levelUp = checkLevelUp(updatedPet);

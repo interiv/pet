@@ -18,6 +18,23 @@ const Login: React.FC = () => {
       const response = await authAPI.login(values);
       login(response.data.token, response.data.user);
       message.success('登录成功！');
+      
+      // 检查新手引导状态
+      const newbieGuide = localStorage.getItem('newbie_guide');
+      if (!newbieGuide && response.data.user.role === 'student') {
+        // 检查是否有宠物
+        try {
+          const { petAPI } = await import('../utils/api');
+          await petAPI.getMyPet();
+          // 有宠物，标记引导完成
+          localStorage.setItem('newbie_guide', 'completed');
+        } catch (error) {
+          // 没有宠物，需要引导
+          navigate('/');
+          return;
+        }
+      }
+      
       navigate('/');
     } catch (error: any) {
       message.error(error.response?.data?.error || '登录失败');

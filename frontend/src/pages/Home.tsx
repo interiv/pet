@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, TabsProps, Modal, Spin, Table, Segmented, Drawer, Button } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, TabsProps, Modal, Spin, Table, Segmented, Drawer, Button, Steps, message, Alert } from 'antd';
 import {
   HomeOutlined,
   BookOutlined,
@@ -15,8 +15,11 @@ import {
   NotificationOutlined,
   MenuOutlined,
   CommentOutlined,
+  FireOutlined,
+  BarChartOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
-import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
+import { petAPI, leaderboardAPI, adminAPI, assignmentAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
 import PetDisplay from '../components/PetDisplay';
 import CreatePet from '../components/CreatePet';
@@ -33,6 +36,10 @@ import ChatRoom from '../components/ChatRoom';
 import Forum from '../components/Forum';
 import Notifications from '../components/Notifications';
 import ClassInvitationManager from '../components/ClassInvitationManager';
+import DailyTasks from '../components/DailyTasks';
+import LearningDashboard from '../components/LearningDashboard';
+import PetSkills from '../components/PetSkills';
+import BossBattle from '../components/BossBattle';
 
 const { Header, Content, Sider } = Layout;
 
@@ -66,12 +73,21 @@ const Home: React.FC = () => {
   const [myClasses, setMyClasses] = useState<any[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
   const [taughtClassPets, setTaughtClassPets] = useState<any[]>([]);
+  
+  // 新手引导状态
+  const [newbieGuideVisible, setNewbieGuideVisible] = useState(false);
+  const [newbieStep, setNewbieStep] = useState(0);
+  const [guidePetCreated, setGuidePetCreated] = useState(false);
+  const [guidePetData, setGuidePetData] = useState<any>(null);
 
   const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
   const isStudent = user?.role === 'student';
 
   useEffect(() => {
     if (isAuthenticated) {
+      // 检查新手引导
+      checkNewbieGuide();
+      
       if (isStudent) {
         loadPetData();
         loadMyClassPets();
@@ -85,6 +101,25 @@ const Home: React.FC = () => {
       loadAllPets();
     }
   }, [isAuthenticated, user]);
+  
+  const checkNewbieGuide = async () => {
+    // 如果是学生且未完成引导
+    if (isStudent) {
+      const newbieGuide = localStorage.getItem('newbie_guide');
+      if (!newbieGuide) {
+        // 检查是否有宠物
+        try {
+          await petAPI.getMyPet();
+          // 有宠物，标记为完成
+          localStorage.setItem('newbie_guide', 'completed');
+        } catch (error) {
+          // 没有宠物，显示引导
+          setNewbieGuideVisible(true);
+          setNewbieStep(0);
+        }
+      }
+    }
+  };
 
   const loadTeacherClasses = async () => {
     try {
@@ -161,8 +196,27 @@ const Home: React.FC = () => {
     try {
       const response = await petAPI.getMyPet();
       setPet(response.data.pet);
+      setGuidePetData(response.data.pet);
     } catch (error) {
       console.log('还没有宠物');
+    }
+  };
+  
+  const handleNewbiePetCreated = async () => {
+    setGuidePetCreated(true);
+    setNewbieStep(1);
+    message.success('🎉 宠物创建成功！让我们开始新手任务吧！');
+    loadPetData();
+  };
+  
+  const handleNewbieNextStep = () => {
+    if (newbieStep < 3) {
+      setNewbieStep(newbieStep + 1);
+    } else {
+      // 完成引导
+      localStorage.setItem('newbie_guide', 'completed');
+      setNewbieGuideVisible(false);
+      message.success('🎊 新手引导完成！开始你的学习之旅吧！');
     }
   };
 
@@ -219,6 +273,10 @@ const Home: React.FC = () => {
 
   menuItems.push(
     { key: 'friends', icon: <UserOutlined />, label: '我的好友' },
+    { key: 'daily-tasks', icon: <FireOutlined />, label: '每日任务' },
+    { key: 'learning-dashboard', icon: <BarChartOutlined />, label: '学习数据' },
+    { key: 'pet-skills', icon: <ThunderboltOutlined />, label: '宠物技能' },
+    { key: 'boss-battle', icon: <FireOutlined />, label: 'BOSS战' },
     { key: 'achievements', icon: <TrophyOutlined />, label: '成就' },
     { key: 'posts', icon: <NotificationOutlined />, label: '班级动态' },
     { key: 'chat', icon: <MessageOutlined />, label: '群聊' },
@@ -639,6 +697,14 @@ const Home: React.FC = () => {
                   <Battle />
                 ) : activeMenu === 'friends' ? (
                   <Friends />
+                ) : activeMenu === 'daily-tasks' ? (
+                  <DailyTasks />
+                ) : activeMenu === 'learning-dashboard' ? (
+                  <LearningDashboard />
+                ) : activeMenu === 'pet-skills' ? (
+                  <PetSkills />
+                ) : activeMenu === 'boss-battle' ? (
+                  <BossBattle />
                 ) : activeMenu === 'achievements' ? (
                   <Achievements />
                 ) : activeMenu === 'posts' ? (
@@ -909,6 +975,109 @@ const Home: React.FC = () => {
             </div>
           )}
         </Spin>
+      </Modal>
+      
+      {/* 新手引导弹窗 */}
+      <Modal
+        title="🎮 新手引导"
+        open={newbieGuideVisible}
+        onCancel={() => {
+          // 不允许关闭，必须完成引导
+          message.info('请完成新手引导后继续使用');
+        }}
+        footer={[
+          <Button key="next" type="primary" onClick={handleNewbieNextStep}>
+            {newbieStep === 0 ? '创建宠物' : newbieStep < 3 ? '下一步' : '完成引导'}
+          </Button>
+        ]}
+        width={700}
+        closable={false}
+        maskClosable={false}
+      >
+        <Steps current={newbieStep} style={{ marginBottom: 24 }}>
+          <Steps.Step title="选择宠物" />
+          <Steps.Step title="完成练习" />
+          <Steps.Step title="投喂宠物" />
+          <Steps.Step title="查看排行" />
+        </Steps>
+        
+        {newbieStep === 0 && (
+          <div>
+            <h3>第一步：选择你的宠物伙伴</h3>
+            <p style={{ color: '#666', marginBottom: 16 }}>
+              选择一只宠物陪伴你学习，完成作业可以获得经验值让宠物成长！
+            </p>
+            <CreatePet onSuccess={handleNewbiePetCreated} />
+          </div>
+        )}
+        
+        {newbieStep === 1 && (
+          <div>
+            <h3>第二步：完成一道示例练习题</h3>
+            <p style={{ color: '#666', marginBottom: 16 }}>
+              这是一道示例题，不计入成绩，让你体验作业系统的使用方式。
+            </p>
+            <Alert
+              type="info"
+              message="提示"
+              description={"点击左侧菜单的'作业'选项，完成任意一道练习题即可。系统会赠送你初始道具。"}
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+          </div>
+        )}
+        
+        {newbieStep === 2 && (
+          <div>
+            <h3>第三步：投喂你的宠物</h3>
+            <p style={{ color: '#666', marginBottom: 16 }}>
+              系统已经赠送你3个初始道具，现在去投喂你的宠物吧！
+            </p>
+            <Alert
+              type="success"
+              message="提示"
+              description={"点击左侧菜单的'我的宠物'，然后点击'喂食'按钮，使用道具投喂宠物。"}
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+            {guidePetData && (
+              <Card size="small" style={{ marginBottom: 16 }}>
+                <div style={{ textAlign: 'center' }}>
+                  <img 
+                    src={(() => {
+                      try {
+                        const urls = typeof guidePetData.image_urls === 'string' ? JSON.parse(guidePetData.image_urls) : guidePetData.image_urls;
+                        return urls[guidePetData.growth_stage] || urls['宠物蛋'] || Object.values(urls)[0] || '';
+                      } catch (e) {
+                        return '';
+                      }
+                    })()} 
+                    alt={guidePetData.name} 
+                    style={{ width: 100, height: 100, objectFit: 'contain' }} 
+                  />
+                  <h4>{guidePetData.name}</h4>
+                  <p>等级: Lv.{guidePetData.level}</p>
+                </div>
+              </Card>
+            )}
+          </div>
+        )}
+        
+        {newbieStep === 3 && (
+          <div>
+            <h3>第四步：查看排行榜</h3>
+            <p style={{ color: '#666', marginBottom: 16 }}>
+              排行榜显示了全班宠物的等级排名，努力学习让你的宠物变得更强吧！
+            </p>
+            <Alert
+              type="warning"
+              message="提示"
+              description={"首页的'本班宠物排行'标签页可以看到排行榜。完成作业、战斗胜利都能获得经验值提升等级。"}
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+          </div>
+        )}
       </Modal>
     </Layout>
   );

@@ -25,6 +25,10 @@ const chatRoutes = require('./routes/chat');
 const forumRoutes = require('./routes/forum');
 const notificationRoutes = require('./routes/notifications');
 const classRoutes = require('./routes/classes');
+const dailyTasksModule = require('./routes/daily-tasks');
+const knowledgePointRoutes = require('./routes/knowledge-points');
+const skillRoutes = require('./routes/skills');
+const bossBattleRoutes = require('./routes/boss-battles');
 
 // 初始化数据库
 initDatabase();
@@ -72,6 +76,10 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/forum', forumRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/classes', classRoutes);
+app.use('/api/daily-tasks', dailyTasksModule.router);
+app.use('/api/knowledge-points', knowledgePointRoutes);
+app.use('/api/skills', skillRoutes);
+app.use('/api/boss-battles', bossBattleRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {

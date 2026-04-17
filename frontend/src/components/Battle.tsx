@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Button, Tabs, List, Tag, Statistic, message, Avatar, TabsProps, Modal } from 'antd';
-import { TrophyOutlined, FireOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Button, Tabs, List, Tag, Statistic, message, Avatar, TabsProps, Modal, Progress, Space } from 'antd';
+import { TrophyOutlined, FireOutlined, ThunderboltOutlined, ArrowRightOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import { petAPI, battleAPI } from '../utils/api';
 import { usePetStore, useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
+import CelebrationAnimation from './CelebrationAnimation';
 
 
 
@@ -15,6 +16,20 @@ const Battle: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [battleResult, setBattleResult] = useState<any>(null);
   const [battleModalVisible, setBattleModalVisible] = useState(false);
+  
+  // 战斗动画状态
+  const [showBattleAnimation, setShowBattleAnimation] = useState(false);
+  const [currentRound, setCurrentRound] = useState(0);
+  const [battleAnimationComplete, setBattleAnimationComplete] = useState(false);
+  
+  // 庆祝动画
+  const [showCelebration, setShowCelebration] = useState(false);
+  const [celebrationData, setCelebrationData] = useState({
+    expReward: 0,
+    goldReward: 0,
+    leveledUp: false,
+    newLevel: 0
+  });
 
   useEffect(() => {
     loadOpponents();
@@ -66,10 +81,40 @@ const Battle: React.FC = () => {
         battleLog,
         myWinChance
       });
+      
+      // 显示战斗动画
+      setShowBattleAnimation(true);
+      setCurrentRound(0);
+      setBattleAnimationComplete(false);
       setBattleModalVisible(true);
-
+      
+      // 逐回合播放动画
+      if (battleLog && battleLog.rounds) {
+        for (let i = 0; i < battleLog.rounds.length; i++) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          setCurrentRound(i + 1);
+        }
+      }
+      
+      // 动画完成后显示完整结果
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      setBattleAnimationComplete(true);
+      
       if (winner === '我') {
         message.success(`🎉 战斗胜利！获得了 ${rewardExp} 经验 和 ${rewardGold} 金币`);
+        
+        // 显示庆祝动画
+        setCelebrationData({
+          expReward: rewardExp || 0,
+          goldReward: rewardGold || 0,
+          leveledUp: !!res.data.levelUp,
+          newLevel: res.data.levelUp?.newLevel || 0
+        });
+        setShowCelebration(true);
+        
+        setTimeout(() => {
+          setShowCelebration(false);
+        }, 5000);
       } else {
         message.error('💥 战斗失败！再接再厉！');
       }
@@ -211,18 +256,115 @@ const Battle: React.FC = () => {
       <Tabs defaultActiveKey="opponents" items={tabItems} />
 
       <Modal
-        title="战斗结果"
+        title={
+          <div style={{ textAlign: 'center' }}>
+            {battleAnimationComplete ? (
+              battleResult?.winner === '我' ? '🏆 战斗胜利！' : '💀 战斗失败'
+            ) : (
+              `⚔️ 战斗中... 第${currentRound}回合`
+            )}
+          </div>
+        }
         open={battleModalVisible}
-        onCancel={() => setBattleModalVisible(false)}
+        onCancel={() => {
+          setBattleModalVisible(false);
+          setShowBattleAnimation(false);
+          setCurrentRound(0);
+          setBattleAnimationComplete(false);
+        }}
         footer={[
-          <Button key="close" onClick={() => setBattleModalVisible(false)}>
+          <Button key="close" type="primary" onClick={() => {
+            setBattleModalVisible(false);
+            setShowBattleAnimation(false);
+            setCurrentRound(0);
+            setBattleAnimationComplete(false);
+          }}>
             确定
           </Button>
         ]}
-        width={600}
+        width={700}
+        maskClosable={false}
       >
         {battleResult && (
           <div>
+            {/* 战斗中动画 */}
+            {showBattleAnimation && !battleAnimationComplete && battleResult.battleLog && battleResult.battleLog.rounds && (
+              <div style={{ marginBottom: 24 }}>
+                <Progress 
+                  percent={Math.round((currentRound / battleResult.battleLog.rounds.length) * 100)} 
+                  status="active"
+                  strokeColor={{ from: '#108ee9', to: '#87d068' }}
+                />
+                
+                <div style={{ 
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  padding: 24,
+                  borderRadius: 12,
+                  color: '#fff',
+                  marginBottom: 16,
+                  animation: 'battle-flash 0.5s ease-in-out'
+                }}>
+                  {(() => {
+                    const round = battleResult.battleLog.rounds[currentRound - 1];
+                    if (!round) return null;
+                    
+                    return (
+                      <div>
+                        <div style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 16 }}>
+                          第 {round.round} 回合
+                        </div>
+                        <Row gutter={16}>
+                          <Col span={12}>
+                            <div style={{ 
+                              background: 'rgba(255,255,255,0.2)', 
+                              padding: 12, 
+                              borderRadius: 8,
+                              animation: 'attack-left 0.6s ease-out'
+                            }}>
+                              <div style={{ fontSize: 14, marginBottom: 8 }}>🐲 你的宠物</div>
+                              <div style={{ fontSize: 24, fontWeight: 'bold' }}>
+                                造成 {round.myPet.damage} 伤害
+                              </div>
+                              {round.myPet.critical && (
+                                <Tag color="red" style={{ marginTop: 8, fontSize: 12 }}>
+                                  🔥 暴击！
+                                </Tag>
+                              )}
+                            </div>
+                          </Col>
+                          <Col span={12}>
+                            <div style={{ 
+                              background: 'rgba(255,255,255,0.2)', 
+                              padding: 12, 
+                              borderRadius: 8,
+                              animation: 'attack-right 0.6s ease-out'
+                            }}>
+                              <div style={{ fontSize: 14, marginBottom: 8 }}>👹 对手宠物</div>
+                              <div style={{ fontSize: 24, fontWeight: 'bold' }}>
+                                造成 {round.opponent.damage} 伤害
+                              </div>
+                              {round.opponent.critical && (
+                                <Tag color="red" style={{ marginTop: 8, fontSize: 12 }}>
+                                  🔥 暴击！
+                                </Tag>
+                              )}
+                            </div>
+                          </Col>
+                        </Row>
+                      </div>
+                    );
+                  })()}
+                </div>
+                
+                <div style={{ textAlign: 'center', color: '#999' }}>
+                  正在播放战斗动画...
+                </div>
+              </div>
+            )}
+            
+            {/* 完整结果 */}
+            {battleAnimationComplete && (
+              <div style={{ animation: 'fade-in 0.5s ease-out' }}>
             <div style={{ textAlign: 'center', marginBottom: 24 }}>
               <div style={{ fontSize: 64, marginBottom: 16 }}>
                 {battleResult.winner === '我' ? '🏆' : '💀'}
@@ -270,9 +412,49 @@ const Battle: React.FC = () => {
                 🎉 升级了！当前等级: Lv.{battleResult.levelUp.newLevel}
               </div>
             )}
+              </div>
+            )}
           </div>
         )}
+        
+        {/* CSS动画 */}
+        <style>{`
+          @keyframes battle-flash {
+            0% { opacity: 0; transform: scale(0.9); }
+            50% { opacity: 1; transform: scale(1.05); }
+            100% { opacity: 1; transform: scale(1); }
+          }
+          
+          @keyframes attack-left {
+            0% { transform: translateX(-50px); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
+          }
+          
+          @keyframes attack-right {
+            0% { transform: translateX(50px); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
+          }
+          
+          @keyframes fade-in {
+            0% { opacity: 0; }
+            100% { opacity: 1; }
+          }
+          
+          @keyframes victory-bounce {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+          }
+        `}</style>
       </Modal>
+      
+      {/* 庆祝动画 */}
+      <CelebrationAnimation
+        show={showCelebration}
+        expReward={celebrationData.expReward}
+        goldReward={celebrationData.goldReward}
+        leveledUp={celebrationData.leveledUp}
+        newLevel={celebrationData.newLevel}
+      />
     </div>
   );
 };

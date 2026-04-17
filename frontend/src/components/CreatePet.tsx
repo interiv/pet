@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Form, Input, Button, Select, message } from 'antd';
+import { Card, Form, Input, Button, Select, message, Row, Col, Tag, Image } from 'antd';
 import { petAPI } from '../utils/api';
 import { usePetStore } from '../store/authStore';
 
@@ -42,6 +42,13 @@ const CreatePet: React.FC<CreatePetProps> = ({ onSuccess }) => {
       setLoading(false);
     }
   };
+  
+  const [selectedSpecies, setSelectedSpecies] = useState<any>(null);
+  
+  const handleSpeciesChange = (value: number) => {
+    const species = speciesList.find(s => s.id === value);
+    setSelectedSpecies(species);
+  };
 
   return (
     <div style={{ maxWidth: 600, margin: '0 auto' }}>
@@ -74,7 +81,11 @@ const CreatePet: React.FC<CreatePetProps> = ({ onSuccess }) => {
             label="宠物种类"
             rules={[{ required: true, message: '请选择宠物种类!' }]}
           >
-            <Select placeholder="选择你喜欢的宠物" optionLabelProp="label">
+            <Select 
+              placeholder="选择你喜欢的宠物" 
+              optionLabelProp="label"
+              onChange={handleSpeciesChange}
+            >
               {speciesList.map((species) => (
                 <Option key={species.id} value={species.id} label={species.name}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -107,6 +118,46 @@ const CreatePet: React.FC<CreatePetProps> = ({ onSuccess }) => {
               ))}
             </Select>
           </Form.Item>
+          
+          {/* 进化形态预览 */}
+          {selectedSpecies && (
+            <Card size="small" style={{ marginBottom: 16, background: '#f0f5ff' }}>
+              <div style={{ marginBottom: 8 }}>
+                <Tag color="blue">进化预览</Tag>
+                <span style={{ color: '#666', fontSize: 12 }}> 选择不同的宠物可以看到它们的进化形态</span>
+              </div>
+              <Row gutter={[8, 8]}>
+                {['宠物蛋', '初生期', '幼年期', '成长期', '成年期', '完全体', '究极体'].map((stage, index) => {
+                  try {
+                    const urls = typeof selectedSpecies.image_urls === 'string' ? JSON.parse(selectedSpecies.image_urls) : selectedSpecies.image_urls;
+                    const url = urls[stage] || '';
+                    return (
+                      <Col span={3} key={stage}>
+                        <div style={{ textAlign: 'center' }}>
+                          {url ? (
+                            <Image 
+                              src={url} 
+                              alt={stage} 
+                              style={{ width: 60, height: 60, objectFit: 'contain' }}
+                              preview={false}
+                            />
+                          ) : (
+                            <div style={{ width: 60, height: 60, background: '#e8e8e8', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
+                              ?
+                            </div>
+                          )}
+                          <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>{stage}</div>
+                          <div style={{ fontSize: 10, color: '#999' }}>Lv.{[1, 5, 10, 20, 35, 55, 80][index]}+</div>
+                        </div>
+                      </Col>
+                    );
+                  } catch (e) {
+                    return null;
+                  }
+                })}
+              </Row>
+            </Card>
+          )}
 
           <Form.Item>
             <Button 

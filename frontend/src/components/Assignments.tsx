@@ -4,6 +4,7 @@ import { assignmentAPI, adminAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
 import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined } from '@ant-design/icons';
+import CelebrationAnimation from './CelebrationAnimation';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -70,6 +71,23 @@ const Assignments: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [studentAnswers, setStudentAnswers] = useState<Record<number, any>>({});
   const [uploadedImages, setUploadedImages] = useState<Record<number, string>>({});
+  
+  // 题目编辑状态
+  const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
+  const [editingQuestionIndex, setEditingQuestionIndex] = useState<number>(-1);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editForm] = Form.useForm();
+  
+  // 庆祝动画状态
+  const [showCelebration, setShowCelebration] = useState(false);
+  const [celebrationData, setCelebrationData] = useState({
+    expReward: 0,
+    goldReward: 0,
+    leveledUp: false,
+    newLevel: 0,
+    evolved: false,
+    newStage: ''
+  });
 
   const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
   const isAdmin = user?.role === 'admin';
@@ -202,6 +220,22 @@ const Assignments: React.FC = () => {
       
       if (res.data.success && !res.data.message?.includes('等待')) {
         message.success(`提交成功！得分：${res.data.total_score}分，获得 ${res.data.gold_reward} 金币`);
+        
+        // 显示庆祝动画
+        setCelebrationData({
+          expReward: res.data.exp_reward || 0,
+          goldReward: res.data.gold_reward || 0,
+          leveledUp: res.data.levelUp?.leveledUp || false,
+          newLevel: res.data.levelUp?.newLevel || 0,
+          evolved: !!res.data.levelUp?.newStage,
+          newStage: res.data.levelUp?.newStage || ''
+        });
+        setShowCelebration(true);
+        
+        // 5秒后自动隐藏
+        setTimeout(() => {
+          setShowCelebration(false);
+        }, 5000);
       } else {
         message.info(res.data.message || '已提交');
       }
@@ -220,6 +254,65 @@ const Assignments: React.FC = () => {
     } catch (e: any) {
       message.error(e.response?.data?.error || '上传失败');
     }
+  };
+  
+  // 打开题目编辑
+  const handleEditQuestion = (question: Question, index: number) => {
+    setEditingQuestion(question);
+    setEditingQuestionIndex(index);
+    editForm.setFieldsValue({
+      content: question.content,
+      options: question.options ? question.options.join('\n') : '',
+      difficulty: 'medium',
+      knowledge_point: ''
+    });
+    setEditModalVisible(true);
+  };
+  
+  // 保存题目编辑
+  const handleSaveEdit = async (values: any) => {
+    if (!editingQuestion || editingQuestionIndex < 0 || !generatedData) return;
+    
+    // 更新题目
+    const updatedQuestion: Question = {
+      ...editingQuestion,
+      content: values.content,
+      options: values.options ? values.options.split('\n').filter((opt: string) => opt.trim()) : null,
+    };
+    
+    // 更新generatedData中的题目
+    const newQuestions = [...generatedData.questions];
+    newQuestions[editingQuestionIndex] = updatedQuestion;
+    setGeneratedData({ ...generatedData, questions: newQuestions });
+    message.success('题目已更新');
+    
+    setEditModalVisible(false);
+    setEditingQuestion(null);
+    setEditingQuestionIndex(-1);
+  };
+  
+  // 删除题目
+  const handleDeleteQuestion = (index: number) => {
+    if (!generatedData) return;
+    
+    Modal.confirm({
+      title: '确认删除',
+      content: '确定要删除这道题目吗?',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => {
+        const newQuestions = generatedData.questions.filter((_, i) => i !== index);
+        const newAllQuestionIds = generatedData.allQuestionIds.filter((_, i) => i !== index);
+        setGeneratedData({
+          ...generatedData,
+          questions: newQuestions,
+          allQuestionIds: newAllQuestionIds,
+          question_count: newQuestions.length
+        });
+        message.success('题目已删除');
+      }
+    });
   };
 
   const handleRetryWrong = () => {
@@ -589,9 +682,29 @@ const Assignments: React.FC = () => {
                 <Divider orientation="left">题目预览（共{generatedData.question_count}道）</Divider>
                 <div style={{ maxHeight: 300, overflowY: 'auto', marginBottom: 16 }}>
                   {generatedData.questions.map((q, i) => (
-                    <div key={i} style={{ padding: '8px 12px', background: i % 2 === 0 ? '#fafafa' : '#fff', borderRadius: 6, marginBottom: 4 }}>
-                      <strong>Q{i + 1}.</strong> [{typeOptions.find(t => t.value === q.type)?.label}] {q.content}
-                      {q.hasVariants && <Tag color="orange" style={{ marginLeft: 8 }}>含变体</Tag>}
+                    <div key={i} style={{ padding: '8px 12px', background: i % 2 === 0 ? '#fafafa' : '#fff', borderRadius: 6, marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ flex: 1 }}>
+                        <strong>Q{i + 1}.</strong> [{typeOptions.find(t => t.value === q.type)?.label}] {q.content}
+                        {q.hasVariants && <Tag color="orange" style={{ marginLeft: 8 }}>含变体</Tag>}
+                      </div>
+                      <Space size="small">
+                        <Button 
+                          size="small" 
+                          icon={<EyeOutlined />} 
+                          onClick={() => handleEditQuestion(q, i)}
+                          title="编辑题目"
+                        >
+                          编辑
+                        </Button>
+                        <Button 
+                          size="small" 
+                          danger
+                          onClick={() => handleDeleteQuestion(i)}
+                          title="删除题目"
+                        >
+                          删除
+                        </Button>
+                      </Space>
                     </div>
                   ))}
                 </div>
@@ -806,6 +919,57 @@ const Assignments: React.FC = () => {
             ]} />
           </div>
         ) : null}
+      </Modal>
+      
+      {/* 庆祝动画 */}
+      <CelebrationAnimation
+        show={showCelebration}
+        expReward={celebrationData.expReward}
+        goldReward={celebrationData.goldReward}
+        leveledUp={celebrationData.leveledUp}
+        newLevel={celebrationData.newLevel}
+        evolved={celebrationData.evolved}
+        newStage={celebrationData.newStage}
+      />
+      
+      {/* 题目编辑弹窗 */}
+      <Modal
+        title="✏️ 编辑题目"
+        open={editModalVisible}
+        onCancel={() => {
+          setEditModalVisible(false);
+          setEditingQuestion(null);
+          setEditingQuestionIndex(-1);
+        }}
+        onOk={() => editForm.submit()}
+        width={600}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Form form={editForm} layout="vertical" onFinish={handleSaveEdit}>
+          <Form.Item name="content" label="题目内容" rules={[{ required: true, message: '请输入题目内容' }]}>
+            <TextArea rows={4} placeholder="请输入题目内容..." />
+          </Form.Item>
+          
+          <Form.Item name="options" label="选项（每行一个）" extra="如果题目没有选项，可以留空">
+            <TextArea 
+              rows={4} 
+              placeholder={"A. 选项一\nB. 选项二\nC. 选项三\nD. 选项四"}
+            />
+          </Form.Item>
+          
+          <Form.Item name="difficulty" label="难度">
+            <Select>
+              <Option value="easy">简单</Option>
+              <Option value="medium">中等</Option>
+              <Option value="hard">困难</Option>
+            </Select>
+          </Form.Item>
+          
+          <Form.Item name="knowledge_point" label="知识点">
+            <Input placeholder="例如：勾股定理、三角函数..." />
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );

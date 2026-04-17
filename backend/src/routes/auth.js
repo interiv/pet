@@ -125,12 +125,22 @@ router.post('/login', async (req, res) => {
     if (myPet) {
       const lastLogin = user.last_login ? new Date(user.last_login).getTime() : Date.now() - 3600000;
       const hoursSinceLastLogin = Math.max(0, Math.floor((Date.now() - lastLogin) / (1000 * 60 * 60)));
+      const daysSinceLastLogin = Math.floor(hoursSinceLastLogin / 24);
 
       if (hoursSinceLastLogin > 0) {
         let newStamina = Math.min(100, myPet.stamina + hoursSinceLastLogin * 10);
         let newHunger = Math.max(0, myPet.hunger - hoursSinceLastLogin * 5);
         let newMood = myPet.mood;
         let newHealth = myPet.health;
+
+        // 每日衰减机制：如果超过1天未登录
+        if (daysSinceLastLogin > 0) {
+          // 每天额外衰减
+          newHunger = Math.max(0, newHunger - daysSinceLastLogin * 10);
+          newMood = Math.max(0, newMood - daysSinceLastLogin * 10);
+          
+          console.log(`宠物状态每日衰减：${daysSinceLastLogin} 天未登录`);
+        }
 
         // 饱腹度低于30时，心情下降
         if (newHunger < 30) {
@@ -140,6 +150,12 @@ router.post('/login', async (req, res) => {
         // 饱腹度为0或心情为0持续时，健康值下降
         if (newHunger === 0 || newMood === 0) {
           newHealth = Math.max(0, newHealth - hoursSinceLastLogin * 10);
+        }
+
+        // 状态异常标记
+        let statusDebuff = false;
+        if (newHunger < 30 || newMood < 30) {
+          statusDebuff = true;
         }
 
         // 更新宠物属性
@@ -152,6 +168,10 @@ router.post('/login', async (req, res) => {
             updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `).run(newStamina, newHunger, newMood, newHealth, myPet.id);
+        
+        // 返回状态衰减信息给前端
+        myPet.status_debuff = statusDebuff;
+        myPet.days_offline = daysSinceLastLogin;
       }
     }
 

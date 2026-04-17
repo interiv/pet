@@ -3,6 +3,7 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { checkLevelUp } = require('./pets');
+const { updateTaskProgress } = require('./daily-tasks');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
@@ -597,6 +598,51 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
       }
 
       db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(goldReward, req.user.userId);
+
+      // 更新每日任务进度
+      try {
+        // 完成作业任务
+        updateTaskProgress(req.user.userId, 'complete_assignment', 1);
+        
+        // 正确率达标任务
+        if (totalScore >= 80) {
+          updateTaskProgress(req.user.userId, 'correct_rate', totalScore);
+        }
+      } catch (error) {
+        console.error('更新每日任务进度失败:', error);
+      }
+
+      // 更新知识点统计
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const insertKnowledgePoint = db.prepare(`
+          INSERT OR IGNORE INTO knowledge_point_stats (user_id, knowledge_point, date, total_attempts, correct_attempts)
+          VALUES (?, ?, ?, 1, ?)
+        `);
+        const updateKnowledgePoint = db.prepare(`
+          UPDATE knowledge_point_stats 
+          SET total_attempts = total_attempts + 1, correct_attempts = correct_attempts + ?
+          WHERE user_id = ? AND knowledge_point = ? AND date = ?
+        `);
+        
+        // 从题目中提取知识点（如果有）
+        for (const r of results) {
+          const question = questions.find(q => q.id === r.question_id);
+          if (question && question.knowledge_point) {
+            const existing = db.prepare(
+              'SELECT id FROM knowledge_point_stats WHERE user_id = ? AND knowledge_point = ? AND date = ?'
+            ).get(req.user.userId, question.knowledge_point, today);
+            
+            if (existing) {
+              updateKnowledgePoint.run(r.is_correct ? 1 : 0, req.user.userId, question.knowledge_point, today);
+            } else {
+              insertKnowledgePoint.run(req.user.userId, question.knowledge_point, today, r.is_correct ? 1 : 0);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('更新知识点统计失败:', error);
+      }
 
       res.json({
         success: true,
