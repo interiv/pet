@@ -111,7 +111,7 @@ router.delete('/posts/:id', authenticateToken, (req, res) => {
 
     db.prepare('DELETE FROM post_likes WHERE post_id = ?').run(id);
     db.prepare('DELETE FROM post_comments WHERE post_id = ?').run(id);
-    db.prepare('DELETE FROM notifications WHERE source_type = "post" AND source_id = ?').run(id);
+    db.prepare("DELETE FROM notifications WHERE source_type = 'post' AND source_id = ?").run(id);
     db.prepare('DELETE FROM posts WHERE id = ?').run(id);
 
     res.json({ message: '删除成功' });

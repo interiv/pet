@@ -11,6 +11,21 @@ function generateInviteCode() {
   return crypto.randomBytes(4).toString('hex').toUpperCase();
 }
 
+router.get('/public-list', (req, res) => {
+  try {
+    const classes = db.prepare(`
+      SELECT c.id, c.name, c.grade,
+        (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') as student_count
+      FROM classes c
+      ORDER BY c.created_at DESC
+    `).all();
+    res.json({ classes });
+  } catch (error) {
+    console.error('获取公开班级列表失败:', error);
+    res.status(500).json({ error: '获取班级列表失败' });
+  }
+});
+
 // 教师创建班级（自动成为班主任）
 router.post('/create', authenticateToken, (req, res) => {
   try {

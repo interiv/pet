@@ -406,12 +406,12 @@ router.get('/all-skills', (req, res) => {
 function checkPetStatus(pet) {
   if (pet.hunger <= 0 || pet.health <= 0) {
     if (pet.status !== 'unconscious') {
-      db.prepare('UPDATE pets SET status = "unconscious" WHERE id = ?').run(pet.id);
+      db.prepare("UPDATE pets SET status = 'unconscious' WHERE id = ?").run(pet.id);
     }
     return true;
   }
   if (pet.status === 'unconscious') {
-    db.prepare('UPDATE pets SET status = "normal" WHERE id = ?').run(pet.id);
+    db.prepare("UPDATE pets SET status = 'normal' WHERE id = ?").run(pet.id);
   }
   return false;
 }

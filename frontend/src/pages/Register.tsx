@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Form, Input, Button, Card, message, Typography, Select, Alert } from 'antd';
 import { UserOutlined, LockOutlined, MailOutlined, LinkOutlined } from '@ant-design/icons';
-import { authAPI, adminAPI, classAPI } from '../utils/api';
+import { authAPI, classAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
 const { Title } = Typography;
@@ -30,10 +30,10 @@ const Register: React.FC = () => {
 
   const loadClasses = async () => {
     try {
-      const res = await adminAPI.getClasses();
+      const res = await classAPI.getPublicClasses();
       setClasses(res.data.classes || []);
     } catch (error) {
-      console.error('加载班级列表失败');
+      console.error('加载班级列表失败:', error);
     }
   };
 

@@ -106,7 +106,7 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
                   borderColor: equipped ? slotColors[slot] : '#f0f0f0',
                   borderWidth: equipped ? 2 : 1
                 }}
-                headStyle={{ borderBottom: 'none', padding: '0 12px' }}
+                styles={{ header: { borderBottom: 'none', padding: '0 12px' } }}
                 title={<Tag color={slotColors[slot]} style={{ margin: 0, marginTop: 12 }}>{slotNames[slot]}</Tag>}
               >
                 {equipped ? (

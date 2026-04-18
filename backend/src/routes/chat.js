@@ -41,7 +41,7 @@ router.get('/conversations', authenticateToken, (req, res) => {
           name: `${cls.name} 班级群`,
           last_message: lastMsg?.content || '',
           unread_count: unreadCount,
-          member_count: db.prepare('SELECT COUNT(*) as cnt FROM users WHERE class_id = ? AND status = "active"').get(cls.id).cnt
+          member_count: db.prepare("SELECT COUNT(*) as cnt FROM users WHERE class_id = ? AND status = 'active'").get(cls.id).cnt
         });
       }
     }

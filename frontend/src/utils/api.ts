@@ -367,6 +367,8 @@ export const classAPI = {
   // 已注册用户通过邀请码加入班级
   joinWithInvite: (invitationCode: string) =>
     api.post('/classes/join-with-invite', { invitation_code: invitationCode }),
+
+  getPublicClasses: () => api.get('/classes/public-list'),
 };
 
 export default api;

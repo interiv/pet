@@ -790,6 +790,14 @@ const Home: React.FC = () => {
                   <Battle />
                 ) : activeMenu === 'friends' ? (
                   <Friends />
+                ) : activeMenu === 'daily-tasks' ? (
+                  <DailyTasks />
+                ) : activeMenu === 'learning-dashboard' ? (
+                  <LearningDashboard />
+                ) : activeMenu === 'pet-skills' ? (
+                  <PetSkills />
+                ) : activeMenu === 'boss-battle' ? (
+                  <BossBattle />
                 ) : activeMenu === 'achievements' ? (
                   <Achievements />
                 ) : activeMenu === 'posts' ? (
@@ -804,6 +812,8 @@ const Home: React.FC = () => {
                   <Admin />
                 ) : activeMenu === 'applications' ? (
                   <Admin defaultTab="applications" />
+                ) : activeMenu === 'class-management' ? (
+                  <ClassInvitationManager />
                 ) : activeMenu === 'profile' ? (
                   <Profile />
                 ) : isAuthenticated && isTeacher ? (
