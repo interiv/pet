@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge } from 'antd';
-import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, SettingOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DollarOutlined, DatabaseOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge, Switch, Alert } from 'antd';
+import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DollarOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined } from '@ant-design/icons';
 import { adminAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
@@ -31,7 +31,8 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
         { key: 'applications', label: <span><TeamOutlined /> 入学申请</span>, children: <ApplicationManagement /> },
         { key: 'announcements', label: <span><NotificationOutlined /> 公告管理</span>, children: <AnnouncementManagement /> },
         { key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> },
-        { key: 'settings', label: <span><SettingOutlined /> AI设置</span>, children: <AISettings /> },
+        { key: 'site_settings', label: <span><GlobalOutlined /> 网站设置</span>, children: <SiteSettings /> },
+        { key: 'ai_settings', label: <span><RobotOutlined /> AI设置</span>, children: <AISettings /> },
       ];
     } else if (isTeacher) {
       return [
@@ -1037,6 +1038,139 @@ const AnnouncementManagement: React.FC = () => {
   );
 };
 
+const SiteSettings: React.FC = () => {
+  const [form] = Form.useForm();
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      const res = await adminAPI.getSiteSettings();
+      const data = res.data.settings || {};
+      form.setFieldsValue({
+        site_name: data.site_name || '班级宠物养成系统',
+        site_description: data.site_description || '寓教于乐，让学习更有趣',
+        site_logo: data.site_logo || '🐾',
+        site_footer: data.site_footer || '© 2024 班级宠物养成系统',
+        site_announcement: data.site_announcement || '',
+        registration_enabled: data.registration_enabled === 'true',
+        battle_enabled: data.battle_enabled === 'true',
+        shop_enabled: data.shop_enabled === 'true',
+        max_pets_per_user: parseInt(data.max_pets_per_user) || 1,
+        daily_login_gold: parseInt(data.daily_login_gold) || 10,
+        battle_stamina_cost: parseInt(data.battle_stamina_cost) || 20,
+      });
+    } catch (error) {
+      message.error('加载网站设置失败');
+    }
+  };
+
+  const handleSave = async (values: any) => {
+    setLoading(true);
+    try {
+      const data = {
+        ...values,
+        registration_enabled: String(values.registration_enabled),
+        battle_enabled: String(values.battle_enabled),
+        shop_enabled: String(values.shop_enabled),
+      };
+      await adminAPI.saveSiteSettings(data);
+      message.success('网站设置已保存');
+      loadSettings();
+    } catch (error) {
+      message.error('保存设置失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: 800 }}>
+      <Alert
+        message="网站设置"
+        description="修改网站设置后，前端页面将实时生效。请谨慎修改功能开关。"
+        type="info"
+        showIcon
+        style={{ marginBottom: 24 }}
+      />
+      <Form form={form} layout="vertical" onFinish={handleSave}>
+        <Card title={<span><GlobalOutlined /> 基本设置</span>} style={{ marginBottom: 16 }}>
+          <Row gutter={16}>
+            <Col xs={24} md={12}>
+              <Form.Item name="site_name" label="站点名称" rules={[{ required: true, message: '请输入站点名称' }]}>
+                <Input placeholder="班级宠物养成系统" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item name="site_logo" label="站点Logo（Emoji）" rules={[{ required: true, message: '请输入Logo' }]}>
+                <Input placeholder="🐾" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="site_description" label="站点描述">
+            <Input placeholder="寓教于乐，让学习更有趣" />
+          </Form.Item>
+          <Form.Item name="site_footer" label="底部版权信息">
+            <Input placeholder="© 2024 班级宠物养成系统" />
+          </Form.Item>
+          <Form.Item name="site_announcement" label="全局公告">
+            <Input.TextArea rows={2} placeholder="输入公告内容，留空则不显示公告栏" />
+          </Form.Item>
+        </Card>
+
+        <Card title={<span><SafetyOutlined /> 功能开关</span>} style={{ marginBottom: 16 }}>
+          <Row gutter={16}>
+            <Col xs={24} md={8}>
+              <Form.Item name="registration_enabled" label="开放注册" valuePropName="checked">
+                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="battle_enabled" label="宠物战斗" valuePropName="checked">
+                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="shop_enabled" label="道具商店" valuePropName="checked">
+                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Card>
+
+        <Card title={<span><ThunderboltOutlined /> 游戏参数</span>} style={{ marginBottom: 16 }}>
+          <Row gutter={16}>
+            <Col xs={24} md={8}>
+              <Form.Item name="max_pets_per_user" label="每用户最大宠物数">
+                <InputNumber min={1} max={10} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="daily_login_gold" label="每日登录金币奖励">
+                <InputNumber min={0} max={1000} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="battle_stamina_cost" label="战斗体力消耗">
+                <InputNumber min={0} max={200} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Card>
+
+        <Form.Item>
+          <Button type="primary" htmlType="submit" loading={loading} size="large">
+            保存所有设置
+          </Button>
+        </Form.Item>
+      </Form>
+    </div>
+  );
+};
+
 const AISettings: React.FC = () => {
   const [settingsForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
@@ -1047,8 +1181,13 @@ const AISettings: React.FC = () => {
 
   const loadSettings = async () => {
     try {
-      const res = await adminAPI.getAISettings();
-      settingsForm.setFieldsValue(res.data.settings);
+      const res = await adminAPI.getSiteSettings();
+      const data = res.data.settings || {};
+      settingsForm.setFieldsValue({
+        ai_model: data.ai_model || 'gpt-3.5-turbo',
+        ai_base_url: data.ai_base_url || 'https://api.openai.com/v1',
+        ai_api_key: data.ai_api_key || '',
+      });
     } catch (error) {
       message.error('加载设置失败');
     }
@@ -1057,7 +1196,7 @@ const AISettings: React.FC = () => {
   const handleSave = async (values: any) => {
     setLoading(true);
     try {
-      await adminAPI.saveAISettings(values);
+      await adminAPI.saveSiteSettings(values);
       message.success('大模型设置已保存');
     } catch (error) {
       message.error('保存设置失败');
@@ -1067,7 +1206,14 @@ const AISettings: React.FC = () => {
   };
 
   return (
-    <Card style={{ maxWidth: 600 }}>
+    <Card title={<span><RobotOutlined /> AI 大模型配置</span>} style={{ maxWidth: 600 }}>
+      <Alert
+        message="AI设置说明"
+        description="配置AI大模型接口后，系统可以使用AI出题、智能分析等功能。"
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+      />
       <Form form={settingsForm} layout="vertical" onFinish={handleSave}>
         <Form.Item name="ai_model" label="大模型名称" rules={[{ required: true, message: '请输入模型名称' }]}>
           <Input placeholder="如 gpt-3.5-turbo" />

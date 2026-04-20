@@ -18,6 +18,7 @@ interface AuthState {
   login: (token: string, user: User) => void;
   logout: () => void;
   checkAuth: () => Promise<void>;
+  setUser: (user: User) => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -62,6 +63,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch (error) {
       console.error('验证token失败', error);
     }
+  },
+  
+  setUser: (user) => {
+    localStorage.setItem('user', JSON.stringify(user));
+    set({ user });
   },
 }));
 

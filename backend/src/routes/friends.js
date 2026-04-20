@@ -3,14 +3,14 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 
-// 获取好友列表
+// 获取好友列表（只返回已通过的好友）
 router.get('/list', authenticateToken, (req, res) => {
   try {
     const friends = db.prepare(`
       SELECT u.id, u.username, u.avatar, f.friendship_level, f.last_interaction
       FROM friends f
       JOIN users u ON f.friend_id = u.id
-      WHERE f.user_id = ?
+      WHERE f.user_id = ? AND f.status = 'active'
     `).all(req.user.userId);
 
     res.json({ friends });
@@ -20,7 +20,25 @@ router.get('/list', authenticateToken, (req, res) => {
   }
 });
 
-// 添加好友
+// 获取待处理的好友请求
+router.get('/pending-requests', authenticateToken, (req, res) => {
+  try {
+    const requests = db.prepare(`
+      SELECT fr.id, fr.sender_id, fr.created_at, u.username, u.avatar, u.role
+      FROM friend_requests fr
+      JOIN users u ON fr.sender_id = u.id
+      WHERE fr.receiver_id = ? AND fr.status = 'pending'
+      ORDER BY fr.created_at DESC
+    `).all(req.user.userId);
+
+    res.json({ requests });
+  } catch (error) {
+    console.error('获取好友请求错误:', error);
+    res.status(500).json({ error: '获取好友请求失败' });
+  }
+});
+
+// 发送好友请求
 router.post('/add', authenticateToken, (req, res) => {
   try {
     const { friend_username } = req.body;
@@ -34,13 +52,103 @@ router.post('/add', authenticateToken, (req, res) => {
       return res.status(400).json({ error: '不能添加自己为好友' });
     }
 
-    db.prepare('INSERT OR IGNORE INTO friends (user_id, friend_id) VALUES (?, ?)').run(req.user.userId, friend.id);
-    db.prepare('INSERT OR IGNORE INTO friends (user_id, friend_id) VALUES (?, ?)').run(friend.id, req.user.userId);
+    // 检查是否已经是好友
+    const existingFriend = db.prepare("SELECT id FROM friends WHERE user_id = ? AND friend_id = ? AND status = 'active'").get(req.user.userId, friend.id);
+    if (existingFriend) {
+      return res.status(400).json({ error: '已经是好友了' });
+    }
 
-    res.json({ message: '好友添加成功' });
+    // 检查是否已有待处理的请求
+    const existingRequest = db.prepare("SELECT id FROM friend_requests WHERE sender_id = ? AND receiver_id = ? AND status = 'pending'").get(req.user.userId, friend.id);
+    if (existingRequest) {
+      return res.status(400).json({ error: '已发送好友请求，等待对方接受' });
+    }
+
+    // 检查对方是否已经发送过请求给我
+    const reverseRequest = db.prepare("SELECT id FROM friend_requests WHERE sender_id = ? AND receiver_id = ? AND status = 'pending'").get(friend.id, req.user.userId);
+    if (reverseRequest) {
+      // 自动接受对方的请求
+      db.prepare("UPDATE friend_requests SET status = 'accepted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(reverseRequest.id);
+      
+      // 创建双向好友关系
+      db.prepare("INSERT OR IGNORE INTO friends (user_id, friend_id, status) VALUES (?, ?, 'active')").run(req.user.userId, friend.id);
+      db.prepare("INSERT OR IGNORE INTO friends (user_id, friend_id, status) VALUES (?, ?, 'active')").run(friend.id, req.user.userId);
+      
+      // 发送通知
+      db.prepare(`
+        INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
+        VALUES (?, 'friend_accepted', '好友请求已通过', ?, 'friend', ?)
+      `).run(friend.id, `${req.user.username} 通过了你的好友请求`, req.user.userId);
+      
+      return res.json({ message: '好友添加成功' });
+    }
+
+    // 创建好友请求
+    db.prepare(`
+      INSERT OR IGNORE INTO friend_requests (sender_id, receiver_id, status)
+      VALUES (?, ?, 'pending')
+    `).run(req.user.userId, friend.id);
+
+    // 发送通知
+    db.prepare(`
+      INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
+      VALUES (?, 'friend_request', '收到新的朋好友请求', ?, 'friend_request', ?)
+    `).run(friend.id, `${req.user.username} 请求添加你为好友`, req.user.userId);
+
+    res.json({ message: '好友请求已发送，等待对方接受' });
   } catch (error) {
     console.error('添加好友错误:', error);
     res.status(500).json({ error: '添加好友失败' });
+  }
+});
+
+// 接受好友请求
+router.post('/accept-request', authenticateToken, (req, res) => {
+  try {
+    const { request_id } = req.body;
+
+    const request = db.prepare("SELECT * FROM friend_requests WHERE id = ? AND receiver_id = ? AND status = 'pending'").get(request_id, req.user.userId);
+    if (!request) {
+      return res.status(404).json({ error: '好友请求不存在' });
+    }
+
+    // 更新请求状态
+    db.prepare("UPDATE friend_requests SET status = 'accepted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(request_id);
+
+    // 创建双向好友关系
+    db.prepare("INSERT OR IGNORE INTO friends (user_id, friend_id, status) VALUES (?, ?, 'active')").run(req.user.userId, request.sender_id);
+    db.prepare("INSERT OR IGNORE INTO friends (user_id, friend_id, status) VALUES (?, ?, 'active')").run(request.sender_id, req.user.userId);
+
+    // 发送通知
+    db.prepare(`
+      INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
+      VALUES (?, 'friend_accepted', '好友请求已通过', ?, 'friend', ?)
+    `).run(request.sender_id, `${req.user.username} 通过了你的好友请求`, req.user.userId);
+
+    res.json({ message: '已接受好友请求' });
+  } catch (error) {
+    console.error('接受好友请求错误:', error);
+    res.status(500).json({ error: '接受好友请求失败' });
+  }
+});
+
+// 拒绝好友请求
+router.post('/reject-request', authenticateToken, (req, res) => {
+  try {
+    const { request_id } = req.body;
+
+    const request = db.prepare("SELECT * FROM friend_requests WHERE id = ? AND receiver_id = ? AND status = 'pending'").get(request_id, req.user.userId);
+    if (!request) {
+      return res.status(404).json({ error: '好友请求不存在' });
+    }
+
+    // 更新请求状态
+    db.prepare("UPDATE friend_requests SET status = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(request_id);
+
+    res.json({ message: '已拒绝好友请求' });
+  } catch (error) {
+    console.error('拒绝好友请求错误:', error);
+    res.status(500).json({ error: '拒绝好友请求失败' });
   }
 });
 

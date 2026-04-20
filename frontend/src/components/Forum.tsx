@@ -64,6 +64,15 @@ const Forum: React.FC = () => {
     }
   };
 
+  const handleForumClick = (forumId: number) => {
+    // 如果当前在帖子详情，先返回列表
+    if (showThreadDetail) {
+      setShowThreadDetail(false);
+      setViewingThread(null);
+    }
+    setActiveForumId(forumId);
+  };
+
   const loadThreads = async () => {
     setThreadsLoading(true);
     try {
@@ -175,6 +184,111 @@ const Forum: React.FC = () => {
     return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  // 构建树形结构
+  const buildReplyTree = (replies: any[]) => {
+    const map = new Map<number, any>();
+    const roots: any[] = [];
+
+    // 创建节点映射
+    replies.forEach(reply => {
+      map.set(reply.id, { ...reply, children: [] });
+    });
+
+    // 构建树
+    replies.forEach(reply => {
+      const node = map.get(reply.id);
+      if (reply.parent_id && map.has(reply.parent_id)) {
+        const parent = map.get(reply.parent_id);
+        parent.children.push(node);
+      } else {
+        roots.push(node);
+      }
+    });
+
+    return roots;
+  };
+
+  // 渲染回复树
+  const renderReplyTree = (replies: any[], depth: number = 0) => {
+    return replies.map((post: any) => (
+      <div key={post.id} style={{ marginLeft: depth > 0 ? (isMobile ? 12 : 20) : 0, marginTop: depth > 0 ? 8 : 0 }}>
+        <Card size="small" style={{ borderRadius: 8, background: depth > 0 ? '#fafafa' : '#fff' }}>
+          <div style={{ display: 'flex', gap: isMobile ? 8 : 10, alignItems: 'flex-start' }}>
+            <Avatar src={post.avatar} size={isMobile ? 28 : 32} style={{ background: '#1890ff', flexShrink: 0 }}>
+              {post.username?.[0]}
+            </Avatar>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Space size={isMobile ? 4 : 6}>
+                <span style={{ fontWeight: 600, fontSize: isMobile ? 12 : 13 }}>{post.username}</span>
+                {post.is_first_post && <Tag color="green" style={{ fontSize: isMobile ? 9 : 10 }}>楼主</Tag>}
+                {depth > 0 && post.parent_id && (
+                  <span style={{ fontSize: isMobile ? 11 : 12, color: '#1890ff' }}>
+                    回复 @{viewingThread.replies?.find((r: any) => r.id === post.parent_id)?.username || '用户'}
+                  </span>
+                )}
+                <span style={{ fontSize: isMobile ? 10 : 11, color: '#bbb' }}>{formatTime(post.created_at)}</span>
+              </Space>
+              <p style={{ margin: `${isMobile ? 4 : 6}px 0 0`, lineHeight: 1.7, whiteSpace: 'pre-wrap', fontSize: isMobile ? 13 : undefined }}>{post.content}</p>
+              <div style={{ marginTop: 6, display: 'flex', gap: isMobile ? 4 : 8 }}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={post.is_liked ? <LikeFilled style={{ color: '#1890ff' }} /> : <LikeOutlined />}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      const res = await forumAPI.togglePostLike(post.id);
+                      const currentTree = buildReplyTree(viewingThread.replies || []);
+                      const updateLikeCount = (replies: any[]): any[] => {
+                        return replies.map((r: any) => {
+                          if (r.id === post.id) {
+                            return { ...r, like_count: res.data.like_count, is_liked: res.data.liked };
+                          }
+                          if (r.children && r.children.length > 0) {
+                            return { ...r, children: updateLikeCount(r.children) };
+                          }
+                          return r;
+                        });
+                      };
+                      const updatedReplies = updateLikeCount(currentTree);
+                      setViewingThread((prev: any) => ({ ...prev, replies: flattenReplyTree(updatedReplies) }));
+                    } catch {}
+                  }}
+                >
+                  {post.like_count || 0}
+                </Button>
+                <Button
+                  type="text"
+                  size="small"
+                  onClick={() => { setReplyToPostId(post.id); setReplyContent(`@${post.username} `); }}
+                >
+                  回复
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Card>
+        {post.children && post.children.length > 0 && renderReplyTree(post.children, depth + 1)}
+      </div>
+    ));
+  };
+
+  // 展平树形结构（用于更新状态）
+  const flattenReplyTree = (tree: any[]): any[] => {
+    const result: any[] = [];
+    const flatten = (nodes: any[]) => {
+      nodes.forEach(node => {
+        const { children, ...rest } = node;
+        result.push(rest);
+        if (children && children.length > 0) {
+          flatten(children);
+        }
+      });
+    };
+    flatten(tree);
+    return result;
+  };
+
   if (!isAuthenticated) {
     return (
       <Card style={{ borderRadius: 12, textAlign: 'center', padding: 40 }}>
@@ -212,7 +326,7 @@ const Forum: React.FC = () => {
             size="small"
             renderItem={(f: any) => (
               <div
-                onClick={() => setActiveForumId(f.id)}
+                onClick={() => handleForumClick(f.id)}
                 style={{
                   padding: isMobile ? '8px 10px' : '10px 14px',
                   cursor: 'pointer',
@@ -312,7 +426,7 @@ const Forum: React.FC = () => {
             style={isMobile ? { width: '100%' } : { flex: 1 }}
             extra={
               <Button icon={<ArrowLeftOutlined />} onClick={() => { setShowThreadDetail(false); setViewingThread(null); }} size={isMobile ? 'small' : 'middle'}>
-                {isMobile ? '' : '← 返回列表'}
+                {isMobile ? '' : '返回列表'}
               </Button>
             }
           >
@@ -376,52 +490,11 @@ const Forum: React.FC = () => {
                 {/* 回复列表 */}
                 <h3 style={{ margin: `0 0 ${isMobile ? 10 : 12}px`, fontSize: isMobile ? 15 : undefined }}>💬 回复 ({(viewingThread.reply_count || 0)})</h3>
                 <Spin spinning={threadsLoading}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 8 : 12, maxHeight: isMobile ? 300 : 400, overflowY: 'auto', paddingRight: 4 }}>
+                  <div style={{ maxHeight: isMobile ? 300 : 400, overflowY: 'auto', paddingRight: 4 }}>
                     {(!viewingThread.replies || viewingThread.replies.length === 0) ? (
                       <Empty description="暂无回复，抢沙发！" image={Empty.PRESENTED_IMAGE_SIMPLE} />
                     ) : (
-                      viewingThread.replies.map((post: any) => (
-                        <Card key={post.id} size="small" style={{ borderRadius: 8 }} styles={{ body: { padding: isMobile ? 10 : undefined } }}>
-                          <div style={{ display: 'flex', gap: isMobile ? 8 : 10, alignItems: 'flex-start' }}>
-                            <Avatar src={post.avatar} size={isMobile ? 28 : 32} style={{ background: '#1890ff', flexShrink: 0 }}>
-                              {post.username?.[0]}
-                            </Avatar>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <Space size={isMobile ? 4 : 6}>
-                                <span style={{ fontWeight: 600, fontSize: isMobile ? 12 : 13 }}>{post.username}</span>
-                                {post.is_first_post && <Tag color="green" style={{ fontSize: isMobile ? 9 : 10 }}>楼主</Tag>}
-                                <span style={{ fontSize: isMobile ? 10 : 11, color: '#bbb' }}>{formatTime(post.created_at)}</span>
-                              </Space>
-                              <p style={{ margin: `${isMobile ? 4 : 6}px 0 0`, lineHeight: 1.7, whiteSpace: 'pre-wrap', fontSize: isMobile ? 13 : undefined }}>{post.content}</p>
-                              <div style={{ marginTop: 6, display: 'flex', gap: isMobile ? 4 : 8 }}>
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={post.is_liked ? <LikeFilled style={{ color: '#1890ff' }} /> : <LikeOutlined />}
-                                  onClick={async () => {
-                                    try {
-                                      const res = await forumAPI.togglePostLike(post.id);
-                                      const updated = viewingThread.replies.map((reply: any) =>
-                                        reply.id === post.id ? { ...reply, like_count: res.data.like_count, is_liked: res.data.liked } : reply
-                                      );
-                                      setViewingThread((prev: any) => ({ ...prev, replies: updated }));
-                                    } catch {}
-                                  }}
-                                >
-                                  {post.like_count || 0}
-                                </Button>
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  onClick={() => { setReplyToPostId(post.id); setReplyContent(`@${post.username} `); }}
-                                >
-                                  回复
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        </Card>
-                      ))
+                      renderReplyTree(buildReplyTree(viewingThread.replies))
                     )}
                   </div>
                 </Spin>
@@ -481,7 +554,6 @@ const Forum: React.FC = () => {
           value={newTitle}
           onChange={(e) => setNewTitle(e.target.value)}
           maxLength={100}
-          showCount
           style={{ marginBottom: 12 }}
         />
         <TextArea

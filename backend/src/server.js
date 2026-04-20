@@ -48,7 +48,7 @@ const io = new Server(server, {
 app.use(helmet()); // 安全头
 app.use(compression()); // 压缩响应
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: process.env.FRONTEND_URL || ['http://localhost:5173', 'http://localhost:5174'],
   credentials: true
 }));
 app.use(morgan('dev')); // 日志

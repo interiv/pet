@@ -145,8 +145,16 @@ export const itemAPI = {
 export const friendAPI = {
   getFriends: () => api.get('/friends/list'),
 
+  getPendingRequests: () => api.get('/friends/pending-requests'),
+
   addFriend: (data: { friend_username: string }) =>
     api.post('/friends/add', data),
+
+  acceptRequest: (data: { request_id: number }) =>
+    api.post('/friends/accept-request', data),
+
+  rejectRequest: (data: { request_id: number }) =>
+    api.post('/friends/reject-request', data),
 
   searchFriends: (keyword: string) => api.get('/friends/search', { params: { keyword } }),
 
@@ -249,6 +257,13 @@ export const adminAPI = {
   // AI设置
   getAISettings: () => api.get('/admin/settings/ai'),
   saveAISettings: (settings: any) => api.post('/admin/settings/ai', settings),
+
+  // 网站设置
+  getSiteSettings: () => api.get('/admin/settings/site'),
+  saveSiteSettings: (settings: any) => api.post('/admin/settings/site', settings),
+
+  // 公开设置（无需认证）
+  getPublicSettings: () => api.get('/admin/settings/public'),
 };
 
 // 装备部件相关 API

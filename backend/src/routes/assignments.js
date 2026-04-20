@@ -904,16 +904,17 @@ router.get('/wrong/my', authenticateToken, (req, res) => {
   try {
     const { subject } = req.query;
     let query = `
-      wq.*, a.title as assignment_title, a.subject, qb.content as question_content, qb.options, qb.type, qb.explanation, qb.analysis
+      SELECT wq.*, qb.content as question_content, qb.options, qb.answer as correct_answer, 
+      qb.subject, qb.type as question_type, a.title as assignment_title, qb.explanation, qb.analysis
       FROM wrong_questions wq
-      JOIN assignments a ON wq.assignment_id = a.id
       JOIN question_bank qb ON wq.question_id = qb.id
+      LEFT JOIN assignments a ON wq.assignment_id = a.id
       WHERE wq.user_id = ?
     `;
     const params = [req.user.userId];
 
     if (subject) {
-      query += ` AND a.subject = ?`;
+      query += ` AND qb.subject = ?`;
       params.push(subject);
     }
 

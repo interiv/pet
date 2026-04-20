@@ -8,26 +8,37 @@ import { useAuthStore, usePetStore } from '../store/authStore';
 
 interface Props {
   defaultTab?: string;
+  viewMode?: 'all' | 'shop' | 'backpack'; // 显示模式：全部（带Tabs）/只显示商店/只显示背包
 }
 
-const ShopAndBackpack: React.FC<Props> = ({ defaultTab = 'shop' }) => {
+const ShopAndBackpack: React.FC<Props> = ({ defaultTab = 'shop', viewMode = 'all' }) => {
   const { user } = useAuthStore();
   const { pet, setPet } = usePetStore();
   
   const [shopItems, setShopItems] = useState<any[]>([]);
   const [myItems, setMyItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState(defaultTab);
+  const [activeTab, setActiveTab] = useState(viewMode !== 'all' ? viewMode : defaultTab);
+
+  // 监听 defaultTab 和 viewMode 变化
+  useEffect(() => {
+    if (viewMode !== 'all') {
+      setActiveTab(viewMode);
+    } else {
+      setActiveTab(defaultTab);
+    }
+  }, [defaultTab, viewMode]);
 
   useEffect(() => {
     if (user) {
-      if (activeTab === 'shop') {
+      if (activeTab === 'shop' || viewMode === 'shop') {
         loadShopItems();
-      } else {
+      } 
+      if (activeTab === 'backpack' || viewMode === 'backpack') {
         loadMyItems();
       }
     }
-  }, [activeTab, user]);
+  }, [activeTab, user, viewMode]);
 
   const loadShopItems = async () => {
     if (!user) return;
@@ -220,6 +231,16 @@ const ShopAndBackpack: React.FC<Props> = ({ defaultTab = 'shop' }) => {
       )
     }
   ];
+
+  // 如果viewMode不是'all'，只显示单个内容，不显示Tabs
+  if (viewMode !== 'all') {
+    return (
+      <div>
+        {viewMode === 'shop' && tabItems[0].children}
+        {viewMode === 'backpack' && tabItems[1].children}
+      </div>
+    );
+  }
 
   return (
     <div>

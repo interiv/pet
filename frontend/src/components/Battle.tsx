@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Button, Tabs, List, Tag, Statistic, message, Avatar, TabsProps, Modal, Progress, Space } from 'antd';
-import { TrophyOutlined, FireOutlined, ThunderboltOutlined, ArrowRightOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
-import { petAPI, battleAPI } from '../utils/api';
+import { Card, Row, Col, Button, Tabs, List, Tag, Statistic, message, Avatar, TabsProps, Modal, Progress } from 'antd';
+import { TrophyOutlined, FireOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { petAPI, battleAPI, authAPI } from '../utils/api';
 import { usePetStore, useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
 import CelebrationAnimation from './CelebrationAnimation';
@@ -119,6 +119,18 @@ const Battle: React.FC = () => {
         message.error('💥 战斗失败！再接再厉！');
       }
 
+      // 更新宠物信息和用户金币
+      const { setPet } = usePetStore.getState();
+      const { setUser } = useAuthStore.getState();
+      try {
+        const petRes = await petAPI.getMyPet();
+        setPet(petRes.data.pet);
+        const userRes = await authAPI.getMe();
+        setUser(userRes.data.user);
+      } catch (e) {
+        console.error('更新宠物信息失败:', e);
+      }
+
       loadHistory();
     } catch (error: any) {
       message.error(error.response?.data?.error || '战斗发起失败');
@@ -230,12 +242,12 @@ const Battle: React.FC = () => {
                       }
                       description={`战斗时间: ${dayjs(item.battle_date).format('YYYY-MM-DD HH:mm:ss')}`}
                     />
-                    {isWinner && (
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ color: '#faad14', fontWeight: 'bold' }}>+{item.reward_exp} 经验</div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ color: '#faad14', fontWeight: 'bold' }}>+{item.reward_exp} 经验</div>
+                      {isWinner && item.reward_gold > 0 && (
                         <div style={{ color: '#d4b106' }}>+{item.reward_gold} 金币</div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </List.Item>
                 );
               }}

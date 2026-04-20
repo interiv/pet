@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Button, Tag, message, Modal, Progress, Badge, Tooltip, Statistic, Tabs } from 'antd';
+import { Card, Row, Col, Button, Tag, message, Modal, Progress, Badge, Tooltip, Statistic, Tabs, Empty } from 'antd';
 import {
   ThunderboltOutlined,
   SafetyOutlined,
@@ -9,8 +9,10 @@ import {
   CheckCircleOutlined,
   PlusOutlined,
   ArrowUpOutlined,
+  LoginOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
 
@@ -36,11 +38,13 @@ interface Skill {
 }
 
 const PetSkills: React.FC = () => {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [pet, setPet] = useState<any>(null);
   const [learning, setLearning] = useState<number | null>(null);
   const [upgrading, setUpgrading] = useState<number | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
 
   useEffect(() => {
     loadSkills();
@@ -50,13 +54,25 @@ const PetSkills: React.FC = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
+      
+      if (!token) {
+        setIsAuthenticated(false);
+        return;
+      }
+      
       const response = await axios.get(`${API_BASE_URL}/skills/available`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setSkills(response.data.skills);
       setPet(response.data.pet);
+      setIsAuthenticated(true);
     } catch (error: any) {
-      message.error(error.response?.data?.error || '加载技能失败');
+      const errorMsg = error.response?.data?.error;
+      if (errorMsg && (errorMsg.includes('令牌') || errorMsg.includes('认证') || errorMsg.includes('登录'))) {
+        setIsAuthenticated(false);
+      } else {
+        message.error(errorMsg || '加载技能失败');
+      }
     } finally {
       setLoading(false);
     }
@@ -326,6 +342,29 @@ const PetSkills: React.FC = () => {
       children: renderLockedSkills()
     }
   ];
+
+  if (!isAuthenticated) {
+    return (
+      <Card>
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={
+            <span>
+              请先登录以查看宠物技能
+            </span>
+          }
+        >
+          <Button
+            type="primary"
+            icon={<LoginOutlined />}
+            onClick={() => navigate('/login')}
+          >
+            立即登录
+          </Button>
+        </Empty>
+      </Card>
+    );
+  }
 
   return (
     <div>

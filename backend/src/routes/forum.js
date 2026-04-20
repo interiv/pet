@@ -141,11 +141,19 @@ router.post('/threads', authenticateToken, (req, res) => {
       tags.forEach(tag => insertTag.run(threadId, tag));
     }
 
-    // 同时创建楼主的主楼回复
+    // 创建主楼（不再是自动回复）
     db.prepare(`
       INSERT INTO forum_posts (thread_id, user_id, content, is_first_post)
       VALUES (?, ?, ?, 1)
     `).run(threadId, req.user.userId, content.trim());
+
+    // 更新板块的帖子数量
+    db.prepare(`
+      UPDATE forums SET 
+        thread_count = (SELECT COUNT(*) FROM forum_threads WHERE forum_id = ? AND status != 'deleted'),
+        post_count = (SELECT COUNT(*) FROM forum_posts fp JOIN forum_threads ft ON fp.thread_id = ft.id WHERE ft.forum_id = ? AND fp.status = 'active')
+      WHERE id = ?
+    `).run(parseInt(forum_id), parseInt(forum_id), parseInt(forum_id));
 
     res.status(201).json({ message: '发布成功', thread_id: threadId });
   } catch (error) {
@@ -178,6 +186,14 @@ router.post('/threads/:id/reply', authenticateToken, (req, res) => {
         last_reply_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(req.user.userId, id);
+
+    // 更新板块的帖子数量
+    db.prepare(`
+      UPDATE forums SET 
+        post_count = (SELECT COUNT(*) FROM forum_posts fp JOIN forum_threads ft ON fp.thread_id = ft.id WHERE ft.forum_id = (SELECT forum_id FROM forum_threads WHERE id = ?) AND fp.status = 'active'),
+        thread_count = (SELECT COUNT(*) FROM forum_threads WHERE forum_id = (SELECT forum_id FROM forum_threads WHERE id = ?) AND status != 'deleted')
+      WHERE id = (SELECT forum_id FROM forum_threads WHERE id = ?)
+    `).run(id, id, id);
 
     // 通知楼主（如果回复者不是楼主）
     if (thread.user_id !== req.user.userId) {
@@ -257,11 +273,13 @@ router.post('/posts/:id/like', authenticateToken, (req, res) => {
     if (existingLike) {
       db.prepare('DELETE FROM forum_post_likes WHERE id = ?').run(existingLike.id);
       db.prepare("UPDATE forum_posts SET like_count = MAX(0, like_count - 1) WHERE id = ?").run(id);
-      res.json({ liked: false });
+      const post = db.prepare('SELECT like_count FROM forum_posts WHERE id = ?').get(id);
+      res.json({ liked: false, like_count: post.like_count });
     } else {
       db.prepare('INSERT INTO forum_post_likes (post_id, user_id) VALUES (?, ?)').run(id, userId);
       db.prepare("UPDATE forum_posts SET like_count = COALESCE(like_count, 0) + 1 WHERE id = ?").run(id);
-      res.json({ liked: true });
+      const post = db.prepare('SELECT like_count FROM forum_posts WHERE id = ?').get(id);
+      res.json({ liked: true, like_count: post.like_count });
     }
   } catch (error) {
     console.error('楼层点赞失败:', error);

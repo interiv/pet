@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Button, Input, List, Avatar, message, Modal, Form, Spin, Row, Col, Statistic, Popconfirm, Select } from 'antd';
-import { UserAddOutlined, TeamOutlined, HeartFilled, DeleteOutlined, GiftOutlined, FireOutlined, EyeOutlined, SearchOutlined } from '@ant-design/icons';
+import { Card, Button, Input, List, Avatar, message, Modal, Form, Spin, Row, Col, Statistic, Popconfirm, Select, Tabs, Badge, Empty } from 'antd';
+import { UserAddOutlined, TeamOutlined, HeartFilled, DeleteOutlined, GiftOutlined, FireOutlined, EyeOutlined, SearchOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import { friendAPI, petAPI, itemAPI } from '../utils/api';
 
 import { useAuthStore, usePetStore } from '../store/authStore';
@@ -9,6 +9,7 @@ const Friends: React.FC = () => {
   const { isAuthenticated } = useAuthStore();
   const { pet } = usePetStore();
   const [friends, setFriends] = useState<any[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [form] = Form.useForm();
@@ -30,6 +31,7 @@ const Friends: React.FC = () => {
   useEffect(() => {
     if (isAuthenticated) {
       loadFriends();
+      loadPendingRequests();
     }
   }, [isAuthenticated]);
 
@@ -43,6 +45,16 @@ const Friends: React.FC = () => {
       console.error('加载好友失败:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadPendingRequests = async () => {
+    if (!isAuthenticated) return;
+    try {
+      const res = await friendAPI.getPendingRequests();
+      setPendingRequests(res.data.requests || []);
+    } catch (error) {
+      console.error('加载好友请求失败:', error);
     }
   };
 
@@ -81,15 +93,42 @@ const Friends: React.FC = () => {
   const handleAddFromSearch = async (targetUser: any) => {
     try {
       setLoading(true);
-      await friendAPI.addFriend({ friend_username: targetUser.username });
-      message.success(`已添加 ${targetUser.username} 为好友！`);
+      const res = await friendAPI.addFriend({ friend_username: targetUser.username });
+      message.success(res.data.message || `已发送好友请求给 ${targetUser.username}`);
       setIsModalVisible(false);
       setSearchKeyword('');
       setSearchResults([]);
       form.resetFields();
-      loadFriends();
+      loadPendingRequests(); // 刷新待处理请求
     } catch (error: any) {
       message.error(error.response?.data?.error || '添加好友失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAcceptRequest = async (requestId: number) => {
+    try {
+      setLoading(true);
+      await friendAPI.acceptRequest({ request_id: requestId });
+      message.success('已接受好友请求');
+      loadFriends();
+      loadPendingRequests();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '操作失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRejectRequest = async (requestId: number) => {
+    try {
+      setLoading(true);
+      await friendAPI.rejectRequest({ request_id: requestId });
+      message.success('已拒绝好友请求');
+      loadPendingRequests();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '操作失败');
     } finally {
       setLoading(false);
     }
@@ -100,7 +139,8 @@ const Friends: React.FC = () => {
       setLoadingPetDetail(true);
       setPetModalVisible(true);
       
-      const response = await petAPI.getUserPet(friend.friend_id);
+      // 使用 friend.id 而不是 friend.friend_id
+      const response = await petAPI.getUserPet(friend.id);
       setSelectedPet(response.data.pet);
       setPetEquipments(response.data.equipments || []);
       setPetBonus(response.data.bonus || null);
@@ -190,46 +230,114 @@ const Friends: React.FC = () => {
         </Button>
       </div>
 
-      <Card style={{ borderRadius: '12px' }}>
-        <List
-          itemLayout="horizontal"
-          dataSource={friends}
-          loading={loading}
-          renderItem={(item: any) => (
-            <List.Item
-              actions={[
-                <Button type="link" icon={<EyeOutlined />} onClick={() => handleViewFriendPet(item)}>访问</Button>,
-                <Button type="link" icon={<GiftOutlined />} onClick={() => handleOpenGiftModal(item)}>送礼</Button>,
-                <Button type="link" icon={<FireOutlined />} onClick={() => handleFriendBattle(item)}>对战</Button>,
-                <Popconfirm
-                  title="确定要删除该好友吗？"
-                  onConfirm={() => handleRemoveFriend(item.friend_id)}
-                  okText="确定"
-                  cancelText="取消"
-                >
-                  <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
-                </Popconfirm>
-              ]}
-            >
-              <List.Item.Meta
-                avatar={<Avatar src={item.avatar} style={{ backgroundColor: '#1890ff' }}>{item.username[0]}</Avatar>}
-                title={<span style={{ fontSize: 16, fontWeight: 'bold' }}>{item.username}</span>}
-                description={
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                    <HeartFilled style={{ color: '#eb2f96' }} /> 
-                    <span>亲密度: {item.friendship_level || 0}</span>
+      <Tabs
+        items={[
+          {
+            key: 'friends',
+            label: (
+              <span>
+                好友列表
+                {friends.length > 0 && <Badge count={friends.length} style={{ marginLeft: 8 }} />}
+              </span>
+            ),
+            children: (
+              <Card style={{ borderRadius: '12px' }}>
+                <List
+                  itemLayout="horizontal"
+                  dataSource={friends}
+                  loading={loading}
+                  renderItem={(item: any) => (
+                    <List.Item
+                      actions={[
+                        <Button type="link" icon={<EyeOutlined />} onClick={() => handleViewFriendPet(item)}>访问</Button>,
+                        <Button type="link" icon={<GiftOutlined />} onClick={() => handleOpenGiftModal(item)}>送礼</Button>,
+                        <Button type="link" icon={<FireOutlined />} onClick={() => handleFriendBattle(item)}>对战</Button>,
+                        <Popconfirm
+                          title="确定要删除该好友吗？"
+                          onConfirm={() => handleRemoveFriend(item.id)}
+                          okText="确定"
+                          cancelText="取消"
+                        >
+                          <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+                        </Popconfirm>
+                      ]}
+                    >
+                      <List.Item.Meta
+                        avatar={<Avatar src={item.avatar} style={{ backgroundColor: '#1890ff' }}>{item.username[0]}</Avatar>}
+                        title={<span style={{ fontSize: 16, fontWeight: 'bold' }}>{item.username}</span>}
+                        description={
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                            <HeartFilled style={{ color: '#eb2f96' }} /> 
+                            <span>亲密度: {item.friendship_level || 0}</span>
+                          </div>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+                {friends.length === 0 && !loading && (
+                  <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
+                    你还没有添加任何好友哦~
                   </div>
-                }
-              />
-            </List.Item>
-          )}
-        />
-        {friends.length === 0 && !loading && (
-          <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
-            你还没有添加任何好友哦~
-          </div>
-        )}
-      </Card>
+                )}
+              </Card>
+            )
+          },
+          {
+            key: 'requests',
+            label: (
+              <span>
+                待处理请求
+                {pendingRequests.length > 0 && <Badge count={pendingRequests.length} style={{ marginLeft: 8 }} />}
+              </span>
+            ),
+            children: (
+              <Card style={{ borderRadius: '12px' }}>
+                <List
+                  itemLayout="horizontal"
+                  dataSource={pendingRequests}
+                  loading={loading}
+                  renderItem={(request: any) => (
+                    <List.Item
+                      actions={[
+                        <Button 
+                          type="primary" 
+                          size="small" 
+                          icon={<CheckOutlined />}
+                          onClick={() => handleAcceptRequest(request.id)}
+                        >
+                          接受
+                        </Button>,
+                        <Button 
+                          danger 
+                          size="small" 
+                          icon={<CloseOutlined />}
+                          onClick={() => handleRejectRequest(request.id)}
+                        >
+                          拒绝
+                        </Button>
+                      ]}
+                    >
+                      <List.Item.Meta
+                        avatar={<Avatar src={request.avatar} style={{ backgroundColor: '#1890ff' }}>{request.username[0]}</Avatar>}
+                        title={<span style={{ fontSize: 16, fontWeight: 'bold' }}>{request.username}</span>}
+                        description={
+                          <div style={{ color: '#999', fontSize: 12 }}>
+                            {request.role === 'teacher' ? '教师' : '学生'} · 请求时间：{new Date(request.created_at).toLocaleString()}
+                          </div>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+                {pendingRequests.length === 0 && !loading && (
+                  <Empty description="暂无待处理的好友请求" />
+                )}
+              </Card>
+            )
+          }
+        ]}
+      />
 
       <Modal
         title="添加好友"

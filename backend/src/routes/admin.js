@@ -783,20 +783,31 @@ router.get('/statistics', authenticateToken, (req, res) => {
       const pendingTeachers = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'teacher' AND status = 'pending_approval'`).get().count;
       const totalExp = db.prepare(`SELECT SUM(exp) as total FROM pets`).get().total || 0;
 
-      const dailyActiveUsers = db.prepare(`
-        SELECT COUNT(DISTINCT user_id) as count FROM user_activities
-        WHERE DATE(created_at) = DATE('now', 'localtime')
-      `).get().count || 0;
+      // 检查表是否存在
+      const hasUserActivities = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='user_activities'`).get();
+      const hasGoldTransactions = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='gold_transactions'`).get();
 
-      const dailyGoldDistributed = db.prepare(`
-        SELECT COALESCE(SUM(gold_change), 0) as total FROM gold_transactions
-        WHERE DATE(created_at) = DATE('now', 'localtime') AND gold_change > 0
-      `).get().total || 0;
+      let dailyActiveUsers = 0;
+      if (hasUserActivities) {
+        dailyActiveUsers = db.prepare(`
+          SELECT COUNT(DISTINCT user_id) as count FROM user_activities
+          WHERE DATE(created_at) = DATE('now', 'localtime')
+        `).get().count || 0;
+      }
 
-      const dailyGoldConsumed = db.prepare(`
-        SELECT COALESCE(SUM(ABS(gold_change)), 0) as total FROM gold_transactions
-        WHERE DATE(created_at) = DATE('now', 'localtime') AND gold_change < 0
-      `).get().total || 0;
+      let dailyGoldDistributed = 0;
+      let dailyGoldConsumed = 0;
+      if (hasGoldTransactions) {
+        dailyGoldDistributed = db.prepare(`
+          SELECT COALESCE(SUM(gold_change), 0) as total FROM gold_transactions
+          WHERE DATE(created_at) = DATE('now', 'localtime') AND gold_change > 0
+        `).get().total || 0;
+
+        dailyGoldConsumed = db.prepare(`
+          SELECT COALESCE(SUM(ABS(gold_change)), 0) as total FROM gold_transactions
+          WHERE DATE(created_at) = DATE('now', 'localtime') AND gold_change < 0
+        `).get().total || 0;
+      }
 
       const topClasses = db.prepare(`
         SELECT c.id, c.name, c.total_exp, c.student_count,
@@ -1053,6 +1064,92 @@ router.get('/shop-records', authenticateToken, (req, res) => {
   } catch (error) {
     console.error('获取商店记录失败:', error);
     res.status(500).json({ error: '获取商店记录失败' });
+  }
+});
+
+// ==================== 网站设置 ====================
+
+function ensureSettingsTable() {
+  const hasTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='settings'`).get();
+  if (!hasTable) {
+    db.prepare(`
+      CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    `).run();
+    const defaults = [
+      ['site_name', '班级宠物养成系统'],
+      ['site_description', '寓教于乐，让学习更有趣'],
+      ['site_logo', '🐾'],
+      ['site_footer', '© 2024 班级宠物养成系统'],
+      ['site_announcement', ''],
+      ['registration_enabled', 'true'],
+      ['battle_enabled', 'true'],
+      ['shop_enabled', 'true'],
+      ['max_pets_per_user', '1'],
+      ['daily_login_gold', '10'],
+      ['battle_stamina_cost', '20'],
+      ['ai_model', 'gpt-3.5-turbo'],
+      ['ai_api_key', ''],
+      ['ai_base_url', 'https://api.openai.com/v1'],
+    ];
+    const stmt = db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`);
+    db.transaction(() => {
+      defaults.forEach(([key, value]) => stmt.run(key, value));
+    })();
+  }
+}
+
+router.get('/settings/site', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    ensureSettingsTable();
+    const settings = db.prepare(`SELECT key, value FROM settings`).all();
+    const result = {};
+    settings.forEach(s => result[s.key] = s.value);
+    res.json({ settings: result });
+  } catch (error) {
+    console.error('获取网站设置失败:', error);
+    res.status(500).json({ error: '获取网站设置失败' });
+  }
+});
+
+router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    ensureSettingsTable();
+    const allowedKeys = [
+      'site_name', 'site_description', 'site_logo', 'site_footer',
+      'site_announcement', 'registration_enabled', 'battle_enabled',
+      'shop_enabled', 'max_pets_per_user', 'daily_login_gold',
+      'battle_stamina_cost', 'ai_model', 'ai_api_key', 'ai_base_url',
+    ];
+    const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
+    db.transaction(() => {
+      Object.entries(req.body).forEach(([key, value]) => {
+        if (allowedKeys.includes(key)) {
+          stmt.run(key, String(value));
+        }
+      });
+    })();
+    res.json({ message: '设置保存成功' });
+  } catch (error) {
+    console.error('保存网站设置失败:', error);
+    res.status(500).json({ error: '保存网站设置失败' });
+  }
+});
+
+// 公开接口：获取站点基本信息（无需认证）
+router.get('/settings/public', (req, res) => {
+  try {
+    ensureSettingsTable();
+    const publicKeys = ['site_name', 'site_description', 'site_logo', 'site_footer', 'site_announcement', 'registration_enabled'];
+    const settings = db.prepare(`SELECT key, value FROM settings WHERE key IN (${publicKeys.map(() => '?').join(',')})`).all(...publicKeys);
+    const result = {};
+    settings.forEach(s => result[s.key] = s.value);
+    res.json({ settings: result });
+  } catch (error) {
+    console.error('获取公开设置失败:', error);
+    res.status(500).json({ error: '获取设置失败' });
   }
 });
 

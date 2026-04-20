@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Progress, Button, message, Tag, List, Badge, Statistic, Row, Col, Alert } from 'antd';
+import { Card, Progress, Button, message, Tag, List, Badge, Statistic, Row, Col, Alert, Empty } from 'antd';
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
@@ -8,8 +8,10 @@ import {
   BookOutlined,
   CoffeeOutlined,
   TrophyOutlined,
+  LoginOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
 
@@ -36,9 +38,11 @@ interface DailyTaskData {
 }
 
 const DailyTasks: React.FC = () => {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [taskData, setTaskData] = useState<DailyTaskData | null>(null);
   const [claiming, setClaiming] = useState<number | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
 
   useEffect(() => {
     loadDailyTasks();
@@ -48,12 +52,24 @@ const DailyTasks: React.FC = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
+      
+      if (!token) {
+        setIsAuthenticated(false);
+        return;
+      }
+      
       const response = await axios.get(`${API_BASE_URL}/daily-tasks`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setTaskData(response.data);
+      setIsAuthenticated(true);
     } catch (error: any) {
-      message.error(error.response?.data?.error || '加载每日任务失败');
+      const errorMsg = error.response?.data?.error;
+      if (errorMsg && (errorMsg.includes('令牌') || errorMsg.includes('认证') || errorMsg.includes('登录'))) {
+        setIsAuthenticated(false);
+      } else {
+        message.error(errorMsg || '加载每日任务失败');
+      }
     } finally {
       setLoading(false);
     }
@@ -142,6 +158,29 @@ const DailyTasks: React.FC = () => {
         return 5;
     }
   };
+
+  if (!isAuthenticated) {
+    return (
+      <Card>
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={
+            <span>
+              请先登录以查看每日任务
+            </span>
+          }
+        >
+          <Button
+            type="primary"
+            icon={<LoginOutlined />}
+            onClick={() => navigate('/login')}
+          >
+            立即登录
+          </Button>
+        </Empty>
+      </Card>
+    );
+  }
 
   if (!taskData) {
     return (

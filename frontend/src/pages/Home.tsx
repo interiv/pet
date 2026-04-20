@@ -18,8 +18,9 @@ import {
   FireOutlined,
   BarChartOutlined,
   ThunderboltOutlined,
+  HeartOutlined,
 } from '@ant-design/icons';
-import { petAPI, leaderboardAPI, adminAPI, assignmentAPI } from '../utils/api';
+import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
 import PetDisplay from '../components/PetDisplay';
 import CreatePet from '../components/CreatePet';
@@ -41,7 +42,7 @@ import LearningDashboard from '../components/LearningDashboard';
 import PetSkills from '../components/PetSkills';
 import BossBattle from '../components/BossBattle';
 
-const { Header, Content, Sider } = Layout;
+const { Header, Content, Sider, Footer } = Layout;
 
 const useMobile = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -60,6 +61,7 @@ const Home: React.FC = () => {
   const { pet, setPet, hasPet } = usePetStore();
   const isMobile = useMobile();
 
+  const [siteSettings, setSiteSettings] = useState<any>({});
   const [activeMenu, setActiveMenu] = useState('home');
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [allPets, setAllPets] = useState<any[]>([]);
@@ -77,11 +79,24 @@ const Home: React.FC = () => {
   // 新手引导状态
   const [newbieGuideVisible, setNewbieGuideVisible] = useState(false);
   const [newbieStep, setNewbieStep] = useState(0);
-  const [guidePetCreated, setGuidePetCreated] = useState(false);
+  const [, setGuidePetCreated] = useState(false);
   const [guidePetData, setGuidePetData] = useState<any>(null);
 
   const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
   const isStudent = user?.role === 'student';
+
+  useEffect(() => {
+    loadSiteSettings();
+  }, []);
+
+  const loadSiteSettings = async () => {
+    try {
+      const res = await adminAPI.getPublicSettings();
+      setSiteSettings(res.data.settings || {});
+    } catch (e) {
+      console.log('加载站点设置失败');
+    }
+  };
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -592,8 +607,8 @@ const Home: React.FC = () => {
 
   const studentPetTabItems: TabsProps['items'] = [
     { key: 'pet', label: '我的宠物', children: hasPet ? <PetDisplay pet={pet} /> : <CreatePet onSuccess={loadPetData} /> },
-    { key: 'shop', label: '道具商店', children: <ShopAndBackpack defaultTab="shop" /> },
-    { key: 'backpack', label: '我的背包', children: <ShopAndBackpack defaultTab="backpack" /> },
+    { key: 'shop', label: '道具商店', children: <ShopAndBackpack defaultTab="shop" viewMode="shop" /> },
+    { key: 'backpack', label: '我的背包', children: <ShopAndBackpack defaultTab="backpack" viewMode="backpack" /> },
   ];
 
   return (
@@ -602,11 +617,13 @@ const Home: React.FC = () => {
         display: 'flex', 
         alignItems: 'center', 
         justifyContent: 'space-between',
-        background: '#fff',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
         zIndex: 1,
         padding: isMobile ? '0 12px' : '0 24px',
         height: isMobile ? 56 : 64,
+        position: 'sticky',
+        top: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 20 }}>
           {isMobile && (
@@ -615,30 +632,37 @@ const Home: React.FC = () => {
               icon={<MenuOutlined />}
               onClick={() => setMobileMenuOpen(true)}
               size="large"
+              style={{ color: '#fff' }}
             />
           )}
-          <span style={{ fontSize: isMobile ? 20 : 24 }}>🐾</span>
-          <span style={{ fontSize: isMobile ? 14 : 18, fontWeight: 'bold', display: isMobile ? 'none' : 'block' }}>班级宠物养成系统</span>
+          <span style={{ fontSize: isMobile ? 22 : 28 }}>{siteSettings.site_logo || '🐾'}</span>
+          <span style={{ fontSize: isMobile ? 14 : 18, fontWeight: 'bold', color: '#fff', display: isMobile ? 'none' : 'block' }}>{siteSettings.site_name || '班级宠物养成系统'}</span>
         </div>
         
         <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 16 }}>
           {isAuthenticated ? (
             <>
-              {!isMobile && <span style={{ color: '#666' }}>欢迎，{user?.username}</span>}
-              {isMobile && <span style={{ color: '#666', fontSize: 13, maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.username}</span>}
+              {isStudent && pet && (
+                <div style={{ display: isMobile ? 'none' : 'flex', alignItems: 'center', gap: 6, color: '#ffd700', fontSize: 14 }}>
+                  <span>💰 {user?.gold || 0}</span>
+                  <span>⭐ Lv.{pet.level}</span>
+                </div>
+              )}
+              {!isMobile && <span style={{ color: 'rgba(255,255,255,0.85)' }}>欢迎，{user?.username}</span>}
+              {isMobile && <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13, maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.username}</span>}
               <Dropdown menu={userMenu} placement="bottomRight">
                 <Avatar 
                   size={isMobile ? 32 : 40} 
                   icon={<UserOutlined />} 
                   src={user?.avatar}
-                  style={{ cursor: 'pointer', background: '#87d068' }}
+                  style={{ cursor: 'pointer', background: '#87d068', border: '2px solid rgba(255,255,255,0.5)' }}
                 />
               </Dropdown>
             </>
           ) : (
             <div style={{ display: 'flex', gap: isMobile ? 8 : 10 }}>
-              <a onClick={() => navigate('/login')} style={{ color: '#1890ff', fontSize: isMobile ? 13 : undefined }}>登录</a>
-              <a onClick={() => navigate('/register')} style={{ color: '#1890ff', fontSize: isMobile ? 13 : undefined }}>注册</a>
+              <a onClick={() => navigate('/login')} style={{ color: '#fff', fontSize: isMobile ? 13 : undefined }}>登录</a>
+              <a onClick={() => navigate('/register')} style={{ color: '#fff', fontSize: isMobile ? 13 : undefined }}>注册</a>
             </div>
           )}
         </div>
@@ -735,11 +759,7 @@ const Home: React.FC = () => {
                   <Tabs
                     activeKey={['pet', 'shop', 'backpack'].includes(activeMenu) ? activeMenu : 'class_leaderboard'}
                     onChange={(key) => {
-                      if (['pet', 'shop', 'backpack'].includes(key)) {
-                        setActiveMenu('pet');
-                      } else {
-                        setActiveMenu(key);
-                      }
+                      setActiveMenu(key);
                     }}
                     items={['pet', 'shop', 'backpack'].includes(activeMenu) ? studentPetTabItems : studentHomeTabItems}
                     size={isMobile ? 'small' : 'middle'}
@@ -826,11 +846,7 @@ const Home: React.FC = () => {
                   <Tabs
                     activeKey={['pet', 'shop', 'backpack'].includes(activeMenu) ? activeMenu : 'class_leaderboard'}
                     onChange={(key) => {
-                      if (['pet', 'shop', 'backpack'].includes(key)) {
-                        setActiveMenu('pet');
-                      } else {
-                        setActiveMenu(key);
-                      }
+                      setActiveMenu(key);
                     }}
                     items={['pet', 'shop', 'backpack'].includes(activeMenu) ? studentPetTabItems : studentHomeTabItems}
                   />
@@ -852,6 +868,47 @@ const Home: React.FC = () => {
           </>
         )}
       </Layout>
+
+      {siteSettings.site_announcement && (
+        <div style={{
+          background: 'linear-gradient(90deg, #fff7e6 0%, #ffe7ba 100%)',
+          padding: '8px 24px',
+          textAlign: 'center',
+          borderTop: '1px solid #ffd591',
+          borderBottom: '1px solid #ffd591',
+        }}>
+          <NotificationOutlined style={{ color: '#fa8c16', marginRight: 8 }} />
+          <span style={{ color: '#ad6800', fontSize: 13 }}>{siteSettings.site_announcement}</span>
+        </div>
+      )}
+
+      <Footer style={{
+        background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+        color: 'rgba(255,255,255,0.65)',
+        textAlign: 'center',
+        padding: isMobile ? '16px 12px' : '24px 50px',
+      }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 20 }}>{siteSettings.site_logo || '🐾'}</span>
+            <span style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{siteSettings.site_name || '班级宠物养成系统'}</span>
+          </div>
+          <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginBottom: 8 }}>
+            {siteSettings.site_description || '寓教于乐，让学习更有趣'}
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginBottom: 12 }}>
+            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }}>关于我们</a>
+            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }}>使用帮助</a>
+            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }}>隐私政策</a>
+            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }}>联系我们</a>
+          </div>
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 8 }}>
+            <span style={{ fontSize: 12 }}>{siteSettings.site_footer || '© 2024 班级宠物养成系统'}</span>
+            <span style={{ margin: '0 8', fontSize: 12 }}>|</span>
+            <span style={{ fontSize: 12 }}>用 <HeartOutlined style={{ color: '#ff4d4f' }} /> 打造</span>
+          </div>
+        </div>
+      </Footer>
 
       <Modal
         title={selectedPet ? `${selectedPet.owner_name}的宠物 - ${selectedPet.name}` : '宠物详情'}
