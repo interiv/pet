@@ -58,21 +58,6 @@ const Friends: React.FC = () => {
     }
   };
 
-  const handleAddFriend = async (values: any) => {
-    try {
-      setLoading(true);
-      await friendAPI.addFriend({ friend_username: values.username });
-      message.success('好友添加成功！');
-      setIsModalVisible(false);
-      form.resetFields();
-      loadFriends();
-    } catch (error: any) {
-      message.error(error.response?.data?.error || '添加好友失败');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleSearchFriends = async (keyword: string) => {
     setSearchKeyword(keyword);
     if (!keyword || keyword.trim().length < 1) {

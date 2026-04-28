@@ -205,19 +205,54 @@ router.post('/login', async (req, res) => {
 router.get('/me', authenticateToken, (req, res) => {
   try {
     const user = db.prepare(`
-      SELECT id, username, email, role, class_id, avatar, created_at, last_login
-      FROM users
-      WHERE id = ?
+      SELECT u.id, u.username, u.email, u.role, u.class_id, u.avatar, u.created_at, u.last_login,
+             c.slug AS class_slug, c.name AS class_name, c.school_id,
+             s.name AS school_name, s.theme_color AS school_theme
+      FROM users u
+      LEFT JOIN classes c ON u.class_id = c.id
+      LEFT JOIN schools s ON c.school_id = s.id
+      WHERE u.id = ?
     `).get(req.user.userId);
 
     if (!user) {
       return res.status(404).json({ error: '用户不存在' });
     }
 
-    res.json({ user });
+    // 教师：一同返回其所在的班级列表（便于前端跳转到所属班级）
+    let teacher_classes = [];
+    if (user.role === 'teacher' || user.role === 'admin') {
+      teacher_classes = db.prepare(`
+        SELECT c.id, c.name, c.slug, c.grade, ct.role AS class_role
+        FROM class_teachers ct JOIN classes c ON ct.class_id = c.id
+        WHERE ct.teacher_id = ?
+        ORDER BY c.created_at DESC
+      `).all(req.user.userId);
+    }
+
+    res.json({ user: { ...user, teacher_classes } });
   } catch (error) {
     console.error('获取用户信息错误:', error);
     res.status(500).json({ error: '获取用户信息失败' });
+  }
+});
+
+// 审批进度查询（无需登录：仅返回状态与班级名）
+router.get('/approval-status', (req, res) => {
+  try {
+    const { username } = req.query;
+    if (!username) return res.status(400).json({ error: '请提供用户名' });
+    const user = db.prepare(`SELECT id, status FROM users WHERE username = ?`).get(username);
+    if (!user) return res.status(404).json({ error: '用户不存在' });
+    const apps = db.prepare(`
+      SELECT ca.status, ca.role, ca.created_at, ca.reviewed_at, c.name AS class_name
+      FROM class_applications ca LEFT JOIN classes c ON ca.class_id = c.id
+      WHERE ca.user_id = ?
+      ORDER BY ca.created_at DESC
+    `).all(user.id);
+    res.json({ status: user.status, applications: apps });
+  } catch (error) {
+    console.error('获取审批状态失败:', error);
+    res.status(500).json({ error: '获取审批状态失败' });
   }
 });
 

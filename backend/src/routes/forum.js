@@ -25,10 +25,10 @@ router.get('/forums', authenticateToken, (req, res) => {
   }
 });
 
-// 获取帖子列表（支持板块筛选、搜索）
+// 获取帖子列表（支持板块筛选、搜索、班级过滤）
 router.get('/threads', authenticateToken, (req, res) => {
   try {
-    const { forum_id, page = 1, limit = 20, keyword, sort = 'last_reply' } = req.query;
+    const { forum_id, page = 1, limit = 20, keyword, sort = 'last_reply', class_id, scope } = req.query;
     const offset = (page - 1) * limit;
 
     let sql = `
@@ -44,6 +44,23 @@ router.get('/threads', authenticateToken, (req, res) => {
     if (forum_id) {
       sql += ` AND t.forum_id = ?`;
       params.push(parseInt(forum_id));
+    }
+
+    // 班级过滤：
+    //  scope='public'：仅全站贴（class_id IS NULL）
+    //  scope='class'：仅本班贴（需 class_id）
+    //  默认：本班贴 + 全站贴
+    if (scope === 'public') {
+      sql += ` AND t.class_id IS NULL`;
+    } else if (class_id) {
+      const cid = parseInt(class_id, 10);
+      if (scope === 'class') {
+        sql += ` AND t.class_id = ?`;
+        params.push(cid);
+      } else {
+        sql += ` AND (t.class_id = ? OR t.class_id IS NULL)`;
+        params.push(cid);
+      }
     }
 
     if (keyword) {
@@ -120,7 +137,7 @@ router.get('/threads/:id', authenticateToken, (req, res) => {
 // 发布帖子
 router.post('/threads', authenticateToken, (req, res) => {
   try {
-    const { title, content, forum_id, tags } = req.body;
+    const { title, content, forum_id, tags, scope, class_id } = req.body;
 
     if (!title || !title.trim()) return res.status(400).json({ error: '标题不能为空' });
     if (!content || !content.trim()) return res.status(400).json({ error: '内容不能为空' });
@@ -128,10 +145,19 @@ router.post('/threads', authenticateToken, (req, res) => {
     const forum = db.prepare('SELECT * FROM forums WHERE id = ?').get(forum_id);
     if (!forum) return res.status(404).json({ error: '论坛板块不存在' });
 
+    // 解析 class_id：
+    // scope='public' -> class_id = NULL
+    // scope='class' / 默认 -> 使用传入 class_id，其次回退到 user.class_id
+    let threadClassId = null;
+    if (scope !== 'public') {
+      const meClassId = db.prepare('SELECT class_id FROM users WHERE id = ?').get(req.user.userId)?.class_id;
+      threadClassId = class_id ? parseInt(class_id, 10) : (meClassId || null);
+    }
+
     const result = db.prepare(`
-      INSERT INTO forum_threads (user_id, forum_id, title, content)
-      VALUES (?, ?, ?, ?)
-    `).run(req.user.userId, parseInt(forum_id), title.trim(), content.trim());
+      INSERT INTO forum_threads (user_id, forum_id, title, content, class_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(req.user.userId, parseInt(forum_id), title.trim(), content.trim(), threadClassId);
 
     const threadId = result.lastInsertRowid;
 
@@ -143,9 +169,9 @@ router.post('/threads', authenticateToken, (req, res) => {
 
     // 创建主楼（不再是自动回复）
     db.prepare(`
-      INSERT INTO forum_posts (thread_id, user_id, content, is_first_post)
-      VALUES (?, ?, ?, 1)
-    `).run(threadId, req.user.userId, content.trim());
+      INSERT INTO forum_posts (thread_id, user_id, content, is_first_post, class_id)
+      VALUES (?, ?, ?, 1, ?)
+    `).run(threadId, req.user.userId, content.trim(), threadClassId);
 
     // 更新板块的帖子数量
     db.prepare(`

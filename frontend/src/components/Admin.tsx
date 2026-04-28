@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge, Switch, Alert } from 'antd';
-import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DollarOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined } from '@ant-design/icons';
-import { adminAPI } from '../utils/api';
+import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DollarOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined } from '@ant-design/icons';
+import { adminAPI, schoolAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
 interface AdminProps {
@@ -28,6 +28,7 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
         { key: 'teachers', label: <span><UserOutlined /> 教师管理</span>, children: <TeacherManagement /> },
         { key: 'students', label: <span><TeamOutlined /> 学生管理</span>, children: <StudentManagement /> },
         { key: 'classes', label: <span><FolderOutlined /> 班级管理</span>, children: <ClassManagement /> },
+        { key: 'schools', label: <span><BankOutlined /> 学校管理</span>, children: <SchoolManagement /> },
         { key: 'applications', label: <span><TeamOutlined /> 入学申请</span>, children: <ApplicationManagement /> },
         { key: 'announcements', label: <span><NotificationOutlined /> 公告管理</span>, children: <AnnouncementManagement /> },
         { key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> },
@@ -739,7 +740,15 @@ const ClassManagement: React.FC = () => {
 
   const handleEdit = (record: any) => {
     setSelectedClass(record);
-    editForm.setFieldsValue({ name: record.name, grade: record.grade });
+    editForm.setFieldsValue({
+      name: record.name,
+      grade: record.grade,
+      description: record.description || '',
+      cover_image: record.cover_image || '',
+      is_public: !!record.is_public,
+      slug: record.slug || '',
+      school_id: record.school_id || null,
+    });
     setEditModalVisible(true);
   };
 
@@ -801,6 +810,9 @@ const ClassManagement: React.FC = () => {
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     { title: '班级名称', dataIndex: 'name', key: 'name' },
     { title: '年级', dataIndex: 'grade', key: 'grade', render: (v: string) => v || '-' },
+    ...(isAdmin ? [{ title: '学校', dataIndex: 'school_name', key: 'school_name', render: (v: string) => v || '-' }] : []),
+    { title: '标识(slug)', dataIndex: 'slug', key: 'slug', render: (v: string) => v ? <code>{v}</code> : '-' },
+    { title: '公开', dataIndex: 'is_public', key: 'is_public', render: (v: any) => v ? <Tag color="green">公开</Tag> : <Tag>私有</Tag> },
     {
       title: '教师',
       key: 'teachers',
@@ -859,13 +871,31 @@ const ClassManagement: React.FC = () => {
         </Form>
       </Modal>
 
-      <Modal title="编辑班级" open={editModalVisible} onOk={handleUpdate} onCancel={() => setEditModalVisible(false)}>
+      <Modal title="编辑班级" open={editModalVisible} onOk={handleUpdate} onCancel={() => setEditModalVisible(false)} width={560}>
         <Form form={editForm} layout="vertical">
           <Form.Item name="name" label="班级名称" rules={[{ required: true, message: '请输入班级名称' }]}>
             <Input />
           </Form.Item>
           <Form.Item name="grade" label="年级">
             <Input />
+          </Form.Item>
+          <Form.Item name="description" label="班级简介">
+            <Input.TextArea rows={3} maxLength={300} showCount />
+          </Form.Item>
+          <Form.Item name="cover_image" label="封面图 URL">
+            <Input placeholder="https://..." />
+          </Form.Item>
+          <Form.Item name="is_public" label="公开班级主页" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            name="slug"
+            label="班级标识 (slug)"
+            rules={[
+              { pattern: /^[a-z0-9][a-z0-9-]{2,31}$/i, message: '3-32 位字母/数字/连字符，首字符为字母或数字' },
+            ]}
+          >
+            <Input placeholder="例：class3-grade2" />
           </Form.Item>
         </Form>
       </Modal>
@@ -886,6 +916,126 @@ const ClassManagement: React.FC = () => {
               <Select.Option value="teacher">任课教师</Select.Option>
             </Select>
           </Form.Item>
+        </Form>
+      </Modal>
+    </div>
+  );
+};
+
+const SchoolManagement: React.FC = () => {
+  const [schools, setSchools] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [editingSchool, setEditingSchool] = useState<any>(null);
+  const [form] = Form.useForm();
+
+  useEffect(() => { loadSchools(); }, []);
+
+  const loadSchools = async () => {
+    setLoading(true);
+    try {
+      const res = await schoolAPI.getSchools();
+      setSchools(res.data.schools || []);
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || '加载学校列表失败');
+    } finally { setLoading(false); }
+  };
+
+  const openCreate = () => {
+    setEditingSchool(null);
+    form.resetFields();
+    form.setFieldsValue({ theme_color: '#1677ff' });
+    setModalVisible(true);
+  };
+
+  const openEdit = (record: any) => {
+    setEditingSchool(record);
+    form.setFieldsValue({
+      name: record.name,
+      city: record.city,
+      region: record.region,
+      theme_color: record.theme_color || '#1677ff',
+      logo: record.logo || '',
+    });
+    setModalVisible(true);
+  };
+
+  const handleSubmit = async () => {
+    try {
+      const values = await form.validateFields();
+      if (editingSchool) {
+        await schoolAPI.updateSchool(editingSchool.id, values);
+        message.success('学校更新成功');
+      } else {
+        await schoolAPI.createSchool(values);
+        message.success('学校创建成功');
+      }
+      setModalVisible(false);
+      form.resetFields();
+      loadSchools();
+    } catch (error: any) {
+      if (error?.errorFields) return;
+      message.error(error?.response?.data?.error || '操作失败');
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    try {
+      await schoolAPI.deleteSchool(id);
+      message.success('学校已删除');
+      loadSchools();
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || '删除失败');
+    }
+  };
+
+  const columns = [
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
+    { title: '名称', dataIndex: 'name', key: 'name' },
+    { title: '城市', dataIndex: 'city', key: 'city', render: (v: string) => v || '-' },
+    { title: '区域', dataIndex: 'region', key: 'region', render: (v: string) => v || '-' },
+    { title: '主题色', dataIndex: 'theme_color', key: 'theme_color', render: (v: string) => v
+      ? <Space><span style={{ display: 'inline-block', width: 16, height: 16, background: v, borderRadius: 3, border: '1px solid #eee' }} /><span>{v}</span></Space>
+      : '-' },
+    { title: '班级数', dataIndex: 'class_count', key: 'class_count' },
+    {
+      title: '操作',
+      key: 'action',
+      render: (_: any, record: any) => (
+        <Space>
+          <Button type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>编辑</Button>
+          <Popconfirm title="删除后不可恢复，仅在该学校下无班级时才能删除。确认删除？"
+            onConfirm={() => handleDelete(record.id)}>
+            <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+          </Popconfirm>
+        </Space>
+      )
+    }
+  ];
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建学校</Button>
+      </div>
+      <Table columns={columns} dataSource={schools} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
+
+      <Modal
+        title={editingSchool ? '编辑学校' : '新建学校'}
+        open={modalVisible}
+        onOk={handleSubmit}
+        onCancel={() => setModalVisible(false)}
+      >
+        <Form form={form} layout="vertical">
+          <Form.Item name="name" label="学校名称" rules={[{ required: true, message: '请输入学校名称' }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="city" label="城市"><Input /></Form.Item>
+          <Form.Item name="region" label="区域"><Input /></Form.Item>
+          <Form.Item name="theme_color" label="主题色">
+            <Input type="color" style={{ width: 120, padding: 2 }} />
+          </Form.Item>
+          <Form.Item name="logo" label="Logo URL"><Input placeholder="https://..." /></Form.Item>
         </Form>
       </Modal>
     </div>

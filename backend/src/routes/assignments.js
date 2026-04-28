@@ -301,6 +301,19 @@ router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res
       }
     }
 
+    // 校验：非管理员教师仅能为所属班级创建作业
+    if (targetClassId && req.user.role !== 'admin') {
+      const belongs = db.prepare(
+        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
+      ).get(req.user.userId, targetClassId);
+      if (!belongs) {
+        return res.status(403).json({ error: '无权为该班级创建作业' });
+      }
+    }
+    if (!targetClassId) {
+      return res.status(400).json({ error: '请选择作业所属班级' });
+    }
+
     const result = db.prepare(`
       INSERT INTO assignments (teacher_id, title, description, subject, question_type, max_exp, due_date, ai_config, class_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

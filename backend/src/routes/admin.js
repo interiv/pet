@@ -12,9 +12,12 @@ const requireAdmin = (req, res, next) => {
 
 // ==================== 教师管理 ====================
 
-// 获取所有教师列表
+// 获取所有教师列表（教师/管理员可用；学生禁止）
 router.get('/teachers', authenticateToken, (req, res) => {
   try {
+    if (req.user.role === 'student') {
+      return res.status(403).json({ error: '无权访问教师列表' });
+    }
     const { status, search } = req.query;
     let sql = `SELECT id, username, email, avatar, created_at, last_login, status FROM users WHERE role = 'teacher'`;
     const params = [];
@@ -137,7 +140,11 @@ router.get('/students', authenticateToken, (req, res) => {
     const { status, class_id, search } = req.query;
     const userId = req.user.userId;
     const userRole = req.user.role;
-    
+
+    if (userRole === 'student') {
+      return res.status(403).json({ error: '无权访问学生列表' });
+    }
+
     let sql = `SELECT u.id, u.username, u.email, u.avatar, u.class_id, u.gold, u.created_at, u.last_login, u.status, c.name as class_name 
                FROM users u LEFT JOIN classes c ON u.class_id = c.id WHERE u.role = 'student'`;
     const params = [];
@@ -309,21 +316,24 @@ router.get('/classes', authenticateToken, (req, res) => {
     let classes;
     if (userRole === 'admin') {
       classes = db.prepare(`
-        SELECT c.*, u.username as teacher_name,
-          (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') as student_count,
-          (SELECT COALESCE(SUM(exp), 0) FROM pets WHERE user_id IN (SELECT id FROM users WHERE class_id = c.id AND role = 'student')) as total_exp,
-          (SELECT COALESCE(SUM(gold), 0) FROM users WHERE class_id = c.id AND role = 'student') as total_gold
-        FROM classes c LEFT JOIN users u ON c.teacher_id = u.id
-        ORDER BY c.created_at DESC
-      `).all();
-    } else {
-      classes = db.prepare(`
-        SELECT c.*, u.username as teacher_name,
+        SELECT c.*, u.username as teacher_name, s.name AS school_name,
           (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') as student_count,
           (SELECT COALESCE(SUM(exp), 0) FROM pets WHERE user_id IN (SELECT id FROM users WHERE class_id = c.id AND role = 'student')) as total_exp,
           (SELECT COALESCE(SUM(gold), 0) FROM users WHERE class_id = c.id AND role = 'student') as total_gold
         FROM classes c
         LEFT JOIN users u ON c.teacher_id = u.id
+        LEFT JOIN schools s ON c.school_id = s.id
+        ORDER BY c.created_at DESC
+      `).all();
+    } else {
+      classes = db.prepare(`
+        SELECT c.*, u.username as teacher_name, s.name AS school_name,
+          (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') as student_count,
+          (SELECT COALESCE(SUM(exp), 0) FROM pets WHERE user_id IN (SELECT id FROM users WHERE class_id = c.id AND role = 'student')) as total_exp,
+          (SELECT COALESCE(SUM(gold), 0) FROM users WHERE class_id = c.id AND role = 'student') as total_gold
+        FROM classes c
+        LEFT JOIN users u ON c.teacher_id = u.id
+        LEFT JOIN schools s ON c.school_id = s.id
         INNER JOIN class_teachers ct ON c.id = ct.class_id
         WHERE ct.teacher_id = ?
         ORDER BY c.created_at DESC
@@ -574,17 +584,17 @@ router.post('/classes', authenticateToken, requireAdmin, (req, res) => {
   }
 });
 
-// 更新班级信息
+// 更新班级信息（管理员，可改核心字段）
 router.put('/classes/:id', authenticateToken, requireAdmin, (req, res) => {
   try {
     const { id } = req.params;
-    const { name, grade, teacher_id } = req.body;
-    
+    const { name, grade, teacher_id, description, is_public, cover_image, slug, school_id } = req.body;
+
     const cls = db.prepare(`SELECT id FROM classes WHERE id = ?`).get(id);
     if (!cls) {
       return res.status(404).json({ error: '班级不存在' });
     }
-    
+
     const updates = [];
     const params = [];
     if (name !== undefined) { updates.push('name = ?'); params.push(name); }
@@ -599,17 +609,85 @@ router.put('/classes/:id', authenticateToken, requireAdmin, (req, res) => {
       updates.push('teacher_id = ?');
       params.push(teacher_id || null);
     }
-    
+    if (description !== undefined) { updates.push('description = ?'); params.push(description || null); }
+    if (is_public !== undefined) { updates.push('is_public = ?'); params.push(is_public ? 1 : 0); }
+    if (cover_image !== undefined) { updates.push('cover_image = ?'); params.push(cover_image || null); }
+    if (slug !== undefined) {
+      const s = String(slug || '').trim();
+      if (!/^[a-z0-9][a-z0-9-]{2,31}$/i.test(s)) {
+        return res.status(400).json({ error: 'slug 需 3-32 位字母/数字/连字符，且首字符为字母或数字' });
+      }
+      const dup = db.prepare(`SELECT id FROM classes WHERE slug = ? AND id <> ?`).get(s, id);
+      if (dup) return res.status(400).json({ error: '该 slug 已被占用' });
+      updates.push('slug = ?'); params.push(s);
+    }
+    if (school_id !== undefined) {
+      if (school_id) {
+        const school = db.prepare(`SELECT id FROM schools WHERE id = ?`).get(school_id);
+        if (!school) return res.status(400).json({ error: '指定的学校不存在' });
+      }
+      updates.push('school_id = ?'); params.push(school_id || null);
+    }
+
     if (updates.length === 0) {
       return res.status(400).json({ error: '没有要更新的字段' });
     }
-    
+
     params.push(id);
     db.prepare(`UPDATE classes SET ${updates.join(', ')} WHERE id = ?`).run(...params);
     res.json({ message: '班级信息更新成功' });
   } catch (error) {
     console.error('更新班级信息失败:', error);
     res.status(500).json({ error: '更新班级信息失败' });
+  }
+});
+
+// 未分班学生（管理员/教师查看自己班级可邀请的候选）
+router.get('/unassigned-students', authenticateToken, (req, res) => {
+  try {
+    if (req.user.role === 'student') {
+      return res.status(403).json({ error: '无权查看' });
+    }
+    const students = db.prepare(`
+      SELECT id, username, email, avatar, created_at, status
+      FROM users
+      WHERE role = 'student' AND (class_id IS NULL OR status = 'pending_approval')
+      ORDER BY created_at DESC
+    `).all();
+    res.json({ students });
+  } catch (error) {
+    console.error('获取未分班学生失败:', error);
+    res.status(500).json({ error: '获取未分班学生失败' });
+  }
+});
+
+// 指派学生到班级（管理员 或 目标班级的班主任）
+router.post('/students/:id/assign-class', authenticateToken, (req, res) => {
+  try {
+    const studentId = parseInt(req.params.id, 10);
+    const { class_id } = req.body || {};
+    if (!class_id) return res.status(400).json({ error: '请提供班级 ID' });
+
+    const student = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'student'`).get(studentId);
+    if (!student) return res.status(404).json({ error: '学生不存在' });
+
+    const cls = db.prepare(`SELECT id FROM classes WHERE id = ?`).get(class_id);
+    if (!cls) return res.status(404).json({ error: '班级不存在' });
+
+    if (req.user.role !== 'admin') {
+      const isHead = db.prepare(
+        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'`
+      ).get(req.user.userId, class_id);
+      if (!isHead) return res.status(403).json({ error: '仅管理员或该班班主任可指派' });
+    }
+
+    db.prepare(`UPDATE users SET class_id = ?, status = 'active' WHERE id = ?`).run(class_id, studentId);
+    db.prepare(`UPDATE classes SET student_count = (SELECT COUNT(*) FROM users WHERE class_id = ? AND role = 'student') WHERE id = ?`).run(class_id, class_id);
+
+    res.json({ message: '已指派到班级' });
+  } catch (error) {
+    console.error('指派学生到班级失败:', error);
+    res.status(500).json({ error: '指派学生到班级失败' });
   }
 });
 

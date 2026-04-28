@@ -45,27 +45,31 @@ function checkLevelUp(pet) {
   return { leveledUp: false };
 }
 
-// 获取所有学生的宠物
-router.get('/all', (req, res) => {
+// 获取学生宠物（必须按班级过滤，防止跨校数据泄露）
+router.get('/all', authenticateToken, (req, res) => {
   try {
-    const classId = req.query.class_id;
-    let sql = `
+    const classId = parseInt(req.query.class_id, 10);
+    if (!classId) {
+      return res.json({ pets: [] });
+    }
+
+    // 非管理员：需验证班级成员身份
+    if (req.user.role !== 'admin') {
+      const asStudent = db.prepare(`SELECT 1 FROM users WHERE id = ? AND class_id = ?`).get(req.user.userId, classId);
+      const asTeacher = db.prepare(`SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`).get(req.user.userId, classId);
+      if (!asStudent && !asTeacher) {
+        return res.status(403).json({ error: '无权访问该班级宠物' });
+      }
+    }
+
+    const pets = db.prepare(`
       SELECT p.*, ps.name as species_name, ps.element_type, ps.image_urls, u.username as owner_name, u.class_id
       FROM pets p
       JOIN pet_species ps ON p.species_id = ps.id
       JOIN users u ON p.user_id = u.id
-      WHERE u.role = 'student'
-    `;
-    const params = [];
-
-    if (classId) {
-      sql += ` AND u.class_id = ?`;
-      params.push(classId);
-    }
-
-    sql += ` ORDER BY p.level DESC, p.exp DESC`;
-
-    const pets = db.prepare(sql).all(...params);
+      WHERE u.role = 'student' AND u.class_id = ?
+      ORDER BY p.level DESC, p.exp DESC
+    `).all(classId);
     res.json({ pets });
   } catch (error) {
     console.error('获取所有宠物错误:', error);

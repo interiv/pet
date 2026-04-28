@@ -65,6 +65,9 @@ export const authAPI = {
   
   changePassword: (data: { currentPassword: string; newPassword: string }) => 
     api.put('/auth/change-password', data),
+
+  getApprovalStatus: (username: string) =>
+    api.get('/auth/approval-status', { params: { username } }),
 };
 
 // 宠物相关 API
@@ -204,9 +207,12 @@ export const petExtendedAPI = {
 
 // 排行榜相关 API
 export const leaderboardAPI = {
-  getLevelLeaderboard: () => api.get('/leaderboard/level'),
-  getBattleLeaderboard: () => api.get('/leaderboard/battle'),
-  getAssignmentLeaderboard: () => api.get('/leaderboard/assignment'),
+  getLevelLeaderboard: (params?: { class_id?: number; limit?: number }) =>
+    api.get('/leaderboard/level', { params }),
+  getBattleLeaderboard: (params?: { class_id?: number; limit?: number }) =>
+    api.get('/leaderboard/battle', { params }),
+  getAssignmentLeaderboard: (params?: { class_id?: number; limit?: number }) =>
+    api.get('/leaderboard/assignment', { params }),
 };
 
 export const adminAPI = {
@@ -235,6 +241,11 @@ export const adminAPI = {
   // 班级申请审批
   getClassApplications: (params?: { class_id?: number; status?: string }) => api.get('/admin/class-applications', { params }),
   reviewClassApplication: (id: number, data: { status: 'approved' | 'rejected' }) => api.put(`/admin/class-applications/${id}/review`, data),
+
+  // 未分班学生 / 指派到班级
+  getUnassignedStudents: () => api.get('/admin/unassigned-students'),
+  assignStudentToClass: (studentId: number, class_id: number) =>
+    api.post(`/admin/students/${studentId}/assign-class`, { class_id }),
 
   // 公告管理
   getAnnouncements: () => api.get('/admin/announcements'),
@@ -384,6 +395,31 @@ export const classAPI = {
     api.post('/classes/join-with-invite', { invitation_code: invitationCode }),
 
   getPublicClasses: () => api.get('/classes/public-list'),
+
+  // 通过 slug 获取班级公开主页（无需登录）
+  getBySlug: (slug: string) => api.get(`/classes/by-slug/${encodeURIComponent(slug)}`),
+
+  // 班级主页聚合数据（需登录）
+  getHomeSummary: (classId: number) => api.get(`/classes/${classId}/home-summary`),
+
+  // 更新班级设置（班主任）
+  updateClassSettings: (classId: number, data: { description?: string; cover_image?: string; is_public?: boolean }) =>
+    api.put(`/classes/${classId}/settings`, data),
+
+  // 班主任自定义班级 slug
+  updateClassSlug: (classId: number, slug: string) =>
+    api.put(`/classes/${classId}/slug`, { slug }),
+};
+
+// 学校相关 API
+export const schoolAPI = {
+  getSchools: () => api.get('/schools'),
+  createSchool: (data: { name: string; city?: string; region?: string; theme_color?: string }) =>
+    api.post('/schools', data),
+  updateSchool: (id: number, data: { name?: string; city?: string; region?: string; theme_color?: string; logo?: string }) =>
+    api.put(`/schools/${id}`, data),
+  deleteSchool: (id: number) => api.delete(`/schools/${id}`),
+  getClassesOfSchool: (schoolId: number) => api.get(`/schools/${schoolId}/classes`),
 };
 
 export default api;

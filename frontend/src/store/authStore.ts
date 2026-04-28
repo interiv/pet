@@ -7,24 +7,44 @@ interface User {
   email?: string;
   role: 'student' | 'teacher' | 'admin';
   class_id?: number;
+  class_slug?: string;
+  class_name?: string;
+  school_id?: number;
+  school_name?: string;
+  school_theme?: string;
   avatar?: string;
   gold?: number;
+  teacher_classes?: Array<{ id: number; name: string; slug: string; grade?: string; class_role?: string }>;
+}
+
+interface CurrentClass {
+  id: number;
+  slug: string;
+  name: string;
+  theme_color?: string;
 }
 
 interface AuthState {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
+  currentClass: CurrentClass | null;
   login: (token: string, user: User) => void;
   logout: () => void;
   checkAuth: () => Promise<void>;
   setUser: (user: User) => void;
+  setCurrentClass: (c: CurrentClass | null) => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   token: localStorage.getItem('token'),
   isAuthenticated: false,
+  currentClass: (() => {
+    const raw = localStorage.getItem('currentClass');
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  })(),
   
   login: (token, user) => {
     localStorage.setItem('token', token);
@@ -35,7 +55,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    set({ token: null, user: null, isAuthenticated: false });
+    localStorage.removeItem('currentClass');
+    set({ token: null, user: null, isAuthenticated: false, currentClass: null });
   },
   
   checkAuth: async () => {
@@ -68,6 +89,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   setUser: (user) => {
     localStorage.setItem('user', JSON.stringify(user));
     set({ user });
+  },
+
+  setCurrentClass: (c) => {
+    if (c) localStorage.setItem('currentClass', JSON.stringify(c));
+    else localStorage.removeItem('currentClass');
+    set({ currentClass: c });
   },
 }));
 

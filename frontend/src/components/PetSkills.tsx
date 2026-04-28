@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Button, Tag, message, Modal, Progress, Badge, Tooltip, Statistic, Tabs, Empty } from 'antd';
+import { Card, Row, Col, Button, Tag, message, Progress, Badge, Tabs, Empty } from 'antd';
 import {
   ThunderboltOutlined,
   SafetyOutlined,
@@ -39,7 +39,7 @@ interface Skill {
 
 const PetSkills: React.FC = () => {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(false);
+  const [, setLoading] = useState(false);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [pet, setPet] = useState<any>(null);
   const [learning, setLearning] = useState<number | null>(null);

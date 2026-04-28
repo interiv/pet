@@ -14,15 +14,229 @@ function generateInviteCode() {
 router.get('/public-list', (req, res) => {
   try {
     const classes = db.prepare(`
-      SELECT c.id, c.name, c.grade,
+      SELECT c.id, c.name, c.grade, c.slug, c.school_id,
+        s.name AS school_name,
         (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') as student_count
       FROM classes c
+      LEFT JOIN schools s ON c.school_id = s.id
+      WHERE COALESCE(c.is_public, 1) = 1
       ORDER BY c.created_at DESC
     `).all();
     res.json({ classes });
   } catch (error) {
     console.error('获取公开班级列表失败:', error);
     res.status(500).json({ error: '获取班级列表失败' });
+  }
+});
+
+// 通过 slug 获取班级公开主页信息（未登录也可访问，若 is_public=0 则 404）
+router.get('/by-slug/:slug', (req, res) => {
+  try {
+    const { slug } = req.params;
+    const cls = db.prepare(`
+      SELECT c.id, c.name, c.grade, c.slug, c.description, c.cover_image,
+             c.is_public, c.school_id, c.created_at, c.head_teacher_id,
+             s.name AS school_name, s.theme_color AS school_theme,
+             u.username AS head_teacher_name, u.avatar AS head_teacher_avatar,
+             (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') AS student_count,
+             (SELECT COUNT(*) FROM class_teachers WHERE class_id = c.id) AS teacher_count
+      FROM classes c
+      LEFT JOIN schools s ON c.school_id = s.id
+      LEFT JOIN users u ON c.head_teacher_id = u.id
+      WHERE c.slug = ?
+    `).get(slug);
+
+    if (!cls) return res.status(404).json({ error: '班级不存在' });
+    if (!cls.is_public) return res.status(404).json({ error: '班级不存在或未公开' });
+
+    // 公开 BOSS 进度（如有）
+    const activeBoss = db.prepare(`
+      SELECT id, boss_name, boss_icon, boss_max_hp, started_at
+      FROM boss_battles WHERE class_id = ? AND status = 'active' LIMIT 1
+    `).get(cls.id);
+    let bossProgress = null;
+    if (activeBoss) {
+      const totalDamage = db.prepare(`
+        SELECT COALESCE(SUM(damage_dealt), 0) AS total FROM boss_battle_participants WHERE boss_battle_id = ?
+      `).get(activeBoss.id).total || 0;
+      bossProgress = {
+        ...activeBoss,
+        total_damage: totalDamage,
+        progress: Math.min(100, Math.round((totalDamage / activeBoss.boss_max_hp) * 100))
+      };
+    }
+
+    // 一个有效的公开邀请码（若存在）
+    const publicInvite = db.prepare(`
+      SELECT invitation_code FROM class_invitations
+      WHERE class_id = ? AND is_active = 1
+        AND (expires_at IS NULL OR expires_at > datetime('now'))
+        AND (max_uses IS NULL OR used_count < max_uses)
+      ORDER BY created_at DESC LIMIT 1
+    `).get(cls.id);
+
+    res.json({
+      class: cls,
+      active_boss: bossProgress,
+      public_invitation_code: publicInvite ? publicInvite.invitation_code : null
+    });
+  } catch (error) {
+    console.error('获取班级公开主页失败:', error);
+    res.status(500).json({ error: '获取班级公开主页失败' });
+  }
+});
+
+// 班级主页聚合数据（登录 + 本班成员可用）
+router.get('/:id/home-summary', authenticateToken, (req, res) => {
+  try {
+    const classId = parseInt(req.params.id, 10);
+    if (!classId) return res.status(400).json({ error: '班级 ID 无效' });
+
+    // 权限：班级成员或管理员
+    if (req.user.role !== 'admin') {
+      const asStudent = db.prepare(`SELECT 1 FROM users WHERE id = ? AND class_id = ?`).get(req.user.userId, classId);
+      const asTeacher = db.prepare(`SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`).get(req.user.userId, classId);
+      if (!asStudent && !asTeacher) {
+        return res.status(403).json({ error: '无权访问该班级' });
+      }
+    }
+
+    const cls = db.prepare(`
+      SELECT c.id, c.name, c.grade, c.slug, c.description, c.cover_image, c.is_public,
+             c.school_id, u.username AS head_teacher_name, u.id AS head_teacher_id,
+             s.name AS school_name, s.theme_color AS school_theme
+      FROM classes c
+      LEFT JOIN users u ON c.head_teacher_id = u.id
+      LEFT JOIN schools s ON c.school_id = s.id
+      WHERE c.id = ?
+    `).get(classId);
+    if (!cls) return res.status(404).json({ error: '班级不存在' });
+
+    const studentCount = db.prepare(`SELECT COUNT(*) AS c FROM users WHERE class_id = ? AND role = 'student'`).get(classId).c;
+    const teachers = db.prepare(`
+      SELECT u.id, u.username, u.avatar, ct.role
+      FROM class_teachers ct JOIN users u ON ct.teacher_id = u.id
+      WHERE ct.class_id = ?
+      ORDER BY CASE ct.role WHEN 'head_teacher' THEN 0 ELSE 1 END, ct.created_at ASC
+    `).all(classId);
+
+    // Top10 班级等级榜
+    const topPets = db.prepare(`
+      SELECT p.id, p.name, p.level, p.exp, ps.name AS species_name, ps.image_urls,
+             u.username AS owner_name, u.id AS user_id
+      FROM pets p
+      JOIN pet_species ps ON p.species_id = ps.id
+      JOIN users u ON p.user_id = u.id
+      WHERE u.class_id = ? AND u.role = 'student'
+      ORDER BY p.level DESC, p.exp DESC
+      LIMIT 10
+    `).all(classId);
+
+    // 最新公告
+    let announcements = [];
+    try {
+      announcements = db.prepare(`
+        SELECT id, title, content, priority, created_at
+        FROM announcements WHERE class_id = ?
+          AND (expires_at IS NULL OR expires_at > datetime('now'))
+        ORDER BY priority DESC, created_at DESC LIMIT 5
+      `).all(classId);
+    } catch (e) { /* 表或字段不存在时容错 */ }
+
+    // 当前 BOSS
+    let activeBoss = null;
+    try {
+      activeBoss = db.prepare(`
+        SELECT id, boss_name, boss_icon, boss_max_hp, boss_level, knowledge_point, started_at, expires_at
+        FROM boss_battles WHERE class_id = ? AND status = 'active' LIMIT 1
+      `).get(classId);
+      if (activeBoss) {
+        const totalDamage = db.prepare(`
+          SELECT COALESCE(SUM(damage_dealt), 0) AS total FROM boss_battle_participants WHERE boss_battle_id = ?
+        `).get(activeBoss.id).total || 0;
+        activeBoss.total_damage = totalDamage;
+        activeBoss.progress = Math.min(100, Math.round((totalDamage / activeBoss.boss_max_hp) * 100));
+      }
+    } catch (e) { /* 容错 */ }
+
+    // 最新动态
+    let recentPosts = [];
+    try {
+      recentPosts = db.prepare(`
+        SELECT p.id, p.content, p.created_at, u.username, u.avatar
+        FROM posts p JOIN users u ON p.user_id = u.id
+        WHERE p.class_id = ?
+        ORDER BY p.created_at DESC LIMIT 5
+      `).all(classId);
+    } catch (e) { /* 容错 */ }
+
+    res.json({
+      class: cls,
+      student_count: studentCount,
+      teachers,
+      top_pets: topPets,
+      announcements,
+      active_boss: activeBoss,
+      recent_posts: recentPosts
+    });
+  } catch (error) {
+    console.error('获取班级主页聚合失败:', error);
+    res.status(500).json({ error: '获取班级主页数据失败' });
+  }
+});
+
+// 班主任自定义 slug（班级短标识）
+router.put('/:id/slug', authenticateToken, (req, res) => {
+  try {
+    const classId = parseInt(req.params.id, 10);
+    if (!classId) return res.status(400).json({ error: '班级 ID 无效' });
+    const { slug } = req.body || {};
+    const s = String(slug || '').trim();
+    if (!/^[a-z0-9][a-z0-9-]{2,31}$/i.test(s)) {
+      return res.status(400).json({ error: 'slug 需 3-32 位字母/数字/连字符，且首字符为字母或数字' });
+    }
+    if (req.user.role !== 'admin') {
+      const row = db.prepare(
+        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'`
+      ).get(req.user.userId, classId);
+      if (!row) return res.status(403).json({ error: '仅班主任可修改班级标识' });
+    }
+    const exists = db.prepare(`SELECT id FROM classes WHERE id = ?`).get(classId);
+    if (!exists) return res.status(404).json({ error: '班级不存在' });
+    const dup = db.prepare(`SELECT id FROM classes WHERE slug = ? AND id <> ?`).get(s, classId);
+    if (dup) return res.status(400).json({ error: '该 slug 已被占用' });
+    db.prepare(`UPDATE classes SET slug = ? WHERE id = ?`).run(s, classId);
+    res.json({ message: '班级标识更新成功', slug: s });
+  } catch (error) {
+    console.error('更新班级 slug 失败:', error);
+    res.status(500).json({ error: '更新班级标识失败' });
+  }
+});
+
+// 班级基础设置（班主任可改）：description、cover_image、is_public
+router.put('/:id/settings', authenticateToken, (req, res) => {
+  try {
+    const classId = parseInt(req.params.id, 10);
+    if (!classId) return res.status(400).json({ error: '班级 ID 无效' });
+    if (req.user.role !== 'admin') {
+      const row = db.prepare(
+        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'`
+      ).get(req.user.userId, classId);
+      if (!row) return res.status(403).json({ error: '仅班主任可修改班级设置' });
+    }
+    const { description, cover_image, is_public } = req.body || {};
+    const fields = [];
+    const values = [];
+    if (description !== undefined) { fields.push('description = ?'); values.push(description); }
+    if (cover_image !== undefined) { fields.push('cover_image = ?'); values.push(cover_image); }
+    if (is_public !== undefined) { fields.push('is_public = ?'); values.push(is_public ? 1 : 0); }
+    if (!fields.length) return res.status(400).json({ error: '没有要更新的字段' });
+    values.push(classId);
+    db.prepare(`UPDATE classes SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    res.json({ message: '更新成功' });
+  } catch (error) {
+    console.error('更新班级设置失败:', error);
+    res.status(500).json({ error: '更新班级设置失败' });
   }
 });
 
@@ -103,7 +317,7 @@ router.post('/:classId/invitations', authenticateToken, (req, res) => {
     // 验证权限：只有班主任或管理员可以生成邀请码
     if (userRole !== 'admin') {
       const isHeadTeacher = db.prepare(
-        'SELECT id FROM classes WHERE id = ? AND head_teacher_id = ?'
+        `SELECT 1 FROM class_teachers WHERE class_id = ? AND teacher_id = ? AND role = 'head_teacher'`
       ).get(classId, userId);
 
       if (!isHeadTeacher) {
@@ -185,7 +399,7 @@ router.put('/invitations/:invitationId/toggle', authenticateToken, (req, res) =>
     // 验证权限
     if (userRole !== 'admin') {
       const isHeadTeacher = db.prepare(
-        'SELECT id FROM classes WHERE id = ? AND head_teacher_id = ?'
+        `SELECT 1 FROM class_teachers WHERE class_id = ? AND teacher_id = ? AND role = 'head_teacher'`
       ).get(invitation.class_id, userId);
 
       if (!isHeadTeacher) {

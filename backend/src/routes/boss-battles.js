@@ -54,10 +54,20 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
 // 创建BOSS (教师)
 router.post('/create', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
   try {
-    const { class_id, boss_name, boss_level, knowledge_point, duration_hours = 24 } = require('body-parser');
+    const { class_id, boss_name, boss_level, knowledge_point, duration_hours = 24 } = req.body;
     
     if (!class_id || !boss_name || !boss_level) {
       return res.status(400).json({ error: '请提供完整信息' });
+    }
+
+    // 权限：教师必须属于该班级（admin 直通）
+    if (req.user.role !== 'admin') {
+      const belongs = db.prepare(
+        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
+      ).get(req.user.userId, class_id);
+      if (!belongs) {
+        return res.status(403).json({ error: '无权为该班级创建 BOSS' });
+      }
     }
 
     // 检查是否有活跃的BOSS
@@ -111,6 +121,16 @@ router.post('/auto-generate', authenticateToken, authorizeRole('teacher', 'admin
     const { class_id } = req.body;
     if (!class_id) {
       return res.status(400).json({ error: '请提供班级ID' });
+    }
+
+    // 权限：教师必须属于该班级（admin 直通）
+    if (req.user.role !== 'admin') {
+      const belongs = db.prepare(
+        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
+      ).get(req.user.userId, class_id);
+      if (!belongs) {
+        return res.status(403).json({ error: '无权为该班级生成 BOSS' });
+      }
     }
 
     // 查找班级错误率最高的知识点

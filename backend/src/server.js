@@ -29,6 +29,7 @@ const dailyTasksModule = require('./routes/daily-tasks');
 const knowledgePointRoutes = require('./routes/knowledge-points');
 const skillRoutes = require('./routes/skills');
 const bossBattleRoutes = require('./routes/boss-battles');
+const schoolRoutes = require('./routes/schools');
 
 // 初始化数据库
 initDatabase();
@@ -80,6 +81,7 @@ app.use('/api/daily-tasks', dailyTasksModule.router);
 app.use('/api/knowledge-points', knowledgePointRoutes);
 app.use('/api/skills', skillRoutes);
 app.use('/api/boss-battles', bossBattleRoutes);
+app.use('/api/schools', schoolRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {

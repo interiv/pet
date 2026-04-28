@@ -1,15 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Table, Tag, Progress, Select, DatePicker, Empty, Spin, Alert } from 'antd';
+import { Card, Row, Col, Statistic, Table, Tag, Progress, Select, Empty, Spin, Alert } from 'antd';
 import {
   BookOutlined,
   TrophyOutlined,
   RiseOutlined,
-  FallOutlined,
   CheckCircleOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
-import dayjs from 'dayjs';
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
 

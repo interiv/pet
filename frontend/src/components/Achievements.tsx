@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Progress, Tag, message, Tabs, TabsProps, Badge, Tooltip, Empty, Statistic } from 'antd';
-import { TrophyOutlined, CheckCircleOutlined, StarOutlined, LockOutlined, CrownOutlined, FireOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Progress, Tag, message, Tabs, TabsProps, Badge, Tooltip } from 'antd';
+import { TrophyOutlined, CheckCircleOutlined, StarOutlined, LockOutlined, CrownOutlined } from '@ant-design/icons';
 import { achievementAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 

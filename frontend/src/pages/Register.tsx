@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Form, Input, Button, Card, message, Typography, Select, Alert } from 'antd';
 import { UserOutlined, LockOutlined, MailOutlined, LinkOutlined } from '@ant-design/icons';
-import { authAPI, classAPI } from '../utils/api';
+import { authAPI, classAPI, schoolAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
 const { Title } = Typography;
@@ -14,12 +14,15 @@ const Register: React.FC = () => {
   const login = useAuthStore((state) => state.login);
   const [loading, setLoading] = useState(false);
   const [classes, setClasses] = useState<any[]>([]);
+  const [schools, setSchools] = useState<any[]>([]);
+  const [selectedSchoolId, setSelectedSchoolId] = useState<number | null>(null);
   const [selectedRole, setSelectedRole] = useState('student');
   const [inviteCode, setInviteCode] = useState('');
   const [inviteInfo, setInviteInfo] = useState<any>(null);
 
   useEffect(() => {
     loadClasses();
+    loadSchools();
     // 从 URL 参数中获取邀请码
     const code = searchParams.get('invite');
     if (code) {
@@ -36,6 +39,20 @@ const Register: React.FC = () => {
       console.error('加载班级列表失败:', error);
     }
   };
+
+  const loadSchools = async () => {
+    try {
+      const res = await schoolAPI.getSchools();
+      setSchools(res.data.schools || []);
+    } catch (error) {
+      console.error('加载学校列表失败:', error);
+    }
+  };
+
+  // 按学校筛选班级；selectedSchoolId 为 null 时返回全部
+  const filteredClasses = selectedSchoolId
+    ? classes.filter((c: any) => c.school_id === selectedSchoolId)
+    : classes;
 
   const validateInviteCode = async (code: string) => {
     if (!code) return;
@@ -223,15 +240,32 @@ const Register: React.FC = () => {
             </Form.Item>
           )}
 
+          {!inviteInfo && (
+            <Form.Item
+              name="school_id"
+              label="选择学校（导航用）"
+              tooltip="先选学校可快速缩小班级范围；如你的学校不在列表中，不选即可"
+            >
+              <Select
+                allowClear
+                showSearch
+                placeholder="选择所在学校（可选）"
+                optionFilterProp="label"
+                onChange={(v: number | undefined) => setSelectedSchoolId(v ?? null)}
+                options={schools.map((s: any) => ({ value: s.id, label: `${s.name}${s.city ? ` - ${s.city}` : ''}` }))}
+              />
+            </Form.Item>
+          )}
+
           {!inviteInfo && selectedRole === 'student' && (
             <Form.Item
               name="requested_class_id"
               label="选择要加入的班级"
               rules={[{ required: true, message: '请选择要加入的班级' }]}
             >
-              <Select placeholder="选择班级">
-                {classes.map(c => (
-                  <Option key={c.id} value={c.id}>{c.name} {c.grade ? `(${c.grade})` : ''}</Option>
+              <Select placeholder={filteredClasses.length ? '选择班级' : '当前学校暂无公开班级，请使用老师给的邀请码'} showSearch optionFilterProp="children">
+                {filteredClasses.map(c => (
+                  <Option key={c.id} value={c.id}>{c.name} {c.grade ? `(${c.grade})` : ''}{c.school_name ? ` · ${c.school_name}` : ''}</Option>
                 ))}
               </Select>
             </Form.Item>
@@ -243,9 +277,9 @@ const Register: React.FC = () => {
               label="选择要申请的班级（可多选）"
               rules={[{ required: true, message: '请至少选择一个班级' }]}
             >
-              <Select mode="multiple" placeholder="选择要申请的班级" maxTagCount={2}>
-                {classes.map(c => (
-                  <Option key={c.id} value={c.id}>{c.name} {c.grade ? `(${c.grade})` : ''}</Option>
+              <Select mode="multiple" placeholder={filteredClasses.length ? '选择要申请的班级' : '当前学校暂无公开班级'} maxTagCount={2} showSearch optionFilterProp="children">
+                {filteredClasses.map(c => (
+                  <Option key={c.id} value={c.id}>{c.name} {c.grade ? `(${c.grade})` : ''}{c.school_name ? ` · ${c.school_name}` : ''}</Option>
                 ))}
               </Select>
             </Form.Item>

@@ -78,6 +78,15 @@ router.post('/posts', authenticateToken, (req, res) => {
     const userId = req.user.userId;
     const targetClassId = class_id || db.prepare('SELECT class_id FROM users WHERE id = ?').get(userId)?.class_id;
 
+    // 校验：非管理员不能跨班发帖
+    if (targetClassId && req.user.role !== 'admin') {
+      const asStudent = db.prepare('SELECT 1 FROM users WHERE id = ? AND class_id = ?').get(userId, targetClassId);
+      const asTeacher = db.prepare('SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?').get(userId, targetClassId);
+      if (!asStudent && !asTeacher) {
+        return res.status(403).json({ error: '无权在该班级发布动态' });
+      }
+    }
+
     const result = db.prepare(`
       INSERT INTO posts (user_id, content, images, scope, class_id)
       VALUES (?, ?, ?, ?, ?)

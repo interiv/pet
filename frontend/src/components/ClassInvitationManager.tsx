@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Button, Input, message, Space, Tag, Table, Modal, Form, Select, DatePicker } from 'antd';
-import { CopyOutlined, PlusOutlined } from '@ant-design/icons';
+import { Card, Button, Input, message, Space, Tag, Table, Modal, Form, Select, DatePicker, QRCode, Typography, Drawer, Switch } from 'antd';
+import { CopyOutlined, PlusOutlined, QrcodeOutlined, LinkOutlined, SettingOutlined } from '@ant-design/icons';
 import { classAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
 
 const { Option } = Select;
+const { Text, Paragraph } = Typography;
 
 const ClassInvitationManager: React.FC = () => {
   const { user } = useAuthStore();
@@ -14,6 +15,10 @@ const ClassInvitationManager: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [createForm] = Form.useForm();
+  const [qrModal, setQrModal] = useState<{ open: boolean; url: string; code: string }>({ open: false, url: '', code: '' });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsForm] = Form.useForm();
+  const [settingsSaving, setSettingsSaving] = useState(false);
 
   useEffect(() => {
     if (user?.role === 'teacher' || user?.role === 'admin') {
@@ -110,8 +115,49 @@ const ClassInvitationManager: React.FC = () => {
     message.success('已复制到剪贴板');
   };
 
-  const getInviteLink = (code: string) => {
+  const getRecommendLink = (code: string) => {
     return `${window.location.origin}/register?invite=${code}`;
+  };
+
+  const getClassHomeLink = () => {
+    if (myClass?.slug) return `${window.location.origin}/c/${myClass.slug}`;
+    return '';
+  };
+
+  const openQr = (code: string) => {
+    setQrModal({ open: true, url: getRecommendLink(code), code });
+  };
+
+  const openSettings = () => {
+    if (!myClass) return;
+    settingsForm.setFieldsValue({
+      description: myClass.description || '',
+      cover_image: myClass.cover_image || '',
+      is_public: !!myClass.is_public,
+      slug: myClass.slug || '',
+    });
+    setSettingsOpen(true);
+  };
+
+  const saveSettings = async () => {
+    if (!myClass) return;
+    try {
+      const values = await settingsForm.validateFields();
+      setSettingsSaving(true);
+      const { description, cover_image, is_public, slug } = values;
+      await classAPI.updateClassSettings(myClass.id, { description, cover_image, is_public });
+      if (slug && slug !== myClass.slug) {
+        await classAPI.updateClassSlug(myClass.id, slug);
+      }
+      message.success('给班级设置已更新');
+      setSettingsOpen(false);
+      await loadMyClass();
+    } catch (error: any) {
+      if (error?.errorFields) return; // antd form validation
+      message.error(error?.response?.data?.error || '保存失败');
+    } finally {
+      setSettingsSaving(false);
+    }
   };
 
   const getStatusTag = (invitation: any) => {
@@ -125,10 +171,6 @@ const ClassInvitationManager: React.FC = () => {
       return <Tag color="orange">已达上限</Tag>;
     }
     return <Tag color="green">有效</Tag>;
-  };
-
-  const getRecommendLink = (code: string) => {
-    return `${window.location.origin}/register?invite=${code}`;
   };
 
   const columns = [
@@ -187,6 +229,14 @@ const ClassInvitationManager: React.FC = () => {
             size="small"
           >
             复制推荐链接
+          </Button>
+          <Button
+            type="link"
+            icon={<QrcodeOutlined />}
+            onClick={() => openQr(record.invitation_code)}
+            size="small"
+          >
+            二维码
           </Button>
           <Button
             type="link"
@@ -253,16 +303,37 @@ const ClassInvitationManager: React.FC = () => {
         </Space>
       }
       extra={
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => {
-            createForm.resetFields();
-            setCreateModalVisible(true);
-          }}
-        >
-          生成新推荐码
-        </Button>
+        <Space>
+          {myClass?.slug && (
+            <>
+              <Button
+                icon={<LinkOutlined />}
+                onClick={() => copyToClipboard(getClassHomeLink())}
+              >
+                复制班级主页
+              </Button>
+              <Button
+                icon={<QrcodeOutlined />}
+                onClick={() => setQrModal({ open: true, url: getClassHomeLink(), code: myClass.slug })}
+              >
+                班级主页二维码
+              </Button>
+            </>
+          )}
+          <Button icon={<SettingOutlined />} onClick={openSettings}>
+            班级设置
+          </Button>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              createForm.resetFields();
+              setCreateModalVisible(true);
+            }}
+          >
+            生成新推荐码
+          </Button>
+        </Space>
       }
     >
       <Table
@@ -311,6 +382,58 @@ const ClassInvitationManager: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+
+      <Modal
+        title="扫一扫加入班级"
+        open={qrModal.open}
+        onCancel={() => setQrModal({ open: false, url: '', code: '' })}
+        footer={null}
+        width={360}
+      >
+        <div style={{ textAlign: 'center' }}>
+          {qrModal.url && (
+            <QRCode value={qrModal.url} size={240} />
+          )}
+          <Paragraph copyable={{ text: qrModal.url }} style={{ marginTop: 12, wordBreak: 'break-all' }}>
+            <Text type="secondary">{qrModal.url}</Text>
+          </Paragraph>
+          {qrModal.code && (
+            <Paragraph copyable={{ text: qrModal.code }}>
+              <Text strong>编码/Slug：</Text>{qrModal.code}
+            </Paragraph>
+          )}
+        </div>
+      </Modal>
+
+      <Drawer
+        title="班级设置"
+        width={420}
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        extra={<Button type="primary" loading={settingsSaving} onClick={saveSettings}>保存</Button>}
+      >
+        <Form form={settingsForm} layout="vertical">
+          <Form.Item name="description" label="班级简介">
+            <Input.TextArea rows={3} maxLength={300} showCount placeholder="班级介绍、口号等" />
+          </Form.Item>
+          <Form.Item name="cover_image" label="封面图片 URL">
+            <Input placeholder="支持 https 图片链接，或后期上传后的地址" />
+          </Form.Item>
+          <Form.Item name="is_public" label="对外公开班级主页" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            name="slug"
+            label="班级标识 (slug)"
+            tooltip="3-32 位字母/数字/连字符，用于公开顶域如 /c/my-class"
+            rules={[
+              { pattern: /^[a-z0-9][a-z0-9-]{2,31}$/i, message: '3-32 位字母/数字/连字符，首字符为字母或数字' },
+            ]}
+          >
+            <Input placeholder="如 my-class-2024" />
+          </Form.Item>
+        </Form>
+      </Drawer>
     </Card>
   );
 };

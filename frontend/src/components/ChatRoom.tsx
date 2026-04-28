@@ -59,7 +59,7 @@ const ChatRoom: React.FC = () => {
 
   const socketRef = useRef<Socket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const typingTimerRef = useRef<number | null>(null);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
 
   useEffect(() => {
