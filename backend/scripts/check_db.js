@@ -1,4 +1,4 @@
-const { db } = require('./src/config/database');
+const { db } = require('../src/config/database');
 
 console.log('=== 检查数据库中的用户 ===\n');
 

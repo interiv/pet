@@ -75,7 +75,7 @@ router.get('/assignment', authenticateToken, (req, res) => {
              COUNT(s.id) as completed_count,
              AVG(s.exp_reward) as avg_exp
       FROM users u
-      LEFT JOIN submissions s ON u.id = s.user_id AND s.status = 'graded'
+      LEFT JOIN submissions s ON u.id = s.user_id AND (s.status = 'graded' OR s.review_status = 'completed')
       WHERE u.role = 'student'
     `;
     const params = [];
