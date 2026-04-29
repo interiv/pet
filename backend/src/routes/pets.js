@@ -203,36 +203,20 @@ router.post('/create', authenticateToken, (req, res) => {
   }
 });
 
-// 更新宠物属性
+// 更新宠物名称（仅允许改名，属性不可直接修改）
 router.put('/update', authenticateToken, (req, res) => {
   try {
-    const { name, attack, defense, speed } = req.body;
-    const updates = [];
-    const values = [];
+    const { name } = req.body;
 
-    if (name !== undefined) {
-      updates.push('name = ?');
-      values.push(name);
-    }
-    if (attack !== undefined) {
-      updates.push('attack = ?');
-      values.push(attack);
-    }
-    if (defense !== undefined) {
-      updates.push('defense = ?');
-      values.push(defense);
-    }
-    if (speed !== undefined) {
-      updates.push('speed = ?');
-      values.push(speed);
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: '请输入宠物名称' });
     }
 
-    if (updates.length === 0) {
-      return res.status(400).json({ error: '没有要更新的字段' });
+    if (name.trim().length > 20) {
+      return res.status(400).json({ error: '宠物名称不能超过20个字符' });
     }
 
-    values.push(req.user.userId);
-    db.prepare(`UPDATE pets SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`).run(...values);
+    db.prepare(`UPDATE pets SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`).run(name.trim(), req.user.userId);
 
     res.json({ message: '更新成功' });
   } catch (error) {

@@ -42,7 +42,7 @@ function getAIConfig() {
 }
 
 function isObjectiveType(type) {
-  return ['choice_single', 'choice_multi', 'judgment'].includes(type);
+  return ['choice_single', 'choice_multi', 'judgment', 'fill_blank'].includes(type);
 }
 
 // 题型中文映射
@@ -73,89 +73,64 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
 
     let prompt = '';
     if (question_type === 'choice_single') {
-      prompt = `请为${grade_level}学生生成一份关于"${topic}"的${subject}${typeLabel}作业，难度${difficulty}。
+      prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
+
+任务：为${grade_level}学生生成一份关于"${topic}"的${subject}${typeLabel}作业，难度${difficulty}。
 要求生成${actualCount}道题目（每道题有A/B/C/D四个选项），同时为每道题生成：
 - 正确答案（单选只有一个正确选项）
 - 详细解析（解题思路和步骤）
 - 解题分析过程
 
-以JSON数组格式返回，每道题格式：
-{
-  "questions": [
-    {
-      "content": "题目内容",
-      "options": ["选项A内容", "选项B内容", "选项C内容", "选项D内容"],
-      "answer": "A",
-      "explanation": "详细解析",
-      "analysis": "解题步骤/思路"
-    },
-    ...
-  ]
-}
-注意：
+请严格按照以下JSON格式返回：
+{"questions": [{"content": "题目内容", "options": ["选项A内容", "选项B内容", "选项C内容", "选项D内容"], "answer": "A", "explanation": "详细解析", "analysis": "解题步骤/思路"}]}
+
+要求：
 1. ${actualCount}道题中，每3道为一组变体，考查相同知识点但数字/表述略有不同
 2. 确保所有答案都在options范围内
-3. 返回纯JSON，不要其他文字`;
+3. 只返回JSON，不要任何其他内容`;
     } else if (question_type === 'choice_multi') {
-      prompt = `请为${grade_level}学生生成一份关于"${topic}"的${subject}${typeLabel}作业，难度${difficulty}。
+      prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
+
+任务：为${grade_level}学生生成一份关于"${topic}"的${subject}${typeLabel}作业，难度${difficulty}。
 要求生成${actualCount}道多选题（每道题有A/B/C/D四个选项，可能有多个正确答案），同时生成详细解析。
 
-JSON格式：
-{
-  "questions": [
-    {
-      "content": "题目内容",
-      "options": ["A","B","C","D"],
-      "answer": ["A","C"], // 数组形式，多个正确答案
-      "explanation": "详细解析",
-      "analysis": "解题步骤"
-    },
-    ...
-  ]
-}
-注意：每3道题为同一知识点的变体，返回纯JSON`;
+请严格按照以下JSON格式返回：
+{"questions": [{"content": "题目内容", "options": ["A","B","C","D"], "answer": ["A","C"], "explanation": "详细解析", "analysis": "解题步骤"}]}
+
+要求：
+1. 每3道题为同一知识点的变体
+2. answer字段必须是数组格式
+3. 只返回JSON，不要任何其他内容`;
     } else if (question_type === 'judgment') {
-      prompt = `请为${grade_level}学生生成一份关于"${topic}"的${subject}${typeLabel}作业，难度${difficulty}。
+      prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
+
+任务：为${grade_level}学生生成一份关于"${topic}"的${subject}${typeLabel}作业，难度${difficulty}。
 要求生成${actualCount}道判断题，同时生成详细解析。
 
-JSON格式：
-{
-  "questions": [
-    {
-      "content": "判断题陈述内容",
-      "answer": true, // 或 false
-      "explanation": "为什么对或错的解析",
-      "analysis": "判断依据"
-    },
-    ...  
-  ]
-}
-注意：每3道题为同一知识点的变体，返回纯JSON`;
+请严格按照以下JSON格式返回：
+{"questions": [{"content": "判断题陈述内容", "answer": true, "explanation": "为什么对或错的解析", "analysis": "判断依据"}]}
+
+要求：
+1. 每3道题为同一知识点的变体
+2. answer字段必须是布尔值true或false
+3. 只返回JSON，不要任何其他内容`;
     } else if (question_type === 'essay') {
-      prompt = `请为${grade_level}学生生成一份关于"${topic}"的${subject}${typeLabel}作业，难度${difficulty}。
+      prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
+
+任务：为${grade_level}学生生成一份关于"${topic}"的${subject}${typeLabel}作业，难度${difficulty}。
 要求生成${count}道简答题/作文题，同时为每道题生成参考答案和评分标准。
 
-JSON格式：
-{
-  "questions": [
-    {
-      "content": "题目要求",
-      "answer": "参考答案要点",
-      "explanation": "评分标准和解析",
-      "analysis": "答题思路指导"
-    },
-    ...
-  ],
-  "title": "建议的作业标题",
-  "description": "建议的作业描述"
-}
-注意：主观题不需要变体，返回纯JSON`;
+请严格按照以下JSON格式返回：
+{"questions": [{"content": "题目要求", "answer": "参考答案要点", "explanation": "评分标准和解析", "analysis": "答题思路指导"}], "title": "建议的作业标题", "description": "建议的作业描述"}
+
+要求：
+1. 主观题不需要变体
+2. 只返回JSON，不要任何其他内容`;
     }
 
     const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
       model: config.ai_model,
-      messages: [{ role: 'user', content: prompt }],
-      response_format: { type: "json_object" }
+      messages: [{ role: 'user', content: prompt }]
     }, {
       headers: {
         'Authorization': `Bearer ${config.ai_api_key}`,
@@ -167,13 +142,19 @@ JSON格式：
     const aiContent = response.data.choices[0].message.content;
     let parsed;
     try {
+      // 尝试直接解析
       parsed = JSON.parse(aiContent);
     } catch (e) {
-      const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
+      // 尝试提取JSON对象（支持嵌套大括号）
+      const jsonMatch = aiContent.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
       if (jsonMatch) {
-        parsed = JSON.parse(jsonMatch[0]);
+        try {
+          parsed = JSON.parse(jsonMatch[0]);
+        } catch (e2) {
+          throw new Error('AI返回的JSON格式无效');
+        }
       } else {
-        throw new Error('AI返回格式错误');
+        throw new Error('AI返回格式错误，未找到有效的JSON');
       }
     }
 
@@ -258,7 +239,7 @@ JSON格式：
           tempId: insertedIds[baseIdx],
           variantIds: [insertedIds[baseIdx], insertedIds[baseIdx + 1], insertedIds[baseIdx + 2]],
           content: questions[baseIdx].content,
-          options: questions[baseIdx].options ? JSON.parse(questions[baseIdx].options) : null,
+          options: questions[baseIdx].options ? (typeof questions[baseIdx].options === 'string' ? JSON.parse(questions[baseIdx].options) : questions[baseIdx].options) : null,
           type: question_type,
           hasVariants: true
         });
@@ -269,6 +250,7 @@ JSON格式：
       message: '生成成功',
       title: parsed.title || `${topic} - ${typeLabel}练习`,
       description: parsed.description || `共${count}道${topic}相关${typeLabel}`,
+      subject,
       question_type,
       question_count: count,
       total_generated: insertedIds.length,
@@ -598,7 +580,11 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
         }
       } else {
         const retryFinalStatus = wrongQuestions.length > 0 ? 'retry_available' : 'completed';
-        db.prepare(`UPDATE submissions SET status = ?, total_score = ?, gold_reward = gold_reward + ?, attempt_count = attempt_count + 1 WHERE id = ?`)
+        // 计算金币差额（本次应得金币 - 上次已得金币）
+        const previousGoldReward = db.prepare('SELECT gold_reward FROM submissions WHERE id = ?').get(submissionId)?.gold_reward || 0;
+        const goldRewardDiff = goldReward - previousGoldReward;
+
+        db.prepare(`UPDATE submissions SET status = ?, total_score = ?, gold_reward = ?, attempt_count = attempt_count + 1 WHERE id = ?`)
           .run(retryFinalStatus, totalScore, goldReward, submissionId);
 
         const insertQA = db.prepare(`
@@ -608,9 +594,12 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
         for (const r of results) {
           insertQA.run(submissionId, r.question_id, (existingSubmission?.attempt_count || 0) + 1, r.user_answer, r.is_correct ? 1 : 0, r.score, 100 / questions.length);
         }
-      }
 
-      db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(goldReward, req.user.userId);
+        // 只增加金币差额
+        if (goldRewardDiff > 0) {
+          db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(goldRewardDiff, req.user.userId);
+        }
+      }
 
       // 更新每日任务进度
       try {
@@ -734,7 +723,9 @@ async function reviewSubjectiveAssignment(submissionId, assignmentId, userId) {
 
     if (config.ai_api_key && config.ai_base_url && config.ai_model) {
       for (const qa of questionAnswers) {
-        const reviewPrompt = `请评阅以下${submission.subject}主观题作答：
+        const reviewPrompt = `你是一个JSON生成器和评阅老师。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
+
+任务：请评阅以下${submission.subject}主观题作答：
 
 【题目】
 ${qa.question_content}
@@ -745,31 +736,49 @@ ${qa.reference_answer || '无'}
 【学生作答】
 ${qa.student_answer || '(未提供文字答案)'}
 
-请以JSON格式返回评分结果：
-{
-  "score": 分数(0-100),
-  "feedback": "具体评价和建议（50字以内）",
-  "key_points": ["得分点1", "得分点2"],
-  "improvements": ["改进建议1"]
-}`;
+请严格按照以下JSON格式返回评分结果：
+{"score": 分数(0-100), "feedback": "具体评价和建议（50字以内）", "key_points": ["得分点1", "得分点2"], "improvements": ["改进建议1"]}
+
+要求：
+1. score必须是0-100之间的数字
+2. 只返回JSON，不要任何其他内容`;
 
         try {
           const resp = await axios.post(`${config.ai_base_url}/chat/completions`, {
             model: config.ai_model,
-            messages: [{ role: 'user', content: reviewPrompt }],
-            response_format: { type: "json_object" }
+            messages: [{ role: 'user', content: reviewPrompt }]
           }, {
             headers: { 'Authorization': `Bearer ${config.ai_api_key}`, 'Content-Type': 'application/json' },
             timeout: 60000
           });
 
-          const aiResult = JSON.parse(resp.data.choices[0].message.content);
+          const aiContent = resp.data.choices[0].message.content;
+          let aiResult;
+          try {
+            aiResult = JSON.parse(aiContent);
+          } catch (parseErr) {
+            // 尝试提取JSON对象
+            const jsonMatch = aiContent.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
+            if (jsonMatch) {
+              aiResult = JSON.parse(jsonMatch[0]);
+            } else {
+              throw new Error('AI返回格式错误');
+            }
+          }
           const score = Math.max(0, Math.min(100, aiResult.score || 60));
           totalScore += score;
 
+          // 构建完整的反馈信息
+          const feedbackData = {
+            score: score,
+            feedback: aiResult.feedback || '已评阅',
+            key_points: aiResult.key_points || [],
+            improvements: aiResult.improvements || []
+          };
+
           db.prepare(`
             UPDATE question_answers SET score = ?, max_score = 100, feedback = ?, reviewed_at = CURRENT_TIMESTAMP, is_correct = ? WHERE id = ?
-          `).run(score, 100, JSON.stringify(aiResult), score >= 60 ? 1 : 0, qa.id);
+          `).run(score, JSON.stringify(feedbackData), score >= 60 ? 1 : 0, qa.id);
 
           feedbackList.push({
             question_id: qa.question_bank_id,
@@ -806,7 +815,7 @@ ${qa.student_answer || '(未提供文字答案)'}
         db.prepare(`
           INSERT OR IGNORE INTO wrong_questions (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed)
           VALUES (?, ?, ?, ?, ?, ?, 0)
-        `).run(userId, assignmentId, qa.question_bank_id, qa.student_answer, '', qa.analysis || qa.explanation || '');
+        `).run(userId, assignmentId, qa.question_bank_id, qa.student_answer, qa.reference_answer || '', qa.analysis || qa.explanation || '');
       }
     }
 
@@ -830,7 +839,7 @@ router.get('/submissions/:id', authenticateToken, (req, res) => {
     if (!submission) return res.status(404).json({ error: '提交记录不存在' });
 
     const answers = db.prepare(`
-      qa.*, qb.content as question_content, qb.options, qb.answer as correct_answer, qb.explanation, qb.analysis, qb.type
+      SELECT qa.*, qb.content as question_content, qb.options, qb.answer as correct_answer, qb.explanation, qb.analysis, qb.type
       FROM question_answers qa
       JOIN question_bank qb ON qa.question_bank_id = qb.id
       WHERE qa.submission_id = ?
@@ -867,7 +876,7 @@ router.get('/:id/statistics', authenticateToken, authorizeRole('teacher', 'admin
     `).get(req.params.id);
 
     const questions = db.prepare(`
-      aq.question_bank_id, qb.content, qb.type, qb.answer
+      SELECT aq.question_bank_id, qb.content, qb.type, qb.answer
       FROM assignment_questions aq
       JOIN question_bank qb ON aq.question_bank_id = qb.id
       WHERE aq.assignment_id = ?

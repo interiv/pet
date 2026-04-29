@@ -91,7 +91,13 @@ function updateTaskProgress(userId, taskType, progress) {
 
     if (!taskLog) return;
 
-    const newProgress = Math.min(progress, taskLog.task_target);
+    // 对于正确率类任务，只取更高值（防止覆盖降低）
+    let newProgress;
+    if (taskType === 'correct_rate') {
+      newProgress = Math.max(taskLog.task_progress, Math.min(progress, taskLog.task_target));
+    } else {
+      newProgress = Math.min(progress, taskLog.task_target);
+    }
     const isCompleted = newProgress >= taskLog.task_target ? 1 : 0;
 
     db.prepare(`
@@ -180,10 +186,17 @@ router.post('/claim', authenticateToken, (req, res) => {
     let allCompleted = false;
     if (dailyTask.tasks_completed >= dailyTask.total_tasks) {
       allCompleted = true;
-      // 更新连续天数
-      db.prepare(`
-        UPDATE daily_tasks SET streak_days = streak_days + 1 WHERE user_id = ? AND date = ?
-      `).run(userId, today);
+      // 检查昨天的连续天数，避免同一天重复累加
+      const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+      const yesterdayTask = db.prepare(`
+        SELECT streak_days FROM daily_tasks WHERE user_id = ? AND date = ?
+      `).get(userId, yesterday);
+      const expectedStreak = (yesterdayTask?.streak_days || 0) + 1;
+      if (dailyTask.streak_days < expectedStreak) {
+        db.prepare(`
+          UPDATE daily_tasks SET streak_days = ? WHERE user_id = ? AND date = ?
+        `).run(expectedStreak, userId, today);
+      }
     }
 
     res.json({

@@ -21,9 +21,10 @@ const { Meta } = Card;
 
 interface PetDisplayProps {
   pet: any;
+  onNavigate?: (menu: string) => void;
 }
 
-const PetDisplay: React.FC<PetDisplayProps> = ({ pet }) => {
+const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
   const { setPet } = usePetStore();
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState(pet?.name || '');
@@ -270,7 +271,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet }) => {
                 <Button key="revive" type="primary" danger icon={<MedicineBoxOutlined />} onClick={handleOpenReviveModal}>复活宠物</Button>
               ) : (
                 <>
-                  <Button key="feed" type="primary" onClick={() => window.location.href = '/shop'}>喂食</Button>
+                  <Button key="feed" type="primary" onClick={() => onNavigate?.('shop')}>喂食</Button>
                   <Button key="skill" icon={<StarOutlined />} onClick={handleOpenSkillModal}>技能</Button>
                   <Button key="rebirth" icon={<RetweetOutlined />} onClick={handleOpenRebirthModal}>转生</Button>
                 </>

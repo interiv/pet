@@ -23,6 +23,7 @@ interface GeneratedResult {
   message: string;
   title: string;
   description: string;
+  subject: string;
   question_type: string;
   question_count: number;
   total_generated: number;
@@ -45,7 +46,11 @@ const difficultyOptions = [
   { value: 'hard', label: '困难' }
 ];
 
-const Assignments: React.FC = () => {
+interface AssignmentsProps {
+  onNavigate?: (menu: string) => void;
+}
+
+const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const { user } = useAuthStore();
   const [assignments, setAssignments] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
@@ -142,7 +147,8 @@ const Assignments: React.FC = () => {
       form.setFieldsValue({
         title: res.data.title,
         description: res.data.description,
-        question_type: res.data.question_type
+        question_type: res.data.question_type,
+        subject: res.data.subject
       });
       message.success(`成功生成 ${res.data.question_count} 道题目（共${res.data.total_generated}道含变体）`);
     } catch (e: any) {
@@ -656,7 +662,7 @@ const Assignments: React.FC = () => {
                   {generating ? 'AI正在生成中...' : '🤖 AI生成题目'}
                 </Button>
                 <div style={{ textAlign: 'center', color: '#999', fontSize: 12, marginTop: 8 }}>
-                  提示：实际将生成 N×3 道题（每道题2个变体），用于学生做错时提供相似新题
+                  提示：实际将生成 N×3 道题（每道题有2个变体），用于学生做错时提供相似新题
                 </div>
               </Form>
             )
@@ -723,7 +729,7 @@ const Assignments: React.FC = () => {
                 </Row>
 
                 <Form.Item name="question_type" hidden initialValue={generatedData.question_type}><Input /></Form.Item>
-                <Form.Item name="subject" hidden initialValue={''}><Input /></Form.Item>
+                <Form.Item name="subject" hidden initialValue={generatedData.subject}><Input /></Form.Item>
 
                 <Button type="primary" htmlType="submit" block>确认发布作业</Button>
               </Form>
@@ -789,7 +795,7 @@ const Assignments: React.FC = () => {
               <Button type="primary" icon={<ReloadOutlined />} onClick={handleRetryWrong}>重做错题</Button>
             )}
             {!isTeacher && (
-              <Button onClick={() => { setIsResultModalVisible(false); window.location.href = '/wrong-questions'; }}>去错题本</Button>
+              <Button onClick={() => { setIsResultModalVisible(false); onNavigate?.('wrong_questions'); }}>去错题本</Button>
             )}
             <Button onClick={() => setIsResultModalVisible(false)}>关闭</Button>
           </Space>

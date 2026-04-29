@@ -606,7 +606,7 @@ const Home: React.FC = () => {
   ];
 
   const studentPetTabItems: TabsProps['items'] = [
-    { key: 'pet', label: '我的宠物', children: hasPet ? <PetDisplay pet={pet} /> : <CreatePet onSuccess={loadPetData} /> },
+    { key: 'pet', label: '我的宠物', children: hasPet ? <PetDisplay pet={pet} onNavigate={setActiveMenu} /> : <CreatePet onSuccess={loadPetData} /> },
     { key: 'shop', label: '道具商店', children: <ShopAndBackpack defaultTab="shop" viewMode="shop" /> },
     { key: 'backpack', label: '我的背包', children: <ShopAndBackpack defaultTab="backpack" viewMode="backpack" /> },
   ];
@@ -714,7 +714,7 @@ const Home: React.FC = () => {
                 minHeight: '100%' 
               }}>
                 {activeMenu === 'assignment' ? (
-                  <Assignments />
+                  <Assignments onNavigate={setActiveMenu} />
                 ) : activeMenu === 'wrong_questions' ? (
                   <WrongQuestions />
                 ) : activeMenu === 'battle' ? (
@@ -803,7 +803,7 @@ const Home: React.FC = () => {
             <Content style={{ padding: '24px 40px', background: '#f0f2f5', minHeight: 'calc(100vh - 64px)' }}>
               <div style={{ background: '#fff', padding: 32, borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.05)', minHeight: '100%' }}>
                 {activeMenu === 'assignment' ? (
-                  <Assignments />
+                  <Assignments onNavigate={setActiveMenu} />
                 ) : activeMenu === 'wrong_questions' ? (
                   <WrongQuestions />
                 ) : activeMenu === 'battle' ? (

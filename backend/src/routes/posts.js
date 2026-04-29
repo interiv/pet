@@ -35,7 +35,8 @@ router.get('/posts', authenticateToken, (req, res) => {
       // 全校动态（按班级优先，然后全校）
       const userClassId = db.prepare('SELECT class_id FROM users WHERE id = ?').get(userId);
       if (userClassId && userClassId.class_id) {
-        sql += ` WHERE (p.class_id = ${userClassId.class_id} OR p.scope = 'public')`;
+        sql += ` WHERE (p.class_id = ? OR p.scope = 'public')`;
+        params.push(userClassId.class_id);
       } else {
         sql += ` WHERE p.scope = 'public'`;
       }
@@ -244,7 +245,8 @@ router.delete('/comments/:id', authenticateToken, (req, res) => {
     }
 
     db.prepare('DELETE FROM post_comments WHERE id = ?').run(id);
-    db.prepare("UPDATE posts SET comment_count = MAX(0, COALESCE(comment_count, 0) - 1) WHERE id = ?").run(comment.post_id);
+    const totalDeleted = 1 + childCount;
+    db.prepare("UPDATE posts SET comment_count = MAX(0, COALESCE(comment_count, 0) - ?) WHERE id = ?").run(totalDeleted, comment.post_id);
 
     res.json({ message: '删除成功' });
   } catch (error) {

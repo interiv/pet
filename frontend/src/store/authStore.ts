@@ -83,6 +83,10 @@ export const useAuthStore = create<AuthState>((set) => ({
       localStorage.setItem('user', JSON.stringify(response.data.user));
     } catch (error) {
       console.error('验证token失败', error);
+      // Token 无效或过期，清除登录状态
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      set({ token: null, user: null, isAuthenticated: false });
     }
   },
   

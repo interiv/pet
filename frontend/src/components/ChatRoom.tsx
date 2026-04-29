@@ -77,7 +77,7 @@ const ChatRoom: React.FC = () => {
     const token = localStorage.getItem('token');
     if (!token || !user?.id) return;
 
-    const socket = io((window as any).__VITE_API_URL__?.replace('/api', '') || 'http://localhost:3000', {
+    const socket = io((import.meta as any).env.VITE_API_URL?.replace('/api', '') || 'http://localhost:3000', {
       auth: { token },
       transports: ['websocket'],
     });

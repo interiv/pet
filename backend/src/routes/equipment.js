@@ -132,9 +132,12 @@ router.post('/upgrade', authenticateToken, (req, res) => {
       return res.status(400).json({ error: `金币不足，升级需要 ${upgradeCost} 金币` });
     }
     
-    db.prepare('UPDATE users SET gold = gold - ? WHERE id = ?').run(upgradeCost, req.user.userId);
-    db.prepare('UPDATE user_equipment SET level = ? WHERE id = ?').run(currentLevel + 1, user_equip_id);
-    
+    const upgradeTransaction = db.transaction(() => {
+      db.prepare('UPDATE users SET gold = gold - ? WHERE id = ?').run(upgradeCost, req.user.userId);
+      db.prepare('UPDATE user_equipment SET level = ? WHERE id = ?').run(currentLevel + 1, user_equip_id);
+    });
+    upgradeTransaction();
+
     res.json({ message: '升级成功', newLevel: currentLevel + 1 });
   } catch (error) {
     console.error('升级部件失败:', error);

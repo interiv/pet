@@ -66,6 +66,10 @@ router.post('/start', authenticateToken, (req, res) => {
       return res.status(404).json({ error: '对方宠物不存在' });
     }
 
+    if (myPet.id === opponentPet.id) {
+      return res.status(400).json({ error: '不能与自己的宠物战斗' });
+    }
+
     const result = db.prepare(`
       INSERT INTO battles (pet1_id, pet2_id, battle_type)
       VALUES (?, ?, '1v1')

@@ -19,6 +19,10 @@ router.post('/buy', authenticateToken, (req, res) => {
   try {
     const { item_id, quantity = 1 } = req.body;
 
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+      return res.status(400).json({ error: '购买数量必须为1-99的整数' });
+    }
+
     const item = db.prepare('SELECT * FROM items WHERE id = ?').get(item_id);
     if (!item) {
       return res.status(404).json({ error: '物品不存在' });

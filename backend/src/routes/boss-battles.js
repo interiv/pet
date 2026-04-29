@@ -170,13 +170,13 @@ router.post('/auto-generate', authenticateToken, authorizeRole('teacher', 'admin
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       class_id,
-      `${question.knowledge_point || '错题'}之王`,
+      `${question.topic || '错题'}之王`,
       `由${weakPoint.error_count}道错题凝聚而成的强大BOSS`,
       '👑',
       bossHp,
       bossHp,
       bossLevel,
-      question.knowledge_point || null,
+      question.topic || null,
       question.id,
       req.user.userId,
       expiresAt.toISOString()
@@ -194,11 +194,81 @@ router.post('/auto-generate', authenticateToken, authorizeRole('teacher', 'admin
   }
 });
 
-// 攻击BOSS (学生提交正确答案)
-router.post('/:bossId/attack', authenticateToken, (req, res) => {
+// 获取Boss关联题目 (答题攻击用)
+router.get('/:bossId/question', authenticateToken, (req, res) => {
   try {
     const boss = db.prepare('SELECT * FROM boss_battles WHERE id = ? AND status = \'active\'').get(req.params.bossId);
-    
+
+    if (!boss) {
+      return res.status(404).json({ error: 'BOSS不存在或已被击败' });
+    }
+
+    if (new Date() > new Date(boss.expires_at)) {
+      return res.status(400).json({ error: 'BOSS已过期' });
+    }
+
+    // 选取题目：优先从Boss关联知识点选取，否则随机选取客观题
+    let question;
+    if (boss.knowledge_point) {
+      question = db.prepare(`
+        SELECT id, subject, topic, difficulty, type, content, options, hint
+        FROM question_bank
+        WHERE topic = ? AND type IN ('choice_single', 'choice_multi', 'judgment', 'fill_blank')
+        ORDER BY RANDOM()
+        LIMIT 1
+      `).get(boss.knowledge_point);
+    }
+
+    // 如果没有找到关联题目，从任意客观题中选取
+    if (!question) {
+      question = db.prepare(`
+        SELECT id, subject, topic, difficulty, type, content, options, hint
+        FROM question_bank
+        WHERE type IN ('choice_single', 'choice_multi', 'judgment', 'fill_blank')
+        ORDER BY RANDOM()
+        LIMIT 1
+      `).get();
+    }
+
+    if (!question) {
+      return res.status(404).json({ error: '题库中没有可用的题目' });
+    }
+
+    // 解析options
+    let options = null;
+    if (question.options) {
+      try {
+        options = typeof question.options === 'string' ? JSON.parse(question.options) : question.options;
+      } catch (e) {
+        options = null;
+      }
+    }
+
+    res.json({
+      question_id: question.id,
+      content: question.content,
+      type: question.type,
+      difficulty: question.difficulty,
+      options,
+      hint: question.hint
+    });
+  } catch (error) {
+    console.error('获取Boss题目失败:', error);
+    res.status(500).json({ error: '获取题目失败' });
+  }
+});
+
+// 攻击BOSS (答题后造成伤害)
+router.post('/:bossId/attack', authenticateToken, (req, res) => {
+  try {
+    const { question_id, answer } = req.body;
+
+    if (!question_id || answer === undefined || answer === null || answer === '') {
+      return res.status(400).json({ error: '请先回答问题' });
+    }
+
+    const boss = db.prepare('SELECT * FROM boss_battles WHERE id = ? AND status = \'active\'').get(req.params.bossId);
+
     if (!boss) {
       return res.status(404).json({ error: 'BOSS不存在或已被击败' });
     }
@@ -219,36 +289,71 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
       return res.status(404).json({ error: '还没有宠物' });
     }
 
-    // 检查是否已参与
+    // 攻击冷却检查（30秒）
     let participant = db.prepare(
       'SELECT * FROM boss_battle_participants WHERE boss_battle_id = ? AND user_id = ?'
     ).get(boss.id, req.user.userId);
 
+    if (participant && participant.last_attack_at) {
+      // SQLite CURRENT_TIMESTAMP returns UTC, append 'Z' for correct parsing
+      const lastAttack = new Date(participant.last_attack_at + 'Z').getTime();
+      const now = Date.now();
+      const cooldownMs = 30 * 1000;
+      const elapsed = now - lastAttack;
+      if (elapsed < cooldownMs) {
+        const remaining = Math.ceil((cooldownMs - elapsed) / 1000);
+        return res.status(429).json({ error: `攻击冷却中，请等待${remaining}秒`, cooldown_remaining: remaining });
+      }
+    }
+
+    // 获取题目并验证答案
+    const question = db.prepare('SELECT * FROM question_bank WHERE id = ?').get(question_id);
+    if (!question) {
+      return res.status(404).json({ error: '题目不存在' });
+    }
+
+    // 验证答案正确性
+    let isCorrect = false;
+    const correctAnswer = question.answer;
+    const studentAnswer = String(answer).trim();
+
+    if (question.type === 'choice_single' || question.type === 'judgment') {
+      isCorrect = studentAnswer.toUpperCase() === String(correctAnswer).toUpperCase();
+    } else if (question.type === 'choice_multi') {
+      const correctSet = new Set(String(correctAnswer).toUpperCase().split('').sort());
+      const answerSet = new Set(String(studentAnswer).toUpperCase().split('').sort());
+      isCorrect = correctSet.size === answerSet.size && [...correctSet].every(a => answerSet.has(a));
+    } else if (question.type === 'fill_blank') {
+      isCorrect = studentAnswer === String(correctAnswer).trim();
+    }
+
+    // 计算伤害
+    const difficultyMultiplier = { easy: 0.5, medium: 1.0, hard: 1.5 };
+    const baseDamage = pet.level * 10;
+    const multiplier = difficultyMultiplier[question.difficulty] || 1.0;
+    const totalDamage = isCorrect ? Math.round(baseDamage * multiplier) : 0;
+
+    // 首次参与则创建记录
     if (!participant) {
-      // 首次参与
       db.prepare(`
         INSERT INTO boss_battle_participants (boss_battle_id, user_id, pet_id)
         VALUES (?, ?, ?)
       `).run(boss.id, req.user.userId, pet.id);
-      
+
       participant = db.prepare(
         'SELECT * FROM boss_battle_participants WHERE boss_battle_id = ? AND user_id = ?'
       ).get(boss.id, req.user.userId);
     }
 
-    // 计算伤害 (基于宠物等级和技能)
-    const baseDamage = pet.level * 10;
-    const skillBonus = 0; // TODO: 从技能系统获取加成
-    const totalDamage = baseDamage + skillBonus;
-
     // 更新参与记录
     db.prepare(`
-      UPDATE boss_battle_participants 
+      UPDATE boss_battle_participants
       SET damage_dealt = damage_dealt + ?,
           total_attempts = total_attempts + 1,
+          correct_answers = correct_answers + ?,
           last_attack_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(totalDamage, participant.id);
+    `).run(totalDamage, isCorrect ? 1 : 0, participant.id);
 
     // 检查BOSS是否被击败
     const totalDamageDealt = db.prepare(`
@@ -258,24 +363,22 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
 
     let bossDefeated = false;
     if (totalDamageDealt >= boss.boss_max_hp) {
-      // BOSS被击败
       db.prepare(`
-        UPDATE boss_battles 
+        UPDATE boss_battles
         SET status = 'defeated', completed_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(boss.id);
       bossDefeated = true;
-
-      // 发放奖励给所有参与者
       distributeRewards(boss.id, boss.class_id);
     }
 
     // 获取当前排行
     const leaderboard = db.prepare(`
-      SELECT 
+      SELECT
         bbp.*,
         u.username,
-        p.name as pet_name
+        p.name as pet_name,
+        p.level as pet_level
       FROM boss_battle_participants bbp
       JOIN users u ON bbp.user_id = u.id
       LEFT JOIN pets p ON bbp.pet_id = p.id
@@ -285,7 +388,10 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
     `).all(boss.id);
 
     res.json({
-      message: bossDefeated ? '🎉 BOSS被击败了！' : `造成 ${totalDamage} 点伤害`,
+      is_correct: isCorrect,
+      correct_answer: isCorrect ? null : correctAnswer,
+      explanation: isCorrect ? null : (question.explanation || question.analysis || null),
+      message: bossDefeated ? '🎉 BOSS被击败了！' : (isCorrect ? `答对了！造成 ${totalDamage} 点伤害` : '答错了，未能造成伤害'),
       damage: totalDamage,
       boss_defeated: bossDefeated,
       boss_current_hp: Math.max(0, boss.boss_max_hp - totalDamageDealt),
@@ -354,8 +460,8 @@ function distributeRewards(bossId, classId) {
   const expPool = boss.boss_level * 50;
 
   for (const participant of participants) {
-    // 按伤害比例分配
-    const damageRatio = participant.damage_dealt / totalDamage;
+    // 按伤害比例分配（防止除零）
+    const damageRatio = totalDamage > 0 ? participant.damage_dealt / totalDamage : 1 / participants.length;
     const goldReward = Math.round(goldPool * damageRatio);
     const expReward = Math.round(expPool * damageRatio);
 
