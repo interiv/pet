@@ -5,6 +5,16 @@ import { TeamOutlined, TrophyOutlined, NotificationOutlined, FireOutlined, Login
 import { classAPI, leaderboardAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 const { Header, Content, Footer } = Layout;
 const { Title, Paragraph, Text } = Typography;
 
@@ -29,6 +39,7 @@ const ClassHome: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const { isAuthenticated, user, setCurrentClass } = useAuthStore();
+  const isMobile = useMobile();
 
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -109,7 +120,7 @@ const ClassHome: React.FC = () => {
 
   return (
     <Layout style={{ minHeight: '100vh', background: '#f5f7fa' }}>
-      <Header style={{ background: themeColor, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px' }}>
+      <Header style={{ background: themeColor, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: isMobile ? '0 12px' : '0 24px' }}>
         <div>
           <Text style={{ color: '#fff', fontSize: 18, fontWeight: 600 }}>
             {cls.school_name ? `${cls.school_name} · ` : ''}{cls.name}
@@ -134,7 +145,7 @@ const ClassHome: React.FC = () => {
         </Space>
       </Header>
 
-      <Content style={{ padding: 24 }}>
+      <Content style={{ padding: isMobile ? 12 : 24 }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           {/* 封面/简介 */}
           <Card

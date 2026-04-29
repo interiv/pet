@@ -6,11 +6,20 @@ import { usePetStore, useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
 import CelebrationAnimation from './CelebrationAnimation';
 
-
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
 
 const Battle: React.FC = () => {
   const { user } = useAuthStore();
   const { pet } = usePetStore();
+  const isMobile = useMobile();
   const [opponents, setOpponents] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -294,7 +303,7 @@ const Battle: React.FC = () => {
             确定
           </Button>
         ]}
-        width={700}
+        width={isMobile ? '95vw' : 700}
         maskClosable={false}
       >
         {battleResult && (
@@ -326,10 +335,10 @@ const Battle: React.FC = () => {
                           第 {round.round} 回合
                         </div>
                         <Row gutter={16}>
-                          <Col span={12}>
-                            <div style={{ 
-                              background: 'rgba(255,255,255,0.2)', 
-                              padding: 12, 
+                          <Col xs={24} md={12}>
+                            <div style={{
+                              background: 'rgba(255,255,255,0.2)',
+                              padding: 12,
                               borderRadius: 8,
                               animation: 'attack-left 0.6s ease-out'
                             }}>
@@ -344,10 +353,10 @@ const Battle: React.FC = () => {
                               )}
                             </div>
                           </Col>
-                          <Col span={12}>
-                            <div style={{ 
-                              background: 'rgba(255,255,255,0.2)', 
-                              padding: 12, 
+                          <Col xs={24} md={12}>
+                            <div style={{
+                              background: 'rgba(255,255,255,0.2)',
+                              padding: 12,
                               borderRadius: 8,
                               animation: 'attack-right 0.6s ease-out'
                             }}>

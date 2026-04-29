@@ -13,6 +13,16 @@ import { useAuthStore } from '../store/authStore';
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 interface BossQuestion {
   question_id: number;
   content: string;
@@ -34,6 +44,7 @@ interface LeaderboardItem {
 
 const BossBattle: React.FC = () => {
   const { user } = useAuthStore();
+  const isMobile = useMobile();
   const [loading, setLoading] = useState(false);
   const [bossData, setBossData] = useState<any>(null);
 
@@ -335,7 +346,7 @@ const BossBattle: React.FC = () => {
             </div>
 
             <Row gutter={16}>
-              <Col span={8}>
+              <Col xs={12} sm={8}>
                 <Statistic
                   title="参与人数"
                   value={boss.participant_count}
@@ -343,7 +354,7 @@ const BossBattle: React.FC = () => {
                   valueStyle={{ color: '#fff' }}
                 />
               </Col>
-              <Col span={8}>
+              <Col xs={12} sm={8}>
                 <Statistic
                   title="剩余时间"
                   value={timeLeft}
@@ -352,7 +363,7 @@ const BossBattle: React.FC = () => {
                   valueStyle={{ color: '#fff' }}
                 />
               </Col>
-              <Col span={8}>
+              <Col xs={12} sm={8}>
                 <Statistic
                   title="BOSS等级"
                   value={boss.boss_level}
@@ -443,7 +454,7 @@ const BossBattle: React.FC = () => {
         open={quizModalVisible}
         onCancel={() => setQuizModalVisible(false)}
         footer={null}
-        width={600}
+        width={isMobile ? '95vw' : 600}
         destroyOnClose
       >
         {currentQuestion && (
@@ -500,7 +511,7 @@ const BossBattle: React.FC = () => {
             关闭
           </Button>
         ]}
-        width={500}
+        width={isMobile ? '95vw' : 500}
       >
         {attackResult && (
           <div style={{ textAlign: 'center', padding: '20px 0' }}>

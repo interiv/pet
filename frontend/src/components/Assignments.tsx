@@ -9,6 +9,16 @@ import CelebrationAnimation from './CelebrationAnimation';
 const { Option } = Select;
 const { TextArea } = Input;
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 interface Question {
   id?: number;
   tempId?: number;
@@ -93,6 +103,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     evolved: false,
     newStage: ''
   });
+
+  const isMobile = useMobile();
 
   const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
   const isAdmin = user?.role === 'admin';
@@ -605,14 +617,14 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         </Space>
       </div>
 
-      <Table columns={columns} dataSource={assignments} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
+      <Table columns={columns} dataSource={assignments} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
 
       {/* 教师发布作业弹窗 */}
       <Modal
         title="🤖 发布新作业（AI智能生成）"
         open={isCreateModalVisible}
         onCancel={() => { setIsCreateModalVisible(false); setGeneratedData(null); }}
-        width={720}
+        width={isMobile ? '95vw' : 720}
         destroyOnHidden
         footer={null}
       >
@@ -642,17 +654,17 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                   <Input placeholder="例如：二次函数顶点坐标、古诗词默写、牛顿第二定律..." />
                 </Form.Item>
                 <Row gutter={16}>
-                  <Col span={8}>
+                  <Col xs={12} sm={8}>
                     <Form.Item name="difficulty" label="难度" initialValue="medium">
                       <Select>{difficultyOptions.map(d => <Option key={d.value} value={d.value}>{d.label}</Option>)}</Select>
                     </Form.Item>
                   </Col>
-                  <Col span={8}>
+                  <Col xs={12} sm={8}>
                     <Form.Item name="count" label="题目数量" initialValue={10}>
                       <InputNumber min={3} max={20} style={{ width: '100%' }} addonAfter="道" />
                     </Form.Item>
                   </Col>
-                  <Col span={8}>
+                  <Col xs={12} sm={8}>
                     <Form.Item name="grade_level" label="年级（可选）">
                       <Input placeholder="如：高一、初三" />
                     </Form.Item>
@@ -745,7 +757,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         title={`📝 ${currentAssignment?.isRetryMode ? '错题重做' : '完成作业'}: ${currentAssignment?.title || ''}`}
         open={isDoModalVisible}
         onCancel={() => setIsDoModalVisible(false)}
-        width={700}
+        width={isMobile ? '95vw' : 700}
         destroyOnHidden
         okText={submitting ? "提交中..." : "提交答案"}
         cancelText="取消"
@@ -787,7 +799,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         title={submitResult?.message?.includes('等待') ? '📝 提交成功' : '✅ 作答完成！'}
         open={isResultModalVisible}
         onCancel={() => setIsResultModalVisible(false)}
-        width={680}
+        width={isMobile ? '95vw' : 680}
         destroyOnHidden
         footer={
           <Space>
@@ -826,13 +838,13 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
               </>
             )}
             <Row gutter={16} style={{ marginBottom: 20 }}>
-              <Col span={8}>
+              <Col xs={12} sm={8}>
                 <Card size="small"><Statistic title="总分" value={submitResult.total_score} suffix={`/ ${submitResult.total_max_score}`} valueStyle={{ color: submitResult.total_score >= 60 ? '#52c41a' : '#ff4d4f', fontSize: 28 }} /></Card>
               </Col>
-              <Col span={8}>
+              <Col xs={12} sm={8}>
                 <Card size="small"><Statistic title="获得金币" value={submitResult.gold_reward} prefix="+" suffix="枚 💰" valueStyle={{ color: '#faad14', fontSize: 28 }} /></Card>
               </Col>
-              <Col span={8}>
+              <Col xs={12} sm={8}>
                 <Card size="small"><Statistic title="正确率" value={submitResult.total_count > 0 ? Math.round(submitResult.correct_count / submitResult.total_count * 100) : 0} suffix="%" valueStyle={{ fontSize: 28 }} /></Card>
               </Col>
             </Row>
@@ -864,7 +876,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         title={`📊 作业统计: ${statsData ? assignments.find(a => a.id === statsData.assignment_id)?.title : '加载中...'}`}
         open={isStatsModalVisible}
         onCancel={() => setIsStatsModalVisible(false)}
-        width={800}
+        width={isMobile ? '95vw' : 800}
         destroyOnHidden
         footer={<Button onClick={() => setIsStatsModalVisible(false)}>关闭</Button>}
       >
@@ -876,10 +888,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         ) : statsData ? (
           <div>
             <Row gutter={16} style={{ marginBottom: 20 }}>
-              <Col span={6}><Card size="small"><Statistic title="全班人数" value={statsData.total_students} /></Card></Col>
-              <Col span={6}><Card size="small"><Statistic title="已提交" value={statsData.submitted_count} /></Card></Col>
-              <Col span={6}><Card size="small"><Statistic title="完成率" value={statsData.completion_rate} suffix="%" valueStyle={{ color: statsData.completion_rate >= 80 ? '#52c41a' : '#ff4d4f' }} /></Card></Col>
-              <Col span={6}><Card size="small"><Statistic title="平均分" value={statsData.average_score} /></Card></Col>
+              <Col xs={12} sm={8} md={6}><Card size="small"><Statistic title="全班人数" value={statsData.total_students} /></Card></Col>
+              <Col xs={12} sm={8} md={6}><Card size="small"><Statistic title="已提交" value={statsData.submitted_count} /></Card></Col>
+              <Col xs={12} sm={8} md={6}><Card size="small"><Statistic title="完成率" value={statsData.completion_rate} suffix="%" valueStyle={{ color: statsData.completion_rate >= 80 ? '#52c41a' : '#ff4d4f' }} /></Card></Col>
+              <Col xs={12} sm={8} md={6}><Card size="small"><Statistic title="平均分" value={statsData.average_score} /></Card></Col>
             </Row>
 
             <Tabs items={[
@@ -910,7 +922,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     rowKey="submission_id"
                     size="small"
                     pagination={false}
-                    scroll={{ y: 300 }}
+                    scroll={{ x: true, y: 300 }}
                     columns={[
                       { title: '排名', key: 'rank', render: (_: any, __: any, i: number) => i + 1 },
                       { title: '姓名', dataIndex: 'username' },
@@ -948,7 +960,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           setEditingQuestionIndex(-1);
         }}
         onOk={() => editForm.submit()}
-        width={600}
+        width={isMobile ? '95vw' : 600}
         okText="保存"
         cancelText="取消"
       >

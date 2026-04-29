@@ -5,6 +5,16 @@ import { UserOutlined, LockOutlined, MailOutlined, LinkOutlined } from '@ant-des
 import { authAPI, classAPI, schoolAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  return isMobile;
+};
+
 const { Title } = Typography;
 const { Option } = Select;
 
@@ -19,6 +29,7 @@ const Register: React.FC = () => {
   const [selectedRole, setSelectedRole] = useState('student');
   const [inviteCode, setInviteCode] = useState('');
   const [inviteInfo, setInviteInfo] = useState<any>(null);
+  const isMobile = useMobile();
 
   useEffect(() => {
     loadClasses();
@@ -116,7 +127,7 @@ const Register: React.FC = () => {
       justifyContent: 'center',
       background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
     }}>
-      <Card style={{ width: 450, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+      <Card style={{ width: isMobile ? '92vw' : 450, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
         <div style={{ textAlign: 'center', marginBottom: 30 }}>
           <Title level={2} style={{ color: '#667eea', marginBottom: 8 }}>
             🎉 注册新账号

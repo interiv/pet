@@ -5,6 +5,16 @@ import { friendAPI, petAPI, itemAPI } from '../utils/api';
 
 import { useAuthStore, usePetStore } from '../store/authStore';
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  return isMobile;
+};
+
 const Friends: React.FC = () => {
   const { isAuthenticated } = useAuthStore();
   const { pet } = usePetStore();
@@ -27,6 +37,7 @@ const Friends: React.FC = () => {
   const [giftForm] = Form.useForm();
   const [battleResult, setBattleResult] = useState<any>(null);
   const [battleModalVisible, setBattleModalVisible] = useState(false);
+  const isMobile = useMobile();
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -369,7 +380,7 @@ const Friends: React.FC = () => {
         open={petModalVisible}
         onCancel={() => setPetModalVisible(false)}
         footer={null}
-        width={900}
+        width={isMobile ? '95vw' : 900}
       >
         <Spin spinning={loadingPetDetail}>
           {selectedPet && (

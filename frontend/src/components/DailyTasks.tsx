@@ -15,6 +15,16 @@ import { useNavigate } from 'react-router-dom';
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 interface DailyTask {
   id: number;
   user_id: number;
@@ -39,6 +49,7 @@ interface DailyTaskData {
 
 const DailyTasks: React.FC = () => {
   const navigate = useNavigate();
+  const isMobile = useMobile();
   const [loading, setLoading] = useState(false);
   const [taskData, setTaskData] = useState<DailyTaskData | null>(null);
   const [claiming, setClaiming] = useState<number | null>(null);
@@ -208,7 +219,7 @@ const DailyTasks: React.FC = () => {
 
       {/* 连续完成统计 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
-        <Col span={8}>
+        <Col xs={12} sm={8}>
           <Card>
             <Statistic
               title="今日进度"
@@ -218,7 +229,7 @@ const DailyTasks: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col span={8}>
+        <Col xs={12} sm={8}>
           <Card>
             <Statistic
               title="连续完成"
@@ -229,7 +240,7 @@ const DailyTasks: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col span={8}>
+        <Col xs={12} sm={8}>
           <Card>
             <Statistic
               title="可领取奖励"

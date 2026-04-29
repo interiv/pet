@@ -3,6 +3,16 @@ import { Card, Row, Col, Button, List, Tag, Badge, message, Tooltip } from 'antd
 import { SkinOutlined, ArrowUpOutlined, SafetyCertificateOutlined, ThunderboltOutlined, HeartOutlined, RocketOutlined } from '@ant-design/icons';
 import { equipmentAPI } from '../utils/api';
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 interface EquipmentPanelProps {
   onEquipChange?: () => void;
 }
@@ -22,6 +32,7 @@ const slotColors: Record<string, string> = {
 };
 
 export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange }) => {
+  const isMobile = useMobile();
   const [equipments, setEquipments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [setBonus, setSetBonus] = useState<any>(null);
@@ -169,7 +180,7 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
             <span>套装效果</span>
           </div>
           <Row gutter={[16, 16]}>
-            <Col span={8}>
+            <Col xs={12} sm={8}>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                   <ThunderboltOutlined /> <span>攻击</span>
@@ -179,7 +190,7 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
                 </div>
               </div>
             </Col>
-            <Col span={8}>
+            <Col xs={12} sm={8}>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                   <HeartOutlined /> <span>防御</span>
@@ -189,7 +200,7 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
                 </div>
               </div>
             </Col>
-            <Col span={8}>
+            <Col xs={12} sm={8}>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                   <RocketOutlined /> <span>速度</span>

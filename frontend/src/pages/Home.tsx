@@ -437,11 +437,11 @@ const Home: React.FC = () => {
     { title: '等级', dataIndex: 'level', key: 'level' },
     { title: '物种', dataIndex: 'species_name', key: 'species_name' },
     { title: '经验', dataIndex: 'exp', key: 'exp' },
-    { title: '金币', dataIndex: 'gold', key: 'gold' },
-    { title: '体力', dataIndex: 'stamina', key: 'stamina' },
-    { title: '饱腹度', dataIndex: 'hunger', key: 'hunger' },
-    { title: '心情', dataIndex: 'mood', key: 'mood' },
-    { title: '健康', dataIndex: 'health', key: 'health' },
+    { title: '金币', dataIndex: 'gold', key: 'gold', responsive: ['md'] as any },
+    { title: '体力', dataIndex: 'stamina', key: 'stamina', responsive: ['md'] as any },
+    { title: '饱腹度', dataIndex: 'hunger', key: 'hunger', responsive: ['md'] as any },
+    { title: '心情', dataIndex: 'mood', key: 'mood', responsive: ['md'] as any },
+    { title: '健康', dataIndex: 'health', key: 'health', responsive: ['md'] as any },
   ];
 
   const leaderboardChildren = (
@@ -1057,7 +1057,7 @@ const Home: React.FC = () => {
             {newbieStep === 0 ? '创建宠物' : newbieStep < 3 ? '下一步' : '完成引导'}
           </Button>
         ]}
-        width={700}
+        width={isMobile ? '95vw' : 700}
         closable={false}
         maskClosable={false}
       >

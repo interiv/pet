@@ -275,6 +275,9 @@ export const adminAPI = {
 
   // 公开设置（无需认证）
   getPublicSettings: () => api.get('/admin/settings/public'),
+
+  // 公开统计（无需认证）
+  getPublicStatistics: () => api.get('/admin/statistics/public'),
 };
 
 // 装备部件相关 API

@@ -4,12 +4,23 @@ import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, Delet
 import { adminAPI, schoolAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 interface AdminProps {
   defaultTab?: string;
 }
 
 const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
   const { user } = useAuthStore();
+  const isMobile = useMobile();
   const [activeTab, setActiveTab] = useState(defaultTab || 'dashboard');
 
   useEffect(() => {
@@ -54,8 +65,8 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
   };
 
   return (
-    <div style={{ padding: 24 }}>
-      <h2 style={{ marginBottom: 24 }}>{getTitle()}</h2>
+    <div style={{ padding: isMobile ? 12 : 24 }}>
+      <h2 style={{ marginBottom: isMobile ? 16 : 24 }}>{getTitle()}</h2>
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={getTabItems()} />
     </div>
   );
@@ -63,6 +74,7 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
 
 const Dashboard: React.FC = () => {
   const { user } = useAuthStore();
+  const isMobile = useMobile();
   const [statistics, setStatistics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
@@ -110,53 +122,53 @@ const Dashboard: React.FC = () => {
 
   return (
     <div>
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={6}>
+      <Row gutter={[16, 16]} style={{ marginBottom: isMobile ? 12 : 24 }}>
+        <Col xs={12} sm={8} md={6}>
           <Card><Statistic title="总用户数" value={statistics.users.total} prefix={<UserOutlined />} /></Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} sm={8} md={6}>
           <Card><Statistic title="教师数" value={statistics.users.teachers} prefix={<UserOutlined />} /></Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} sm={8} md={6}>
           <Card><Statistic title="学生数" value={statistics.users.students} prefix={<TeamOutlined />} /></Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} sm={8} md={6}>
           <Card><Statistic title="班级数" value={statistics.classes.total} prefix={<FolderOutlined />} /></Card>
         </Col>
       </Row>
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={6}>
+      <Row gutter={[16, 16]} style={{ marginBottom: isMobile ? 12 : 24 }}>
+        <Col xs={12} sm={8} md={6}>
           <Card><Statistic title="宠物总数" value={statistics.pets.total} /></Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} sm={8} md={6}>
           <Card><Statistic title="战斗总数" value={statistics.battles.total} /></Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} sm={8} md={6}>
           <Card><Statistic title="金币总量" value={statistics.totals.gold} /></Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} sm={8} md={6}>
           <Card><Statistic title="经验总量" value={statistics.totals.exp} /></Card>
         </Col>
       </Row>
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={8}>
+      <Row gutter={[16, 16]} style={{ marginBottom: isMobile ? 12 : 24 }}>
+        <Col xs={12} sm={8}>
           <Card><Statistic title="当日活跃用户" value={statistics.daily?.active_users || 0} prefix={<UserOutlined />} /></Card>
         </Col>
-        <Col span={8}>
+        <Col xs={12} sm={8}>
           <Card><Statistic title="当日金币发放" value={statistics.daily?.gold_distributed || 0} prefix={<DollarOutlined />} valueStyle={{ color: '#52c41a' }} /></Card>
         </Col>
-        <Col span={8}>
+        <Col xs={12} sm={8}>
           <Card><Statistic title="当日金币消耗" value={statistics.daily?.gold_consumed || 0} prefix={<DollarOutlined />} valueStyle={{ color: '#ff4d4f' }} /></Card>
         </Col>
       </Row>
-      <Row gutter={16}>
-        <Col span={12}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
           <Card title="待审批教师" loading={loading}>
             <Tag color="warning">{statistics.status.pending_teachers} 人待审批</Tag>
             <Tag color="success">{statistics.status.active_teachers} 人已激活</Tag>
           </Card>
         </Col>
-        <Col span={12}>
+        <Col xs={24} md={12}>
           <Card title="最近注册">
             <List
               size="small"
@@ -335,7 +347,7 @@ const ApplicationManagement: React.FC = () => {
           <Select.Option value="rejected">已拒绝</Select.Option>
         </Select>
       </div>
-      <Table columns={columns} dataSource={applications} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
+      <Table columns={columns} dataSource={applications} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
     </div>
   );
 };
@@ -439,7 +451,7 @@ const TeacherManagement: React.FC = () => {
           <Button onClick={loadTeachers}>刷新</Button>
         </Space>
       </div>
-      <Table columns={columns} dataSource={teachers} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
+      <Table columns={columns} dataSource={teachers} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
 
       <Modal title="编辑教师" open={editModalVisible} onOk={handleUpdate} onCancel={() => setEditModalVisible(false)}>
         <Form form={form} layout="vertical">
@@ -459,6 +471,7 @@ const TeacherManagement: React.FC = () => {
 };
 
 const StudentManagement: React.FC = () => {
+  const isMobile = useMobile();
   const [students, setStudents] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -601,9 +614,9 @@ const StudentManagement: React.FC = () => {
           <Button onClick={loadStudents}>刷新</Button>
         </Space>
       </div>
-      <Table columns={columns} dataSource={students} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
+      <Table columns={columns} dataSource={students} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
 
-      <Modal title="学生详情" open={detailModalVisible} onCancel={() => setDetailModalVisible(false)} footer={null} width={800}>
+      <Modal title="学生详情" open={detailModalVisible} onCancel={() => setDetailModalVisible(false)} footer={null} width={isMobile ? '95vw' : 800}>
         {studentDetail && (
           <div>
             <Descriptions bordered column={2}>
@@ -679,6 +692,7 @@ const StudentManagement: React.FC = () => {
 
 const ClassManagement: React.FC = () => {
   const { user } = useAuthStore();
+  const isMobile = useMobile();
   const [classes, setClasses] = useState<any[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -858,7 +872,7 @@ const ClassManagement: React.FC = () => {
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>创建班级</Button>
         </div>
       )}
-      <Table columns={columns} dataSource={classes} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
+      <Table columns={columns} dataSource={classes} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
 
       <Modal title="创建班级" open={modalVisible} onOk={handleCreate} onCancel={() => setModalVisible(false)}>
         <Form form={form} layout="vertical">
@@ -871,7 +885,7 @@ const ClassManagement: React.FC = () => {
         </Form>
       </Modal>
 
-      <Modal title="编辑班级" open={editModalVisible} onOk={handleUpdate} onCancel={() => setEditModalVisible(false)} width={560}>
+      <Modal title="编辑班级" open={editModalVisible} onOk={handleUpdate} onCancel={() => setEditModalVisible(false)} width={isMobile ? '95vw' : 560}>
         <Form form={editForm} layout="vertical">
           <Form.Item name="name" label="班级名称" rules={[{ required: true, message: '请输入班级名称' }]}>
             <Input />
@@ -1018,7 +1032,7 @@ const SchoolManagement: React.FC = () => {
       <div style={{ marginBottom: 16 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建学校</Button>
       </div>
-      <Table columns={columns} dataSource={schools} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
+      <Table columns={columns} dataSource={schools} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
 
       <Modal
         title={editingSchool ? '编辑学校' : '新建学校'}
@@ -1043,6 +1057,7 @@ const SchoolManagement: React.FC = () => {
 };
 
 const AnnouncementManagement: React.FC = () => {
+  const isMobile = useMobile();
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -1145,9 +1160,9 @@ const AnnouncementManagement: React.FC = () => {
       <div style={{ marginBottom: 16 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>发布公告</Button>
       </div>
-      <Table columns={columns} dataSource={announcements} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
+      <Table columns={columns} dataSource={announcements} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
 
-      <Modal title="发布公告" open={modalVisible} onOk={handleCreate} onCancel={() => setModalVisible(false)} width={600}>
+      <Modal title="发布公告" open={modalVisible} onOk={handleCreate} onCancel={() => setModalVisible(false)} width={isMobile ? '95vw' : 600}>
         <Form form={form} layout="vertical" initialValues={{ priority: 0 }}>
           <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
             <Input />
@@ -1166,7 +1181,7 @@ const AnnouncementManagement: React.FC = () => {
         </Form>
       </Modal>
 
-      <Modal title="编辑公告" open={editModalVisible} onOk={handleUpdate} onCancel={() => setEditModalVisible(false)} width={600}>
+      <Modal title="编辑公告" open={editModalVisible} onOk={handleUpdate} onCancel={() => setEditModalVisible(false)} width={isMobile ? '95vw' : 600}>
         <Form form={editForm} layout="vertical">
           <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
             <Input />
@@ -1443,9 +1458,9 @@ const DataView: React.FC = () => {
   ];
 
   const dataViewTabItems = [
-    { key: 'battles', label: '战斗记录', children: <Table dataSource={battles} columns={battleColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" /> },
-    { key: 'assignments', label: '作业记录', children: <Table dataSource={assignments} columns={assignmentColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" /> },
-    { key: 'shop', label: '购买记录', children: <Table dataSource={shopRecords} columns={shopColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" /> },
+    { key: 'battles', label: '战斗记录', children: <Table dataSource={battles} columns={battleColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" scroll={{ x: true }} /> },
+    { key: 'assignments', label: '作业记录', children: <Table dataSource={assignments} columns={assignmentColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" scroll={{ x: true }} /> },
+    { key: 'shop', label: '购买记录', children: <Table dataSource={shopRecords} columns={shopColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" scroll={{ x: true }} /> },
   ];
 
   return (

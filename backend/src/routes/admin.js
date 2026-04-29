@@ -835,6 +835,32 @@ router.delete('/announcements/:id', authenticateToken, requireAdmin, (req, res) 
 
 // ==================== 数据统计 ====================
 
+// 公开平台统计（无需认证，仅暴露聚合计数）
+router.get('/statistics/public', (req, res) => {
+  try {
+    const totalStudents = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'student' AND status = 'active'`).get().count;
+    const totalTeachers = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'teacher' AND status = 'active'`).get().count;
+    const totalClasses = db.prepare(`SELECT COUNT(*) as count FROM classes`).get().count;
+    const totalPets = db.prepare(`SELECT COUNT(*) as count FROM pets`).get().count;
+    const totalSchools = db.prepare(`SELECT COUNT(*) as count FROM schools`).get().count;
+    const totalBattles = db.prepare(`SELECT COUNT(*) as count FROM battles`).get().count;
+
+    res.json({
+      statistics: {
+        students: totalStudents,
+        teachers: totalTeachers,
+        classes: totalClasses,
+        pets: totalPets,
+        schools: totalSchools,
+        battles: totalBattles,
+      }
+    });
+  } catch (error) {
+    console.error('获取公开统计失败:', error);
+    res.status(500).json({ error: '获取统计失败' });
+  }
+});
+
 // 获取系统统计信息
 router.get('/statistics', authenticateToken, (req, res) => {
   try {

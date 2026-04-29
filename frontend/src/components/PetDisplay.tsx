@@ -17,6 +17,16 @@ import { petAPI, equipmentAPI, petExtendedAPI, itemAPI } from '../utils/api';
 import { usePetStore } from '../store/authStore';
 import { EquipmentPanel } from './EquipmentPanel';
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 const { Meta } = Card;
 
 interface PetDisplayProps {
@@ -26,6 +36,7 @@ interface PetDisplayProps {
 
 const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
   const { setPet } = usePetStore();
+  const isMobile = useMobile();
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState(pet?.name || '');
   const [equippedItems, setEquippedItems] = useState<any[]>([]);
@@ -378,7 +389,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
             </div>
 
             <Row gutter={[16, 16]}>
-              <Col span={12}>
+              <Col xs={12} sm={12}>
                 <div style={{ textAlign: 'center', padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
                   <ThunderboltOutlined style={{ fontSize: 24, color: '#ff4d4f' }} />
                   <div style={{ marginTop: 8, fontSize: 18, fontWeight: 'bold' }}>
@@ -387,7 +398,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
                   <div style={{ color: '#999', fontSize: 12 }}>攻击力</div>
                 </div>
               </Col>
-              <Col span={12}>
+              <Col xs={12} sm={12}>
                 <div style={{ textAlign: 'center', padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
                   <HeartOutlined style={{ fontSize: 24, color: '#1890ff' }} />
                   <div style={{ marginTop: 8, fontSize: 18, fontWeight: 'bold' }}>
@@ -396,7 +407,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
                   <div style={{ color: '#999', fontSize: 12 }}>防御力</div>
                 </div>
               </Col>
-              <Col span={12}>
+              <Col xs={12} sm={12}>
                 <div style={{ textAlign: 'center', padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
                   <RocketOutlined style={{ fontSize: 24, color: '#52c41a' }} />
                   <div style={{ marginTop: 8, fontSize: 18, fontWeight: 'bold' }}>
@@ -405,7 +416,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
                   <div style={{ color: '#999', fontSize: 12 }}>速度</div>
                 </div>
               </Col>
-              <Col span={12}>
+              <Col xs={12} sm={12}>
                 <div style={{ textAlign: 'center', padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
                   <HeartOutlined style={{ fontSize: 24, color: pet.health <= 20 ? '#f5222d' : '#eb2f96' }} />
                   <div style={{ marginTop: 8, fontSize: 18, fontWeight: 'bold' }}>
@@ -415,7 +426,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
                   <div style={{ color: '#999', fontSize: 12 }}>健康值</div>
                 </div>
               </Col>
-              <Col span={12}>
+              <Col xs={12} sm={12}>
                 <div style={{ textAlign: 'center', padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
                   <SmileOutlined style={{ fontSize: 24, color: pet.mood < 30 ? '#f5222d' : '#faad14' }} />
                   <div style={{ marginTop: 8, fontSize: 18, fontWeight: 'bold' }}>
@@ -425,7 +436,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
                   <div style={{ color: '#999', fontSize: 12 }}>心情值</div>
                 </div>
               </Col>
-              <Col span={12}>
+              <Col xs={12} sm={12}>
                 <div style={{ textAlign: 'center', padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
                   <CoffeeOutlined style={{ fontSize: 24, color: pet.stamina < 20 ? '#f5222d' : '#722ed1' }} />
                   <div style={{ marginTop: 8, fontSize: 18, fontWeight: 'bold' }}>
@@ -435,7 +446,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
                   <div style={{ color: '#999', fontSize: 12 }}>体力值</div>
                 </div>
               </Col>
-              <Col span={12}>
+              <Col xs={12} sm={12}>
                 <div style={{ textAlign: 'center', padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
                   <ThunderboltOutlined style={{ fontSize: 24, color: pet.hunger < 30 ? '#f5222d' : '#1890ff' }} />
                   <div style={{ marginTop: 8, fontSize: 18, fontWeight: 'bold' }}>
@@ -518,7 +529,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
         open={skillModalVisible}
         onCancel={() => setSkillModalVisible(false)}
         footer={null}
-        width={700}
+        width={isMobile ? '95vw' : 700}
       >
         <Divider>已学会的技能</Divider>
         {mySkills.length > 0 ? (

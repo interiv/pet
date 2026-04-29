@@ -11,6 +11,16 @@ import axios from 'axios';
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 interface KnowledgePointStat {
   knowledge_point: string;
   total_attempts: number;
@@ -34,6 +44,7 @@ interface WeakPointData {
 }
 
 const LearningDashboard: React.FC = () => {
+  const isMobile = useMobile();
   const [loading, setLoading] = useState(false);
   const [days, setDays] = useState(7);
   const [kpData, setKpData] = useState<KnowledgePointData | null>(null);
@@ -148,7 +159,7 @@ const LearningDashboard: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' as const, gap: 8 }}>
         <div>
           <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
             <RiseOutlined style={{ color: '#52c41a', fontSize: 28 }} />

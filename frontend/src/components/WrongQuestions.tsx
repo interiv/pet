@@ -7,10 +7,21 @@ import { BookOutlined, CheckCircleOutlined, EyeOutlined, AimOutlined } from '@an
 
 const { Option } = Select;
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 const subjectOptions = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治'];
 
 const WrongQuestions: React.FC = () => {
   const { user } = useAuthStore();
+  const isMobile = useMobile();
   const [wrongQuestions, setWrongQuestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [filterSubject, setFilterSubject] = useState<string>('');
@@ -114,7 +125,7 @@ const WrongQuestions: React.FC = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 8 }}>
         <h2 style={{ margin: 0 }}><BookOutlined /> 错题本</h2>
         <Select
           placeholder="按科目筛选"
@@ -135,11 +146,11 @@ const WrongQuestions: React.FC = () => {
       />
 
       {wrongQuestions.length > 0 && (
-        <Row gutter={16} style={{ marginBottom: 16 }}>
-          <Col span={6}>
+        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+          <Col xs={12} sm={8} md={6}>
             <Card size="small"><Statistic title="错题总数" value={wrongQuestions.length} prefix={<BookOutlined />} /></Card>
           </Col>
-          <Col span={6}>
+          <Col xs={12} sm={8} md={6}>
             <Card size="small">
               <Statistic
                 title="待复习"
@@ -149,7 +160,7 @@ const WrongQuestions: React.FC = () => {
               />
             </Card>
           </Col>
-          <Col span={6}>
+          <Col xs={12} sm={8} md={6}>
             <Card size="small">
               <Statistic
                 title="已复习"
@@ -159,7 +170,7 @@ const WrongQuestions: React.FC = () => {
               />
             </Card>
           </Col>
-          <Col span={6}>
+          <Col xs={12} sm={8} md={6}>
             <Card size="small">
               <div style={{ marginBottom: 4 }}>复习进度</div>
               <Progress
@@ -178,6 +189,7 @@ const WrongQuestions: React.FC = () => {
         rowKey="id"
         loading={loading}
         pagination={{ pageSize: 10 }}
+        scroll={{ x: true }}
         locale={{ emptyText: <Empty description="暂无错题，继续保持！" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
       />
 

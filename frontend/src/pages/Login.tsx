@@ -1,9 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { Form, Input, Button, Card, message, Typography, Modal, List, Tag, Empty } from 'antd';
 import { UserOutlined, LockOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { authAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  return isMobile;
+};
 
 const { Title, Text } = Typography;
 
@@ -16,6 +26,7 @@ const Login: React.FC = () => {
   const [statusUsername, setStatusUsername] = useState('');
   const [statusLoading, setStatusLoading] = useState(false);
   const [statusData, setStatusData] = useState<any>(null);
+  const isMobile = useMobile();
 
   const onFinish = async (values: any) => {
     setLoading(true);
@@ -59,7 +70,7 @@ const Login: React.FC = () => {
       justifyContent: 'center',
       background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
     }}>
-      <Card style={{ width: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+      <Card style={{ width: isMobile ? '92vw' : 400, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
         <div style={{ textAlign: 'center', marginBottom: 30 }}>
           <Title level={2} style={{ color: '#667eea', marginBottom: 8 }}>
             🐾 班级宠物养成系统
@@ -122,6 +133,7 @@ const Login: React.FC = () => {
         open={statusVisible}
         onCancel={() => setStatusVisible(false)}
         footer={null}
+        width={isMobile ? '95vw' : undefined}
       >
         <Form layout="inline" onFinish={async () => {
           if (!statusUsername) { message.warning('请输入用户名'); return; }

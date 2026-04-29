@@ -5,6 +5,7 @@ import zhCN from 'antd/locale/zh_CN';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Home from './pages/Home';
+import LandingPage from './pages/LandingPage';
 import ClassHome from './pages/ClassHome';
 import ClassesPicker from './pages/ClassesPicker';
 import Workspace from './pages/Workspace';
@@ -46,8 +47,13 @@ const RootRedirect: React.FC = () => {
     }
   }, [isAuthenticated, user, currentClass, navigate]);
 
+  // 未登录：展示落地页
+  if (!isAuthenticated) {
+    return <LandingPage />;
+  }
+
   // 学生待审批 或 无所属班级：在集体首页顶部显示提示条
-  const pendingStudent = isAuthenticated && user && user.role === 'student'
+  const pendingStudent = user && user.role === 'student'
     && ((user as any).status === 'pending_approval' || !user.class_slug);
 
   return (

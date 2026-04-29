@@ -5,6 +5,16 @@ import { classAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  return isMobile;
+};
+
 const { Option } = Select;
 const { Text, Paragraph } = Typography;
 
@@ -19,6 +29,7 @@ const ClassInvitationManager: React.FC = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsForm] = Form.useForm();
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const isMobile = useMobile();
 
   useEffect(() => {
     if (user?.role === 'teacher' || user?.role === 'admin') {
@@ -303,7 +314,7 @@ const ClassInvitationManager: React.FC = () => {
         </Space>
       }
       extra={
-        <Space>
+        <Space wrap>
           {myClass?.slug && (
             <>
               <Button
@@ -342,6 +353,7 @@ const ClassInvitationManager: React.FC = () => {
         rowKey="id"
         loading={loading}
         pagination={{ pageSize: 10 }}
+        scroll={{ x: true }}
       />
 
       <Modal
@@ -407,7 +419,7 @@ const ClassInvitationManager: React.FC = () => {
 
       <Drawer
         title="班级设置"
-        width={420}
+        width={isMobile ? '90vw' : 420}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         extra={<Button type="primary" loading={settingsSaving} onClick={saveSettings}>保存</Button>}
