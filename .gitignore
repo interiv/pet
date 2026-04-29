@@ -48,3 +48,8 @@ backend/uploads/
 # 临时文件
 *.tmp
 *.temp
+
+# IDE/Agent 目录
+.qoder/
+.trae/
+.claude/
