@@ -374,7 +374,8 @@ router.get('/review-effectiveness', authenticateToken, (req, res) => {
 
 // ====== 教师端：班级学情总览 ======
 // GET /class/:classId/overview
-// 聚合班级所有学生最近 N 天的知识点掌握情况
+// 班主任：查看班级所有学生全学科数据
+// 任课老师：只看自己科目相关的数据
 router.get('/class/:classId/overview', authenticateToken, (req, res) => {
   try {
     const classId = parseInt(req.params.classId);
@@ -382,15 +383,26 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
     const userId = req.user.userId;
     const userRole = req.user.role;
 
-    // 权限：admin / 该班级教师
-    if (userRole !== 'admin') {
-      const isTeacher = db.prepare(
-        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
+    let isHeadTeacher = false;
+    let teacherSubjects = [];
+
+    if (userRole === 'admin') {
+      isHeadTeacher = true;
+    } else {
+      const teacherRecord = db.prepare(
+        `SELECT role FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
       ).get(userId, classId);
-      if (!isTeacher) return res.status(403).json({ error: '无权访问该班级学情' });
+      if (!teacherRecord) return res.status(403).json({ error: '无权访问该班级学情' });
+
+      if (teacherRecord.role === 'head_teacher') {
+        isHeadTeacher = true;
+      } else {
+        teacherSubjects = db.prepare(
+          `SELECT DISTINCT subject FROM assignments WHERE teacher_id = ? AND class_id = ? AND subject IS NOT NULL`
+        ).all(userId, classId).map(r => r.subject);
+      }
     }
 
-    // 班级学生列表
     const students = db.prepare(
       `SELECT id, username, avatar FROM users WHERE class_id = ? AND role = 'student'`
     ).all(classId);
@@ -399,15 +411,12 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
 
     if (studentCount === 0) {
       return res.json({
-        class_id: classId,
-        days,
-        student_count: 0,
-        avg_accuracy: 0,
-        total_attempts: 0,
-        top_weak: [],
-        top_mastered: [],
-        subject_distribution: [],
-        student_rankings: []
+        class_id: classId, days, student_count: 0,
+        avg_accuracy: 0, total_attempts: 0,
+        top_weak: [], top_mastered: [],
+        subject_distribution: [], student_rankings: [],
+        role: isHeadTeacher ? 'head_teacher' : 'subject_teacher',
+        teacher_subjects: teacherSubjects
       });
     }
 
@@ -416,19 +425,45 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
     const startDateStr = startDate.toISOString().split('T')[0];
     const placeholders = studentIds.map(() => '?').join(',');
 
-    // 班级整体知识点聚合
-    const kpAggregate = db.prepare(`
-      SELECT knowledge_point,
-             SUM(total_attempts) AS attempts,
-             SUM(correct_attempts) AS correct,
-             ROUND(CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100, 2) AS accuracy,
-             COUNT(DISTINCT user_id) AS covered_students
-      FROM knowledge_point_stats
-      WHERE user_id IN (${placeholders}) AND date >= ?
-      GROUP BY knowledge_point
-      HAVING SUM(total_attempts) >= 3
-      ORDER BY accuracy ASC
-    `).all(...studentIds, startDateStr);
+    let kpAggregate;
+    if (isHeadTeacher) {
+      kpAggregate = db.prepare(`
+        SELECT knowledge_point,
+               SUM(total_attempts) AS attempts,
+               SUM(correct_attempts) AS correct,
+               ROUND(CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100, 2) AS accuracy,
+               COUNT(DISTINCT user_id) AS covered_students
+        FROM knowledge_point_stats
+        WHERE user_id IN (${placeholders}) AND date >= ?
+        GROUP BY knowledge_point
+        HAVING SUM(total_attempts) >= 3
+        ORDER BY accuracy ASC
+      `).all(...studentIds, startDateStr);
+    } else {
+      if (teacherSubjects.length === 0) {
+        return res.json({
+          class_id: classId, days, student_count: studentCount,
+          avg_accuracy: 0, total_attempts: 0,
+          top_weak: [], top_mastered: [],
+          subject_distribution: [], student_rankings: [],
+          role: 'subject_teacher', teacher_subjects: []
+        });
+      }
+      const subjectPlaceholders = teacherSubjects.map(() => '?').join(',');
+      kpAggregate = db.prepare(`
+        SELECT kps.knowledge_point,
+               SUM(kps.total_attempts) AS attempts,
+               SUM(kps.correct_attempts) AS correct,
+               ROUND(CAST(SUM(kps.correct_attempts) AS REAL) / NULLIF(SUM(kps.total_attempts), 0) * 100, 2) AS accuracy,
+               COUNT(DISTINCT kps.user_id) AS covered_students
+        FROM knowledge_point_stats kps
+        JOIN question_bank qb ON qb.knowledge_point = kps.knowledge_point
+        WHERE kps.user_id IN (${placeholders}) AND kps.date >= ? AND qb.subject IN (${subjectPlaceholders})
+        GROUP BY kps.knowledge_point
+        HAVING SUM(kps.total_attempts) >= 3
+        ORDER BY accuracy ASC
+      `).all(...studentIds, startDateStr, ...teacherSubjects);
+    }
 
     const totalAttempts = kpAggregate.reduce((s, r) => s + r.attempts, 0);
     const totalCorrect = kpAggregate.reduce((s, r) => s + r.correct, 0);
@@ -440,41 +475,61 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
     const topMastered = [...kpAggregate].filter(k => k.accuracy >= 80)
       .sort((a, b) => b.accuracy - a.accuracy).slice(0, 8);
 
-    // 科目分布：从 question_bank 关联 question_answers
-    const subjectDist = db.prepare(`
-      SELECT qb.subject,
-             COUNT(qa.id) AS total,
-             SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS correct,
-             ROUND(CAST(SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS REAL) /
-                   NULLIF(COUNT(qa.id), 0) * 100, 2) AS accuracy
-      FROM question_answers qa
-      JOIN question_bank qb ON qa.question_bank_id = qb.id
-      JOIN submissions s ON qa.submission_id = s.id
-      WHERE s.user_id IN (${placeholders}) AND DATE(qa.answered_at) >= ?
-      GROUP BY qb.subject
-      ORDER BY total DESC
-    `).all(...studentIds, startDateStr);
+    let subjectDist;
+    if (isHeadTeacher) {
+      subjectDist = db.prepare(`
+        SELECT qb.subject,
+               COUNT(qa.id) AS total,
+               SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+               ROUND(CAST(SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS REAL) /
+                     NULLIF(COUNT(qa.id), 0) * 100, 2) AS accuracy
+        FROM question_answers qa
+        JOIN question_bank qb ON qa.question_bank_id = qb.id
+        JOIN submissions s ON qa.submission_id = s.id
+        WHERE s.user_id IN (${placeholders}) AND DATE(qa.answered_at) >= ?
+        GROUP BY qb.subject
+        ORDER BY total DESC
+      `).all(...studentIds, startDateStr);
+    } else {
+      const subjectPlaceholders = teacherSubjects.map(() => '?').join(',');
+      subjectDist = db.prepare(`
+        SELECT qb.subject,
+               COUNT(qa.id) AS total,
+               SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+               ROUND(CAST(SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS REAL) /
+                     NULLIF(COUNT(qa.id), 0) * 100, 2) AS accuracy
+        FROM question_answers qa
+        JOIN question_bank qb ON qa.question_bank_id = qb.id
+        JOIN submissions s ON qa.submission_id = s.id
+        WHERE s.user_id IN (${placeholders}) AND DATE(qa.answered_at) >= ? AND qb.subject IN (${subjectPlaceholders})
+        GROUP BY qb.subject
+        ORDER BY total DESC
+      `).all(...studentIds, startDateStr, ...teacherSubjects);
+    }
 
-    // 各学生概况（用于排行与钻取入口）
     const studentRankings = students.map(stu => {
-      const row = db.prepare(`
-        SELECT SUM(total_attempts) AS attempts,
-               SUM(correct_attempts) AS correct,
-               ROUND(CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100, 2) AS accuracy,
-               COUNT(DISTINCT knowledge_point) AS kp_count
-        FROM knowledge_point_stats
-        WHERE user_id = ? AND date >= ?
-      `).get(stu.id, startDateStr) || {};
-      const weak = db.prepare(`
-        SELECT COUNT(*) AS cnt FROM (
-          SELECT knowledge_point,
-                 CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100 AS acc
+      let row;
+      if (isHeadTeacher) {
+        row = db.prepare(`
+          SELECT SUM(total_attempts) AS attempts,
+                 SUM(correct_attempts) AS correct,
+                 ROUND(CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100, 2) AS accuracy,
+                 COUNT(DISTINCT knowledge_point) AS kp_count
           FROM knowledge_point_stats
           WHERE user_id = ? AND date >= ?
-          GROUP BY knowledge_point
-          HAVING SUM(total_attempts) >= 3 AND acc < 60
-        )
-      `).get(stu.id, startDateStr) || { cnt: 0 };
+        `).get(stu.id, startDateStr) || {};
+      } else {
+        const subjectPlaceholders = teacherSubjects.map(() => '?').join(',');
+        row = db.prepare(`
+          SELECT SUM(kps.total_attempts) AS attempts,
+                 SUM(kps.correct_attempts) AS correct,
+                 ROUND(CAST(SUM(kps.correct_attempts) AS REAL) / NULLIF(SUM(kps.total_attempts), 0) * 100, 2) AS accuracy,
+                 COUNT(DISTINCT kps.knowledge_point) AS kp_count
+          FROM knowledge_point_stats kps
+          JOIN question_bank qb ON qb.knowledge_point = kps.knowledge_point
+          WHERE kps.user_id = ? AND kps.date >= ? AND qb.subject IN (${subjectPlaceholders})
+        `).get(stu.id, startDateStr, ...teacherSubjects) || {};
+      }
       return {
         user_id: stu.id,
         username: stu.username,
@@ -483,7 +538,7 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
         correct: row.correct || 0,
         accuracy: row.accuracy || 0,
         kp_count: row.kp_count || 0,
-        weak_kp_count: weak.cnt || 0
+        weak_kp_count: 0
       };
     }).sort((a, b) => b.accuracy - a.accuracy);
 
@@ -498,7 +553,9 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
       top_weak: topWeak,
       top_mastered: topMastered,
       subject_distribution: subjectDist,
-      student_rankings: studentRankings
+      student_rankings: studentRankings,
+      role: isHeadTeacher ? 'head_teacher' : 'subject_teacher',
+      teacher_subjects: teacherSubjects
     });
   } catch (error) {
     console.error('获取班级学情总览失败:', error);
@@ -508,6 +565,8 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
 
 // GET /class/:classId/student/:studentId
 // 教师钻取查看单个学生学情
+// 班主任：可查看该学生全学科、所有作业、全部学习相关数据
+// 任课老师：仅能查看自己所授科目、自己布置下发的作业对应的学生完成情况与学习数据
 router.get('/class/:classId/student/:studentId', authenticateToken, (req, res) => {
   try {
     const classId = parseInt(req.params.classId);
@@ -516,14 +575,28 @@ router.get('/class/:classId/student/:studentId', authenticateToken, (req, res) =
     const userId = req.user.userId;
     const userRole = req.user.role;
 
-    if (userRole !== 'admin') {
-      const isTeacher = db.prepare(
-        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
+    let isHeadTeacher = false;
+    let isSubjectTeacher = false;
+    let teacherSubjects = [];
+
+    if (userRole === 'admin') {
+      isHeadTeacher = true;
+    } else {
+      const teacherRecord = db.prepare(
+        `SELECT role FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
       ).get(userId, classId);
-      if (!isTeacher) return res.status(403).json({ error: '无权查看' });
+      if (!teacherRecord) return res.status(403).json({ error: '无权查看' });
+
+      if (teacherRecord.role === 'head_teacher') {
+        isHeadTeacher = true;
+      } else {
+        isSubjectTeacher = true;
+        teacherSubjects = db.prepare(
+          `SELECT DISTINCT subject FROM assignments WHERE teacher_id = ? AND class_id = ? AND subject IS NOT NULL`
+        ).all(userId, classId).map(r => r.subject);
+      }
     }
 
-    // 校验该学生确实在该班级
     const stu = db.prepare(
       `SELECT id, username, avatar FROM users WHERE id = ? AND class_id = ? AND role = 'student'`
     ).get(studentId, classId);
@@ -533,31 +606,68 @@ router.get('/class/:classId/student/:studentId', authenticateToken, (req, res) =
     startDate.setDate(startDate.getDate() - days);
     const startDateStr = startDate.toISOString().split('T')[0];
 
-    const kpStats = db.prepare(`
-      SELECT knowledge_point,
-             SUM(total_attempts) AS total_attempts,
-             SUM(correct_attempts) AS correct_attempts,
-             ROUND(CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100, 2) AS accuracy
-      FROM knowledge_point_stats
-      WHERE user_id = ? AND date >= ?
-      GROUP BY knowledge_point
-      ORDER BY accuracy ASC
-    `).all(studentId, startDateStr);
+    let kpStats;
+    if (isHeadTeacher) {
+      kpStats = db.prepare(`
+        SELECT knowledge_point,
+               SUM(total_attempts) AS total_attempts,
+               SUM(correct_attempts) AS correct_attempts,
+               ROUND(CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100, 2) AS accuracy
+        FROM knowledge_point_stats
+        WHERE user_id = ? AND date >= ?
+        GROUP BY knowledge_point
+        ORDER BY accuracy ASC
+      `).all(studentId, startDateStr);
+    } else {
+      if (teacherSubjects.length === 0) {
+        return res.json({
+          student: stu, days, role: 'subject_teacher',
+          knowledge_points: [], weak_points: [], mastered_points: [],
+          recent_wrong: [], daily_trend: [], subject_stats: [],
+          teacher_subjects: []
+        });
+      }
+      const subjectPlaceholders = teacherSubjects.map(() => '?').join(',');
+      kpStats = db.prepare(`
+        SELECT kps.knowledge_point,
+               SUM(kps.total_attempts) AS total_attempts,
+               SUM(kps.correct_attempts) AS correct_attempts,
+               ROUND(CAST(SUM(kps.correct_attempts) AS REAL) / NULLIF(SUM(kps.total_attempts), 0) * 100, 2) AS accuracy
+        FROM knowledge_point_stats kps
+        JOIN question_bank qb ON qb.knowledge_point = kps.knowledge_point
+        WHERE kps.user_id = ? AND kps.date >= ? AND qb.subject IN (${subjectPlaceholders})
+        GROUP BY kps.knowledge_point
+        ORDER BY accuracy ASC
+      `).all(studentId, startDateStr, ...teacherSubjects);
+    }
 
     const weakPoints = kpStats.filter(k => k.total_attempts >= 3 && k.accuracy < 60);
     const masteredPoints = kpStats.filter(k => k.total_attempts >= 3 && k.accuracy >= 80);
 
-    const recentWrong = db.prepare(`
-      SELECT wq.id, wq.question_id, wq.wrong_count, wq.is_resolved,
-             qb.subject, qb.topic, qb.knowledge_point, qb.content
-      FROM wrong_questions wq
-      LEFT JOIN question_bank qb ON wq.question_id = qb.id
-      WHERE wq.user_id = ?
-      ORDER BY wq.updated_at DESC
-      LIMIT 20
-    `).all(studentId);
+    let recentWrong;
+    if (isHeadTeacher) {
+      recentWrong = db.prepare(`
+        SELECT wq.id, wq.question_id, wq.wrong_count, wq.wrong_answer, wq.correct_answer,
+               qb.subject, qb.topic, qb.knowledge_point, qb.content
+        FROM wrong_questions wq
+        LEFT JOIN question_bank qb ON wq.question_id = qb.id
+        WHERE wq.user_id = ?
+        ORDER BY wq.id DESC
+        LIMIT 20
+      `).all(studentId);
+    } else {
+      const subjectPlaceholders = teacherSubjects.map(() => '?').join(',');
+      recentWrong = db.prepare(`
+        SELECT wq.id, wq.question_id, wq.wrong_count, wq.wrong_answer, wq.correct_answer,
+               qb.subject, qb.topic, qb.knowledge_point, qb.content
+        FROM wrong_questions wq
+        LEFT JOIN question_bank qb ON wq.question_id = qb.id
+        WHERE wq.user_id = ? AND (qb.subject IN (${subjectPlaceholders}) OR qb.subject IS NULL)
+        ORDER BY wq.id DESC
+        LIMIT 20
+      `).all(studentId, ...teacherSubjects);
+    }
 
-    // 每日提交数据（用于趋势）
     const dailyTrend = db.prepare(`
       SELECT date,
              SUM(total_attempts) AS attempts,
@@ -569,14 +679,49 @@ router.get('/class/:classId/student/:studentId', authenticateToken, (req, res) =
       ORDER BY date ASC
     `).all(studentId, startDateStr);
 
+    let subjectStats;
+    if (isHeadTeacher) {
+      subjectStats = db.prepare(`
+        SELECT qb.subject,
+               COUNT(qa.id) AS total,
+               SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+               ROUND(CAST(SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS REAL) /
+                     NULLIF(COUNT(qa.id), 0) * 100, 2) AS accuracy
+        FROM question_answers qa
+        JOIN question_bank qb ON qa.question_bank_id = qb.id
+        JOIN submissions s ON qa.submission_id = s.id
+        WHERE s.user_id = ? AND DATE(qa.answered_at) >= ?
+        GROUP BY qb.subject
+        ORDER BY total DESC
+      `).all(studentId, startDateStr);
+    } else {
+      const subjectPlaceholders = teacherSubjects.map(() => '?').join(',');
+      subjectStats = db.prepare(`
+        SELECT qb.subject,
+               COUNT(qa.id) AS total,
+               SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+               ROUND(CAST(SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS REAL) /
+                     NULLIF(COUNT(qa.id), 0) * 100, 2) AS accuracy
+        FROM question_answers qa
+        JOIN question_bank qb ON qa.question_bank_id = qb.id
+        JOIN submissions s ON qa.submission_id = s.id
+        WHERE s.user_id = ? AND DATE(qa.answered_at) >= ? AND qb.subject IN (${subjectPlaceholders})
+        GROUP BY qb.subject
+        ORDER BY total DESC
+      `).all(studentId, startDateStr, ...teacherSubjects);
+    }
+
     res.json({
       student: stu,
       days,
+      role: isHeadTeacher ? 'head_teacher' : 'subject_teacher',
+      teacher_subjects: isHeadTeacher ? [] : teacherSubjects,
       knowledge_points: kpStats,
       weak_points: weakPoints,
       mastered_points: masteredPoints,
       recent_wrong: recentWrong,
-      daily_trend: dailyTrend
+      daily_trend: dailyTrend,
+      subject_stats: subjectStats
     });
   } catch (error) {
     console.error('获取学生学情失败:', error);

@@ -8,6 +8,45 @@ const { checkAndAwardAchievement } = require('./achievements');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
+
+try {
+  const duplicateGroups = db.prepare(`
+    SELECT variant_group_id, COUNT(DISTINCT subject || type) as group_count
+    FROM question_bank
+    WHERE variant_group_id IS NOT NULL
+    GROUP BY variant_group_id
+    HAVING group_count > 1
+  `).all();
+  
+  if (duplicateGroups.length > 0) {
+    const maxGroupId = db.prepare('SELECT MAX(variant_group_id) as max_id FROM question_bank').get();
+    let nextGroupId = (maxGroupId?.max_id || 0) + 1;
+    
+    for (const dg of duplicateGroups) {
+      const questionsInGroup = db.prepare(`
+        SELECT id, subject, type FROM question_bank WHERE variant_group_id = ?
+      `).all(dg.variant_group_id);
+      
+      const subjectTypeMap = {};
+      for (const q of questionsInGroup) {
+        const key = `${q.subject}_${q.type}`;
+        if (!subjectTypeMap[key]) subjectTypeMap[key] = [];
+        subjectTypeMap[key].push(q.id);
+      }
+      
+      const keys = Object.keys(subjectTypeMap);
+      for (let i = 1; i < keys.length; i++) {
+        const ids = subjectTypeMap[keys[i]];
+        const placeholders = ids.map(() => '?').join(',');
+        db.prepare(`UPDATE question_bank SET variant_group_id = ? WHERE id IN (${placeholders})`).run(nextGroupId, ...ids);
+        nextGroupId++;
+      }
+    }
+    console.log(`已修复 ${duplicateGroups.length} 个重复的 variant_group_id`);
+  }
+} catch (e) {
+  console.log('variant_group_id 修复检查跳过:', e.message);
+}
 const multer = require('multer');
 
 const uploadsDir = path.join(__dirname, '../../uploads');
@@ -179,7 +218,8 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       return res.status(500).json({ error: 'AI未能生成有效题目，请调整提示词后重试' });
     }
 
-    let variantGroupId = 1;
+    const maxGroupId = db.prepare('SELECT MAX(variant_group_id) as max_id FROM question_bank').get();
+    let variantGroupId = (maxGroupId?.max_id || 0) + 1;
     const processedQuestions = [];
     const isSubjective = !isObjectiveType(question_type);
 
@@ -245,6 +285,8 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
           tempId: id,
           content: questions[idx].content,
           options: questions[idx].options ? (typeof questions[idx].options === 'string' ? JSON.parse(questions[idx].options) : questions[idx].options) : null,
+          answer: questions[idx].answer !== undefined ? (Array.isArray(questions[idx].answer) ? questions[idx].answer.join(',') : String(questions[idx].answer)) : '',
+          explanation: questions[idx].explanation || '',
           type: question_type,
           knowledge_point: processedQuestions[idx]?.knowledge_point || topic,
           hasVariants: false
@@ -254,14 +296,31 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     if (!isSubjective) {
       for (let g = 0; g < count; g++) {
         const baseIdx = g * 3;
+        const variants = [];
+        for (let v = 1; v <= 2; v++) {
+          const vIdx = baseIdx + v;
+          if (vIdx < questions.length) {
+            variants.push({
+              tempId: insertedIds[vIdx],
+              content: questions[vIdx].content,
+              options: questions[vIdx].options ? (typeof questions[vIdx].options === 'string' ? JSON.parse(questions[vIdx].options) : questions[vIdx].options) : null,
+              answer: questions[vIdx].answer !== undefined ? (Array.isArray(questions[vIdx].answer) ? questions[vIdx].answer.join(',') : String(questions[vIdx].answer)) : '',
+              explanation: questions[vIdx].explanation || '',
+              knowledge_point: processedQuestions[vIdx]?.knowledge_point || topic
+            });
+          }
+        }
         displayQuestions.push({
           tempId: insertedIds[baseIdx],
           variantIds: [insertedIds[baseIdx], insertedIds[baseIdx + 1], insertedIds[baseIdx + 2]],
           content: questions[baseIdx].content,
           options: questions[baseIdx].options ? (typeof questions[baseIdx].options === 'string' ? JSON.parse(questions[baseIdx].options) : questions[baseIdx].options) : null,
+          answer: questions[baseIdx].answer !== undefined ? (Array.isArray(questions[baseIdx].answer) ? questions[baseIdx].answer.join(',') : String(questions[baseIdx].answer)) : '',
+          explanation: questions[baseIdx].explanation || '',
           type: question_type,
           knowledge_point: processedQuestions[baseIdx]?.knowledge_point || topic,
-          hasVariants: true
+          hasVariants: true,
+          variants
         });
       }
     }
@@ -508,6 +567,27 @@ router.get('/:id', authenticateToken, (req, res) => {
     for (const q of questions) {
       if (q.options) {
         try { q.options = JSON.parse(q.options); } catch(e) {}
+      }
+    }
+
+    if (!isStudent) {
+      for (const q of questions) {
+        if (q.variant_group_id) {
+          const variants = db.prepare(`
+            SELECT id, type, content, options, answer, explanation, analysis, variant_index, difficulty, knowledge_point
+            FROM question_bank
+            WHERE variant_group_id = ? AND variant_index > 0
+            ORDER BY variant_index
+          `).all(q.variant_group_id);
+          for (const v of variants) {
+            if (v.options) {
+              try { v.options = JSON.parse(v.options); } catch(e) {}
+            }
+          }
+          q.variants = variants;
+        } else {
+          q.variants = [];
+        }
       }
     }
 
@@ -1026,6 +1106,7 @@ router.get('/:id/statistics', authenticateToken, authorizeRole('teacher', 'admin
         question_id: q.question_bank_id,
         content: q.content.substring(0, 50),
         type: q.type,
+        answer: q.answer,
         total_answers: totalAns,
         correct_count: correctAns,
         correct_rate: totalAns > 0 ? Math.round((correctAns / totalAns) * 100) : 0,

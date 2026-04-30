@@ -205,6 +205,19 @@ const ClassDashboard: React.FC = () => {
           <Empty description="该班级暂无学生" />
         ) : (
           <>
+            {overview.role === 'subject_teacher' && overview.teacher_subjects?.length > 0 && (
+              <div style={{ marginBottom: 12, padding: '8px 12px', background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 6 }}>
+                <span style={{ color: '#d46b08' }}>📋 您是任课老师，仅可查看以下科目的数据：</span>
+                {overview.teacher_subjects.map((s: string) => (
+                  <Tag key={s} color="orange" style={{ marginLeft: 4 }}>{s}</Tag>
+                ))}
+              </div>
+            )}
+            {overview.role === 'head_teacher' && (
+              <div style={{ marginBottom: 12, padding: '8px 12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6 }}>
+                <span style={{ color: '#389e0d' }}>👨‍🏫 您是班主任，可查看该班级全学科数据</span>
+              </div>
+            )}
             {/* —— 顶部指标 —— */}
             <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
               <Col xs={24} sm={12} md={6}>
@@ -390,6 +403,20 @@ const ClassDashboard: React.FC = () => {
         <Spin spinning={detailLoading}>
           {studentDetail ? (
             <>
+              {studentDetail.role === 'subject_teacher' && studentDetail.teacher_subjects?.length > 0 && (
+                <div style={{ marginBottom: 12, padding: '8px 12px', background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 6 }}>
+                  <span style={{ color: '#d46b08' }}>📋 您是任课老师，仅可查看以下科目的数据：</span>
+                  {studentDetail.teacher_subjects.map((s: string) => (
+                    <Tag key={s} color="orange" style={{ marginLeft: 4 }}>{s}</Tag>
+                  ))}
+                </div>
+              )}
+              {studentDetail.role === 'head_teacher' && (
+                <div style={{ marginBottom: 12, padding: '8px 12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6 }}>
+                  <span style={{ color: '#389e0d' }}>👨‍🏫 您是班主任，可查看该学生全学科数据</span>
+                </div>
+              )}
+
               <Descriptions size="small" bordered column={2} style={{ marginBottom: 16 }}>
                 <Descriptions.Item label="知识点数量">
                   {studentDetail.knowledge_points?.length || 0}
@@ -404,6 +431,31 @@ const ClassDashboard: React.FC = () => {
                   {studentDetail.recent_wrong?.length || 0} 条
                 </Descriptions.Item>
               </Descriptions>
+
+              {studentDetail.subject_stats && studentDetail.subject_stats.length > 0 && (
+                <Card size="small" title="各科目表现" style={{ marginBottom: 12 }}>
+                  <List
+                    size="small"
+                    dataSource={studentDetail.subject_stats}
+                    renderItem={(item: any) => (
+                      <List.Item>
+                        <Tag color="blue">{item.subject}</Tag>
+                        <span style={{ flex: 1, marginLeft: 8 }}>
+                          <AntdProgress
+                            percent={item.accuracy || 0}
+                            size="small"
+                            status={(item.accuracy || 0) >= 70 ? 'success' : 'exception'}
+                            style={{ width: 200 }}
+                          />
+                        </span>
+                        <span style={{ color: '#999', fontSize: 12 }}>
+                          {item.correct}/{item.total} 题
+                        </span>
+                      </List.Item>
+                    )}
+                  />
+                </Card>
+              )}
 
               {studentDetail.weak_points && studentDetail.weak_points.length > 0 && (
                 <Card size="small" title="薄弱知识点" style={{ marginBottom: 12 }}>
@@ -443,8 +495,8 @@ const ClassDashboard: React.FC = () => {
                             {(item.content || '').length > 60 ? '...' : ''}
                           </span>
                         </div>
-                        <Tag color={item.is_resolved ? 'green' : 'red'}>
-                          {item.is_resolved ? '已解决' : `错 ${item.wrong_count} 次`}
+                        <Tag color="red">
+                          错 {item.wrong_count} 次
                         </Tag>
                       </List.Item>
                     )}

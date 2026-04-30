@@ -3,7 +3,7 @@ import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber
 import { assignmentAPI, adminAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
-import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined } from '@ant-design/icons';
+import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined } from '@ant-design/icons';
 import CelebrationAnimation from './CelebrationAnimation';
 
 const { Option } = Select;
@@ -23,8 +23,11 @@ interface Question {
   id?: number;
   tempId?: number;
   variantIds?: number[];
+  variants?: { tempId: number; content: string; options?: string[] | null; answer?: string; explanation?: string; knowledge_point: string }[];
   content: string;
   options?: string[] | null;
+  answer?: string;
+  explanation?: string;
   type: string;
   knowledge_point?: string;
   hasVariants?: boolean;
@@ -80,6 +83,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [statsLoading, setStatsLoading] = useState(false);
   const [assignmentTablePage, setAssignmentTablePage] = useState(1);
   const [assignmentTablePageSize, setAssignmentTablePageSize] = useState(10);
+  const [createModalTab, setCreateModalTab] = useState('generate');
+  const [showVariantQuestions, setShowVariantQuestions] = useState<Record<number, boolean>>({});
   
   const [form] = Form.useForm();
   const [submitForm] = Form.useForm();
@@ -90,10 +95,12 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [studentAnswers, setStudentAnswers] = useState<Record<number, any>>({});
   const [uploadedImages, setUploadedImages] = useState<Record<number, string>>({});
   const [progressMilestones, setProgressMilestones] = useState<Set<number>>(new Set());
+  const [shuffledOptionMap, setShuffledOptionMap] = useState<Record<number, number[]>>({});
+  const [shuffledQuestionOrder, setShuffledQuestionOrder] = useState<number[]>([]);
 
   // 实时答题进度激励：跨越 25% / 50% / 75% / 100% 时提示
   useEffect(() => {
-    if (!currentAssignment || !isDoModalVisible) return;
+    if (!currentAssignment || !isDoModalVisible || isTeacher) return;
     const qs = currentAssignment.questions || [];
     if (qs.length === 0) return;
     const done = qs.filter((q: Question) => {
@@ -119,6 +126,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   // 题目编辑状态
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [editingQuestionIndex, setEditingQuestionIndex] = useState<number>(-1);
+  const [editingVariantParentIndex, setEditingVariantParentIndex] = useState<number>(-1);
+  const [editingVariantIndex, setEditingVariantIndex] = useState<number>(-1);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editForm] = Form.useForm();
   
@@ -185,12 +194,18 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         grade_level: values.grade_level || ''
       });
       setGeneratedData(res.data as GeneratedResult);
+      const nextDayMidnight = dayjs().add(1, 'day').startOf('day');
+      const allClassIds = classes.map(c => c.id);
       form.setFieldsValue({
         title: res.data.title,
         description: res.data.description,
         question_type: res.data.question_type,
-        subject: res.data.subject
+        subject: res.data.subject,
+        class_ids: allClassIds,
+        due_date: nextDayMidnight
       });
+      setShowVariantQuestions({});
+      setCreateModalTab('preview');
       message.success(`成功生成 ${res.data.question_count} 道题目（共${res.data.total_generated}道含变体）`);
     } catch (e: any) {
       message.error(e.response?.data?.error || 'AI生成失败');
@@ -251,8 +266,50 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const handleStartDoing = async (record: any) => {
     try {
       const res = await assignmentAPI.getAssignment(record.id);
-      setCurrentAssignment(res.data.assignment);
-      setStudentAnswers({});
+      const assignment = res.data.assignment;
+      
+      if (!isTeacher && assignment.questions) {
+        const questions = assignment.questions;
+        const qOrder = questions.map((_: any, i: number) => i);
+        for (let i = qOrder.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [qOrder[i], qOrder[j]] = [qOrder[j], qOrder[i]];
+        }
+        setShuffledQuestionOrder(qOrder);
+
+        const optMap: Record<number, number[]> = {};
+        for (const q of questions) {
+          if (q.options && q.options.length > 0) {
+            const indices = q.options.map((_: any, i: number) => i);
+            for (let i = indices.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [indices[i], indices[j]] = [indices[j], indices[i]];
+            }
+            optMap[q.id] = indices;
+          }
+        }
+        setShuffledOptionMap(optMap);
+      } else {
+        setShuffledQuestionOrder([]);
+        setShuffledOptionMap({});
+      }
+
+      setCurrentAssignment(assignment);
+      if (isTeacher && assignment.questions) {
+        const prefill: Record<number, any> = {};
+        for (const q of assignment.questions) {
+          if (q.answer) {
+            if (q.type === 'choice_multi') {
+              prefill[q.id] = q.answer.split(',').map((a: string) => a.trim());
+            } else {
+              prefill[q.id] = q.answer;
+            }
+          }
+        }
+        setStudentAnswers(prefill);
+      } else {
+        setStudentAnswers({});
+      }
       setUploadedImages({});
       submitForm.resetFields();
       setProgressMilestones(new Set());
@@ -265,6 +322,30 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const handleSubmitAnswers = async () => {
     const questions = currentAssignment?.questions || [];
     if (questions.length === 0) return;
+
+    if (isTeacher) {
+      setSubmitting(true);
+      try {
+        for (const q of questions) {
+          const ans = studentAnswers[q.id];
+          if (ans === undefined || ans === null) continue;
+          const updatePayload: any = {};
+          if (Array.isArray(ans)) {
+            updatePayload.answer = ans.join(',');
+          } else {
+            updatePayload.answer = String(ans);
+          }
+          await assignmentAPI.updateQuestion(q.id, updatePayload);
+        }
+        message.success('答案/评阅标准已更新');
+        setIsDoModalVisible(false);
+      } catch (e: any) {
+        message.error(e.response?.data?.error || '更新失败');
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
 
     let allAnswered = true;
     const answers: any[] = [];
@@ -297,7 +378,6 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       if (res.data.success && !res.data.message?.includes('等待')) {
         message.success(`提交成功！得分：${res.data.total_score}分，获得 ${res.data.gold_reward} 金币`);
         
-        // 显示庆祝动画
         setCelebrationData({
           expReward: res.data.exp_reward || 0,
           goldReward: res.data.gold_reward || 0,
@@ -333,58 +413,115 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   };
   
   // 打开题目编辑
-  const handleEditQuestion = (question: Question, index: number) => {
+  const handleEditQuestion = (question: Question, index: number, variantParentIndex?: number, variantIndex?: number) => {
     setEditingQuestion(question);
     setEditingQuestionIndex(index);
+    setEditingVariantParentIndex(variantParentIndex ?? -1);
+    setEditingVariantIndex(variantIndex ?? -1);
+    let answerValue: any = question.answer || '';
+    if (question.type === 'choice_multi' && typeof answerValue === 'string') {
+      answerValue = answerValue.split(',').map(a => a.trim()).filter(Boolean);
+    }
     editForm.setFieldsValue({
       content: question.content,
       options: question.options ? question.options.join('\n') : '',
       difficulty: 'medium',
-      knowledge_point: question.knowledge_point || ''
+      knowledge_point: question.knowledge_point || '',
+      answer: answerValue,
+      explanation: question.explanation || '',
+      analysis: ''
     });
     setEditModalVisible(true);
   };
   
   // 保存题目编辑
   const handleSaveEdit = async (values: any) => {
-    if (!editingQuestion || editingQuestionIndex < 0 || !generatedData) return;
+    if (!editingQuestion) return;
     
     const newOptions = values.options ? values.options.split('\n').filter((opt: string) => opt.trim()) : null;
+    const isObjective = ['choice_single', 'choice_multi', 'judgment'].includes(editingQuestion.type);
     const updatedQuestion: Question = {
       ...editingQuestion,
       content: values.content,
       options: newOptions,
       knowledge_point: values.knowledge_point || editingQuestion.knowledge_point,
+      answer: isObjective ? values.answer : values.answer || editingQuestion.answer,
+      explanation: values.explanation || editingQuestion.explanation,
     };
     
-    // 同步到后端：教师预览阶段对题库的调整需要持久化
     try {
-      const targetIds = editingQuestion.variantIds && editingQuestion.variantIds.length > 0
-        ? editingQuestion.variantIds
-        : [editingQuestion.tempId || editingQuestion.id].filter(Boolean) as number[];
+      let targetIds: number[] = [];
+      if (editingQuestion.variantIds && editingQuestion.variantIds.length > 0) {
+        targetIds = editingQuestion.variantIds;
+      } else if (editingQuestion.id) {
+        targetIds = [editingQuestion.id];
+      } else if (editingQuestion.tempId) {
+        targetIds = [editingQuestion.tempId];
+      }
+      const updatePayload: any = {
+        content: values.content,
+        options: newOptions,
+        knowledge_point: values.knowledge_point,
+        difficulty: values.difficulty,
+        explanation: values.explanation,
+        sync_group: editingVariantParentIndex < 0,
+      };
+      if (values.answer) {
+        if (Array.isArray(values.answer)) {
+          updatePayload.answer = values.answer.join(',');
+        } else {
+          updatePayload.answer = String(values.answer);
+        }
+      }
+      if (values.analysis) {
+        updatePayload.analysis = values.analysis;
+      }
       for (const qid of targetIds) {
-        await assignmentAPI.updateQuestion(qid, {
-          content: values.content,
-          options: newOptions,
-          knowledge_point: values.knowledge_point,
-          difficulty: values.difficulty,
-          sync_group: true,
-        });
+        await assignmentAPI.updateQuestion(qid, updatePayload);
       }
     } catch (e: any) {
       message.error(e.response?.data?.error || '保存到题库失败');
       return;
     }
 
-    // 更新generatedData中的题目
-    const newQuestions = [...generatedData.questions];
-    newQuestions[editingQuestionIndex] = updatedQuestion;
-    setGeneratedData({ ...generatedData, questions: newQuestions });
+    if (generatedData) {
+      const newQuestions = [...generatedData.questions];
+      if (editingVariantParentIndex >= 0 && editingVariantIndex >= 0) {
+        const parentQ = { ...newQuestions[editingVariantParentIndex] };
+        const newVariants = [...(parentQ.variants || [])];
+        newVariants[editingVariantIndex] = updatedQuestion as typeof newVariants[number];
+        parentQ.variants = newVariants;
+        newQuestions[editingVariantParentIndex] = parentQ;
+      } else if (editingQuestionIndex >= 0) {
+        newQuestions[editingQuestionIndex] = updatedQuestion;
+      }
+      setGeneratedData({ ...generatedData, questions: newQuestions });
+    } else if (currentAssignment && editingQuestion.id) {
+      const newQuestions = [...(currentAssignment.questions || [])];
+      for (let qi = 0; qi < newQuestions.length; qi++) {
+        if (newQuestions[qi].id === editingQuestion.id) {
+          newQuestions[qi] = { ...newQuestions[qi], ...updatedQuestion };
+          break;
+        }
+        const variants = (newQuestions[qi] as any).variants;
+        if (variants) {
+          for (let vi = 0; vi < variants.length; vi++) {
+            if (variants[vi].id === editingQuestion.id) {
+              variants[vi] = { ...variants[vi], ...updatedQuestion };
+              break;
+            }
+          }
+        }
+      }
+      setCurrentAssignment({ ...currentAssignment, questions: newQuestions });
+    }
     message.success('题目已更新');
     
     setEditModalVisible(false);
     setEditingQuestion(null);
     setEditingQuestionIndex(-1);
+    setEditingVariantParentIndex(-1);
+    setEditingVariantIndex(-1);
   };
   
   // 删除题目
@@ -421,6 +558,26 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       originalId: wq.original_question_id
     }));
     
+    const qOrder = retryQuestions.map((_: any, i: number) => i);
+    for (let i = qOrder.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [qOrder[i], qOrder[j]] = [qOrder[j], qOrder[i]];
+    }
+    setShuffledQuestionOrder(qOrder);
+
+    const optMap: Record<number, number[]> = {};
+    for (const q of retryQuestions) {
+      if (q.options && q.options.length > 0) {
+        const indices = q.options.map((_: any, i: number) => i);
+        for (let i = indices.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [indices[i], indices[j]] = [indices[j], indices[i]];
+        }
+        optMap[q.id] = indices;
+      }
+    }
+    setShuffledOptionMap(optMap);
+
     setCurrentAssignment((prev: any) => ({
       ...prev,
       questions: retryQuestions,
@@ -453,6 +610,19 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     const isChoiceSingle = q.type === 'choice_single';
     const isChoiceMulti = q.type === 'choice_multi';
     const isJudgment = q.type === 'judgment';
+    const optShuffle = shuffledOptionMap[q.id!] || (q.options ? q.options.map((_: any, i: number) => i) : []);
+
+    const mapDisplayToOriginal = (displayLetter: string): string => {
+      const displayIdx = displayLetter.charCodeAt(0) - 65;
+      const originalIdx = optShuffle[displayIdx];
+      return originalIdx !== undefined ? String.fromCharCode(65 + originalIdx) : displayLetter;
+    };
+
+    const mapOriginalToDisplay = (originalLetter: string): string => {
+      const originalIdx = originalLetter.charCodeAt(0) - 65;
+      const displayIdx = optShuffle.indexOf(originalIdx);
+      return displayIdx >= 0 ? String.fromCharCode(65 + displayIdx) : originalLetter;
+    };
 
     return (
       <Card 
@@ -467,28 +637,44 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           <div style={{ marginLeft: 8 }}>
             {isChoiceSingle ? (
               <Radio.Group 
-                onChange={(e) => setStudentAnswers(prev => ({ ...prev, [q.id!]: e.target.value }))}
-                value={studentAnswers[q.id!] || null}
+                onChange={(e) => {
+                  const originalLetter = mapDisplayToOriginal(e.target.value);
+                  setStudentAnswers(prev => ({ ...prev, [q.id!]: originalLetter }));
+                }}
+                value={studentAnswers[q.id!] ? mapOriginalToDisplay(studentAnswers[q.id!]) : null}
               >
-                {q.options.map((opt, idx) => (
-                  <Radio key={idx} value={String.fromCharCode(65 + idx)} style={{ marginBottom: 8, display: 'block' }}>
-                    <span style={{ fontWeight: 500, marginRight: 8 }}>{String.fromCharCode(65 + idx)}.</span>{opt}
-                  </Radio>
-                ))}
+                {optShuffle.map((origIdx, displayIdx) => {
+                  const displayLetter = String.fromCharCode(65 + displayIdx);
+                  const origLetter = String.fromCharCode(65 + origIdx);
+                  const isCorrect = isTeacher && q.answer && q.answer.split(',').map(a => a.trim()).includes(origLetter);
+                  return (
+                    <Radio key={displayIdx} value={displayLetter} style={{ marginBottom: 8, display: 'block', color: isCorrect ? '#52c41a' : undefined, fontWeight: isCorrect ? 600 : undefined }}>
+                      <span style={{ fontWeight: 500, marginRight: 8 }}>{displayLetter}.</span>{q.options![origIdx]}{isCorrect && ' ✓'}
+                    </Radio>
+                  );
+                })}
               </Radio.Group>
             ) : (
               <Checkbox.Group
-                onChange={(vals) => setStudentAnswers(prev => ({ ...prev, [q.id!]: vals }))}
-                value={studentAnswers[q.id!] || []}
+                onChange={(vals) => {
+                  const originalVals = vals.map((v: string) => mapDisplayToOriginal(v));
+                  setStudentAnswers(prev => ({ ...prev, [q.id!]: originalVals }));
+                }}
+                value={studentAnswers[q.id!] ? (studentAnswers[q.id!] as string[]).map((v: string) => mapOriginalToDisplay(v)) : []}
                 style={{ width: '100%' }}
               >
-                {q.options.map((opt, idx) => (
-                  <div key={idx} style={{ marginBottom: 8 }}>
-                    <Checkbox value={String.fromCharCode(65 + idx)}>
-                      <span style={{ fontWeight: 500, marginRight: 8 }}>{String.fromCharCode(65 + idx)}.</span>{opt}
-                    </Checkbox>
-                  </div>
-                ))}
+                {optShuffle.map((origIdx, displayIdx) => {
+                  const displayLetter = String.fromCharCode(65 + displayIdx);
+                  const origLetter = String.fromCharCode(65 + origIdx);
+                  const isCorrect = isTeacher && q.answer && q.answer.split(',').map(a => a.trim()).includes(origLetter);
+                  return (
+                    <div key={displayIdx} style={{ marginBottom: 8, color: isCorrect ? '#52c41a' : undefined, fontWeight: isCorrect ? 600 : undefined }}>
+                      <Checkbox value={displayLetter}>
+                        <span style={{ fontWeight: 500, marginRight: 8 }}>{displayLetter}.</span>{q.options![origIdx]}{isCorrect && ' ✓'}
+                      </Checkbox>
+                    </div>
+                  );
+                })}
               </Checkbox.Group>
             )}
           </div>
@@ -500,12 +686,12 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             value={studentAnswers[q.id!] || null}
             style={{ marginLeft: 8 }}
           >
-            <Radio value="true" style={{ marginRight: 24 }}>正确</Radio>
-            <Radio value="false">错误</Radio>
+            <Radio value="true" style={{ marginRight: 24, color: isTeacher && q.answer === 'true' ? '#52c41a' : undefined, fontWeight: isTeacher && q.answer === 'true' ? 600 : undefined }}>正确{isTeacher && q.answer === 'true' ? ' ✓' : ''}</Radio>
+            <Radio value="false" style={{ color: isTeacher && q.answer === 'false' ? '#52c41a' : undefined, fontWeight: isTeacher && q.answer === 'false' ? 600 : undefined }}>错误{isTeacher && q.answer === 'false' ? ' ✓' : ''}</Radio>
           </Radio.Group>
         )}
 
-        {isEssay && (
+        {isEssay && !isTeacher && (
           <>
             <TextArea 
               rows={4} 
@@ -537,6 +723,91 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
               />
             </div>
           </>
+        )}
+
+        {isEssay && isTeacher && (
+          <>
+            <TextArea 
+              rows={4} 
+              placeholder="修改评阅标准..."
+              value={studentAnswers[q.id!] || ''}
+              onChange={(e) => setStudentAnswers(prev => ({ ...prev, [q.id!]: e.target.value }))}
+              style={{ marginBottom: 8 }}
+            />
+            <Alert 
+              type="info" 
+              showIcon 
+              message="提交后将替换默认评阅标准" 
+              style={{ marginTop: 8 }} 
+            />
+          </>
+        )}
+
+        {isTeacher && q.answer && !isEssay && (
+          <div style={{ marginTop: 8 }}>
+            <Tag color="green">正确答案：{q.answer}{isJudgment && (q.answer === 'true' ? '（正确）' : '（错误）')}</Tag>
+          </div>
+        )}
+
+        {isTeacher && q.explanation && (
+          <div style={{ marginTop: 4, color: '#8c8c8c', fontSize: 12, fontStyle: 'italic' }}>
+            解析：{q.explanation}
+          </div>
+        )}
+
+        {isTeacher && (q as any).variants && (q as any).variants.length > 0 && (
+          <div style={{ marginTop: 8, padding: '8px 12px', background: '#fffbe6', border: '1px dashed #ffe58f', borderRadius: 6 }}>
+            <div style={{ color: '#d48806', fontSize: 12, marginBottom: 6 }}>📋 备用变体题目（{(q as any).variants.length}道）</div>
+            {(q as any).variants.map((v: any, vi: number) => (
+              <div key={vi} style={{ padding: '6px 8px', background: '#fff', borderRadius: 4, marginBottom: 4, border: '1px solid #ffe58f' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div style={{ flex: 1 }}>
+                    <Tag color="orange">变体{vi + 1}</Tag>
+                    <span style={{ fontSize: 13 }}>{v.content}</span>
+                  </div>
+                  <Button size="small" icon={<EditOutlined />} onClick={() => {
+                    setEditingQuestion(v);
+                    setEditingQuestionIndex(-1);
+                    setEditingVariantParentIndex(-1);
+                    setEditingVariantIndex(-1);
+                    let answerVal: any = v.answer || '';
+                    if (v.type === 'choice_multi' && typeof answerVal === 'string') {
+                      answerVal = answerVal.split(',').map((a: string) => a.trim()).filter(Boolean);
+                    }
+                    editForm.setFieldsValue({
+                      content: v.content,
+                      options: v.options ? v.options.join('\n') : '',
+                      difficulty: v.difficulty || 'medium',
+                      knowledge_point: v.knowledge_point || '',
+                      answer: answerVal,
+                      explanation: v.explanation || '',
+                      analysis: v.analysis || ''
+                    });
+                    setEditModalVisible(true);
+                  }}>编辑</Button>
+                </div>
+                {v.options && v.options.length > 0 && (
+                  <div style={{ marginTop: 4, paddingLeft: 20, fontSize: 12 }}>
+                    {v.options.map((opt: string, oi: number) => {
+                      const optLetter = String.fromCharCode(65 + oi);
+                      const isCorrect = v.answer && v.answer.split(',').map((a: string) => a.trim()).includes(optLetter);
+                      return (
+                        <span key={oi} style={{ marginRight: 12, color: isCorrect ? '#52c41a' : '#8c8c8c', fontWeight: isCorrect ? 600 : 400 }}>
+                          {optLetter}. {opt}{isCorrect && ' ✓'}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                {v.answer && <Tag color="green" style={{ marginTop: 4 }}>答案：{v.answer}</Tag>}
+                {v.explanation && (
+                  <div style={{ marginTop: 2, color: '#8c8c8c', fontSize: 11, fontStyle: 'italic' }}>
+                    解析：{v.explanation}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         )}
       </Card>
     );
@@ -710,7 +981,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             }}>错题本</Button>
           )}
           {isTeacher && (
-            <Button type="primary" icon={<RobotOutlined />} onClick={() => { setIsCreateModalVisible(true); setGeneratedData(null); generateForm.resetFields(); form.resetFields(); }}>
+            <Button type="primary" icon={<RobotOutlined />} onClick={() => { setIsCreateModalVisible(true); setGeneratedData(null); generateForm.resetFields(); form.resetFields(); setCreateModalTab('generate'); setShowVariantQuestions({}); }}>
               发布新作业
             </Button>
           )}
@@ -731,11 +1002,11 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         title="🤖 发布新作业（AI智能生成）"
         open={isCreateModalVisible}
         onCancel={() => { setIsCreateModalVisible(false); setGeneratedData(null); }}
-        width={isMobile ? '95vw' : 720}
+        width={isMobile ? '95vw' : 780}
         destroyOnHidden
         footer={null}
       >
-        <Tabs defaultActiveKey="generate" items={[
+        <Tabs activeKey={createModalTab} onChange={(key) => setCreateModalTab(key)} items={[
           {
             key: 'generate',
             label: '1. AI生成题目',
@@ -787,14 +1058,133 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             )
           },
           {
+            key: 'preview',
+            label: '2. 题目预览',
+            disabled: !generatedData,
+            children: generatedData ? (
+              <div>
+                <Alert 
+                  type="info" 
+                  showIcon 
+                  message={`共${generatedData.question_count}道主题，含${generatedData.total_generated}道含变体。点击"编辑"可修改题目内容/答案，点击"▼ 查看变体题目"查看备用题`} 
+                  style={{ marginBottom: 12 }} 
+                />
+                <div style={{ maxHeight: 500, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>
+                  {generatedData.questions.map((q, i) => (
+                    <div key={i} style={{ padding: '10px 12px', background: i % 2 === 0 ? '#fafafa' : '#fff', borderRadius: 6, marginBottom: 6 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ flex: 1 }}>
+                          <strong>Q{i + 1}.</strong> <Tag color="purple">{typeOptions.find(t => t.value === q.type)?.label}</Tag>
+                          <span style={{ marginLeft: 4 }}>{q.content}</span>
+                          {q.knowledge_point && <Tag color="blue" style={{ marginLeft: 8 }}>🏷️ {q.knowledge_point}</Tag>}
+                          {q.hasVariants && (
+                            <Tag
+                              color="orange"
+                              style={{ marginLeft: 8, cursor: 'pointer' }}
+                              onClick={() => setShowVariantQuestions(prev => ({ ...prev, [i]: !prev[i] }))}
+                            >
+                              {showVariantQuestions[i] ? '▲ 收起变体' : '▼ 查看变体题目'}
+                            </Tag>
+                          )}
+                        </div>
+                        <Space size="small" style={{ marginLeft: 8, flexShrink: 0 }}>
+                          <Button
+                            size="small"
+                            icon={<EditOutlined />}
+                            onClick={() => handleEditQuestion(q, i)}
+                          >
+                            编辑
+                          </Button>
+                          <Button
+                            size="small"
+                            danger
+                            onClick={() => handleDeleteQuestion(i)}
+                          >
+                            删除
+                          </Button>
+                        </Space>
+                      </div>
+                      {q.options && q.options.length > 0 && (
+                        <div style={{ marginTop: 6, paddingLeft: 24, color: '#666', fontSize: 13 }}>
+                          {q.options.map((opt, oi) => {
+                            const optLetter = String.fromCharCode(65 + oi);
+                            const isCorrect = q.answer && q.answer.split(',').map(a => a.trim()).includes(optLetter);
+                            return (
+                              <div key={oi} style={{ color: isCorrect ? '#52c41a' : '#666', fontWeight: isCorrect ? 600 : 400 }}>
+                                {optLetter}. {opt}{isCorrect && ' ✓'}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {q.answer && (
+                        <div style={{ marginTop: 4, paddingLeft: 24 }}>
+                          <Tag color="green">答案：{q.answer}</Tag>
+                          {q.type === 'judgment' && (q.answer === 'true' ? '（正确）' : '（错误）')}
+                        </div>
+                      )}
+                      {q.explanation && (
+                        <div style={{ marginTop: 4, paddingLeft: 24, color: '#8c8c8c', fontSize: 12, fontStyle: 'italic' }}>
+                          解析：{q.explanation}
+                        </div>
+                      )}
+                      {q.hasVariants && showVariantQuestions[i] && (
+                        <div style={{ marginTop: 8, padding: '8px 12px', background: '#fffbe6', border: '1px dashed #ffe58f', borderRadius: 6 }}>
+                          <div style={{ color: '#d48806', fontSize: 12, marginBottom: 6 }}>📋 备用变体题目（学生做错时推送相似题）</div>
+                          {q.variants && q.variants.map((v: any, vi: number) => (
+                            <div key={vi} style={{ padding: '6px 8px', background: '#fff', borderRadius: 4, marginBottom: 4, border: '1px solid #ffe58f' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                <div style={{ flex: 1 }}>
+                                  <Tag color="orange">变体{vi + 1}</Tag>
+                                  <span style={{ fontSize: 13 }}>{v.content}</span>
+                                </div>
+                                <Button size="small" icon={<EditOutlined />} onClick={() => handleEditQuestion(v, -1, i, vi)} style={{ marginLeft: 8 }}>编辑</Button>
+                              </div>
+                              {v.options && v.options.length > 0 && (
+                                <div style={{ marginTop: 4, paddingLeft: 20, fontSize: 12 }}>
+                                  {v.options.map((opt: string, oi: number) => {
+                                    const optLetter = String.fromCharCode(65 + oi);
+                                    const isCorrect = v.answer && v.answer.split(',').map((a: string) => a.trim()).includes(optLetter);
+                                    return (
+                                      <span key={oi} style={{ marginRight: 12, color: isCorrect ? '#52c41a' : '#8c8c8c', fontWeight: isCorrect ? 600 : 400 }}>
+                                        {optLetter}. {opt}{isCorrect && ' ✓'}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                              {v.answer && <Tag color="green" style={{ marginTop: 4 }}>答案：{v.answer}</Tag>}
+                              {v.explanation && (
+                                <div style={{ marginTop: 2, color: '#8c8c8c', fontSize: 11, fontStyle: 'italic' }}>
+                                  解析：{v.explanation}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 16, textAlign: 'center' }}>
+                  <Button type="primary" onClick={() => setCreateModalTab('publish')}>
+                    确认题目，下一步 →
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Empty description="请先在第一步生成题目" />
+            )
+          },
+          {
             key: 'publish',
-            label: '2. 预览并发布',
+            label: '3. 发布设置',
             disabled: !generatedData,
             children: generatedData ? (
               <Form form={form} layout="vertical" onFinish={handleCreateAssignment}>
                 {(isAdmin || user?.role === 'teacher') && (
                   <Form.Item name="class_ids" label="发布到班级" rules={[{ required: true, message: '请选择至少一个班级' }]}>
-                    <Select mode="multiple" placeholder="选择班级（可多选）" maxTagCount={3}>{classes.map(c => <Option key={c.id} value={c.id}>{c.name}</Option>)}</Select>
+                    <Select mode="multiple" placeholder="选择班级（可多选）" maxTagCount={5}>{classes.map(c => <Option key={c.id} value={c.id}>{c.name}</Option>)}</Select>
                   </Form.Item>
                 )}
                 <Form.Item name="title" label="作业标题" rules={[{ required: true }]} initialValue={generatedData.title}>
@@ -803,37 +1193,6 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 <Form.Item name="description" label="作业说明" initialValue={generatedData.description}>
                   <TextArea rows={2} />
                 </Form.Item>
-                
-                <Divider orientation="left">题目预览（共{generatedData.question_count}道）</Divider>
-                <div style={{ maxHeight: 300, overflowY: 'auto', marginBottom: 16 }}>
-                  {generatedData.questions.map((q, i) => (
-                    <div key={i} style={{ padding: '8px 12px', background: i % 2 === 0 ? '#fafafa' : '#fff', borderRadius: 6, marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ flex: 1 }}>
-                        <strong>Q{i + 1}.</strong> [{typeOptions.find(t => t.value === q.type)?.label}] {q.content}
-                        {q.knowledge_point && <Tag color="blue" style={{ marginLeft: 8 }}>🏷️ {q.knowledge_point}</Tag>}
-                        {q.hasVariants && <Tag color="orange" style={{ marginLeft: 8 }}>含变体</Tag>}
-                      </div>
-                      <Space size="small">
-                        <Button 
-                          size="small" 
-                          icon={<EyeOutlined />} 
-                          onClick={() => handleEditQuestion(q, i)}
-                          title="编辑题目"
-                        >
-                          编辑
-                        </Button>
-                        <Button 
-                          size="small" 
-                          danger
-                          onClick={() => handleDeleteQuestion(i)}
-                          title="删除题目"
-                        >
-                          删除
-                        </Button>
-                      </Space>
-                    </div>
-                  ))}
-                </div>
 
                 <Row gutter={16}>
                   <Col span={12}>
@@ -854,7 +1213,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 <Button type="primary" htmlType="submit" block>确认发布作业</Button>
               </Form>
             ) : (
-              <Empty description="请先生成题目" />
+              <Empty description="请先在第一步生成题目" />
             )
           }
         ]} />
@@ -862,7 +1221,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
       {/* 学生作答弹窗 */}
       <Modal
-        title={`📝 ${currentAssignment?.isRetryMode ? '错题重做' : '完成作业'}: ${currentAssignment?.title || ''}`}
+        title={isTeacher ? `👁️ 预览作业: ${currentAssignment?.title || ''}` : `📝 ${currentAssignment?.isRetryMode ? '错题重做' : '完成作业'}: ${currentAssignment?.title || ''}`}
         open={isDoModalVisible}
         onCancel={() => setIsDoModalVisible(false)}
         width={isMobile ? '95vw' : 700}
@@ -871,20 +1230,22 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         styles={{ body: { maxHeight: '70vh', overflowY: 'auto', padding: '16px 24px' } }}
         footer={
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <div style={{ flex: 1 }}>
-              <Progress 
-                percent={Math.round(((currentAssignment?.questions || []).filter((q: Question) => {
-                  const a = studentAnswers[q.id!];
-                  return a !== undefined && a !== null && a !== '';
-                }).length / (currentAssignment?.questions?.length || 1)) * 100)} 
-                status="active"
-                size="small"
-                format={(_p) => `已完成 ${(currentAssignment?.questions || []).filter((q: Question) => studentAnswers[q.id!] !== undefined && studentAnswers[q.id!] !== null && studentAnswers[q.id!] !== '').length}/${currentAssignment?.questions?.length || 0} 题`}
-              />
-            </div>
-            <Button onClick={() => setIsDoModalVisible(false)}>取消</Button>
+            {!isTeacher && (
+              <div style={{ flex: 1 }}>
+                <Progress 
+                  percent={Math.round(((currentAssignment?.questions || []).filter((q: Question) => {
+                    const a = studentAnswers[q.id!];
+                    return a !== undefined && a !== null && a !== '';
+                  }).length / (currentAssignment?.questions?.length || 1)) * 100)} 
+                  status="active"
+                  size="small"
+                  format={(_p) => `已完成 ${(currentAssignment?.questions || []).filter((q: Question) => studentAnswers[q.id!] !== undefined && studentAnswers[q.id!] !== null && studentAnswers[q.id!] !== '').length}/${currentAssignment?.questions?.length || 0} 题`}
+                />
+              </div>
+            )}
+            <Button onClick={() => setIsDoModalVisible(false)}>{isTeacher ? '关闭' : '取消'}</Button>
             <Button type="primary" loading={submitting} onClick={handleSubmitAnswers}>
-              {submitting ? "提交中..." : "提交答案"}
+              {submitting ? "提交中..." : isTeacher ? "保存修改" : "提交答案"}
             </Button>
           </div>
         }
@@ -892,17 +1253,22 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         {currentAssignment && (
           <div>
             <Alert 
-              type={currentAssignment.isRetryMode ? "warning" : "info"} 
+              type={isTeacher ? "info" : currentAssignment.isRetryMode ? "warning" : "info"} 
               showIcon 
               message={
-                currentAssignment.isRetryMode 
-                  ? "这是根据你之前做错的题目生成的相似题，再试一次吧！" 
-                  : `${currentAssignment.subject} | 共${currentAssignment.questions?.length || 0}道题 | 金币奖励: +${currentAssignment.max_exp}`
+                isTeacher 
+                  ? `预览模式 | 共${currentAssignment.questions?.length || 0}道题 | 可修改答案/评阅标准后点击"保存修改"`
+                  : currentAssignment.isRetryMode 
+                    ? "这是根据你之前做错的题目生成的相似题，再试一次吧！" 
+                    : `${currentAssignment.subject} | 共${currentAssignment.questions?.length || 0}道题 | 金币奖励: +${currentAssignment.max_exp}`
               } 
               style={{ marginBottom: 16 }} 
             />
             
-            {currentAssignment.questions?.map((q: Question, i: number) => renderQuestionForStudent(q, i))}
+            {currentAssignment.questions?.map((_: Question, _si: number) => {
+              const i = shuffledQuestionOrder.length > 0 ? shuffledQuestionOrder[_si] : _si;
+              return renderQuestionForStudent(currentAssignment.questions[i], _si);
+            })}
           </div>
         )}
       </Modal>
@@ -1049,7 +1415,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     {statsData.question_stats?.map((qs: any, i: number) => (
                       <div key={i} style={{ marginBottom: 12 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <span><strong>第{i + 1}题</strong> <Tag>{typeOptions.find(t => t.value === qs.type)?.label || qs.type}</Tag></span>
+                          <span><strong>第{i + 1}题</strong> <Tag>{typeOptions.find(t => t.value === qs.type)?.label || qs.type}</Tag>{qs.answer && <Tag color="green" style={{ marginLeft: 4 }}>答案：{qs.type === 'judgment' ? (qs.answer === 'true' ? '正确' : '错误') : qs.answer}</Tag>}</span>
                           <span>{qs.correct_rate}% ({qs.correct_count}/{qs.total_answers})</span>
                         </div>
                         <Progress percent={qs.correct_rate} status={qs.correct_rate >= 70 ? 'success' : qs.correct_rate >= 40 ? 'normal' : 'exception'} size="small" />
@@ -1117,11 +1483,59 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             <TextArea rows={4} placeholder="请输入题目内容..." />
           </Form.Item>
           
-          <Form.Item name="options" label="选项（每行一个）" extra="如果题目没有选项，可以留空">
-            <TextArea 
-              rows={4} 
-              placeholder={"A. 选项一\nB. 选项二\nC. 选项三\nD. 选项四"}
-            />
+          {editingQuestion && ['choice_single', 'choice_multi', 'judgment'].includes(editingQuestion.type) && (
+            <Form.Item name="options" label="选项（每行一个）" extra="如果题目没有选项，可以留空">
+              <TextArea 
+                rows={4} 
+                placeholder={"A. 选项一\nB. 选项二\nC. 选项三\nD. 选项四"}
+              />
+            </Form.Item>
+          )}
+
+          {editingQuestion && editingQuestion.type === 'choice_single' && (
+            <Form.Item name="answer" label="正确答案" rules={[{ required: true, message: '请选择正确答案' }]}>
+              <Radio.Group>
+                <Radio value="A">A</Radio>
+                <Radio value="B">B</Radio>
+                <Radio value="C">C</Radio>
+                <Radio value="D">D</Radio>
+              </Radio.Group>
+            </Form.Item>
+          )}
+
+          {editingQuestion && editingQuestion.type === 'choice_multi' && (
+            <Form.Item name="answer" label="正确答案（多选）" rules={[{ required: true, message: '请选择正确答案' }]}>
+              <Checkbox.Group>
+                <Checkbox value="A">A</Checkbox>
+                <Checkbox value="B">B</Checkbox>
+                <Checkbox value="C">C</Checkbox>
+                <Checkbox value="D">D</Checkbox>
+              </Checkbox.Group>
+            </Form.Item>
+          )}
+
+          {editingQuestion && editingQuestion.type === 'judgment' && (
+            <Form.Item name="answer" label="正确答案" rules={[{ required: true, message: '请选择正确答案' }]}>
+              <Radio.Group>
+                <Radio value="true">正确 ✓</Radio>
+                <Radio value="false">错误 ✗</Radio>
+              </Radio.Group>
+            </Form.Item>
+          )}
+
+          {editingQuestion && editingQuestion.type === 'essay' && (
+            <>
+              <Form.Item name="answer" label="参考答案 / 评阅标准" extra="替换AI生成的默认评阅标准，用于主观题评分参考">
+                <TextArea rows={4} placeholder="请输入参考答案或评分标准..." />
+              </Form.Item>
+              <Form.Item name="analysis" label="答题思路指导" extra="帮助学生理解答题方向">
+                <TextArea rows={3} placeholder="请输入答题思路..." />
+              </Form.Item>
+            </>
+          )}
+
+          <Form.Item name="explanation" label="解析" extra="题目解析，帮助学生理解正确答案">
+            <TextArea rows={3} placeholder="请输入题目解析..." />
           </Form.Item>
           
           <Form.Item name="difficulty" label="难度">
