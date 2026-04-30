@@ -41,8 +41,8 @@ const RootRedirect: React.FC = () => {
       navigate(`/c/${user.class_slug}/app`, { replace: true });
       return;
     }
-    // 保留上次所选班级
-    if (currentClass?.slug) {
+    // 保留上次所选班级（需确保 slug 有效）
+    if (currentClass?.slug && currentClass.slug !== 'null' && currentClass.slug !== 'undefined') {
       navigate(`/c/${currentClass.slug}/app`, { replace: true });
     }
   }, [isAuthenticated, user, currentClass, navigate]);

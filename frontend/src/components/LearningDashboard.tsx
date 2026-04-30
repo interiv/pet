@@ -16,16 +16,6 @@ import { MasteryRing, AccuracyColumn, CountColumn, WeakPointBar, LearningHeatmap
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
 
-const useMobile = () => {
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, []);
-  return isMobile;
-};
-
 interface KnowledgePointStat {
   knowledge_point: string;
   total_attempts: number;
@@ -49,7 +39,6 @@ interface WeakPointData {
 }
 
 const LearningDashboard: React.FC = () => {
-  const isMobile = useMobile();
   const [loading, setLoading] = useState(false);
   const [days, setDays] = useState(7);
   const [kpData, setKpData] = useState<KnowledgePointData | null>(null);

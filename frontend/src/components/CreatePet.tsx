@@ -5,16 +5,6 @@ import { usePetStore } from '../store/authStore';
 
 const { Option } = Select;
 
-const useMobile = () => {
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, []);
-  return isMobile;
-};
-
 interface CreatePetProps {
   onSuccess: () => void;
 }
@@ -22,7 +12,6 @@ interface CreatePetProps {
 const CreatePet: React.FC<CreatePetProps> = ({ onSuccess }) => {
   const [form] = Form.useForm();
   const { setPet } = usePetStore();
-  const isMobile = useMobile();
   const [loading, setLoading] = useState(false);
   const [speciesList, setSpeciesList] = useState<any[]>([]);
 

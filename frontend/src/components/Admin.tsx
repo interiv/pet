@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge, Switch, Alert } from 'antd';
-import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DollarOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined } from '@ant-design/icons';
+import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DollarOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined } from '@ant-design/icons';
 import { adminAPI, schoolAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+import ClassInvitationManager from './ClassInvitationManager';
+import AchievementManagement from './admin/AchievementManagement';
 
 const useMobile = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -45,12 +47,14 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
         { key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> },
         { key: 'site_settings', label: <span><GlobalOutlined /> 网站设置</span>, children: <SiteSettings /> },
         { key: 'ai_settings', label: <span><RobotOutlined /> AI设置</span>, children: <AISettings /> },
+        { key: 'achievements', label: <span><TrophyOutlined /> 成就管理</span>, children: <AchievementManagement /> },
       ];
     } else if (isTeacher) {
       return [
         { key: 'dashboard', label: <span><TeamOutlined /> 总览</span>, children: <Dashboard /> },
         { key: 'students', label: <span><TeamOutlined /> 学生管理</span>, children: <StudentManagement /> },
         { key: 'classes', label: <span><FolderOutlined /> 班级管理</span>, children: <ClassManagement /> },
+        { key: 'class-invitation', label: <span><TeamOutlined /> 邀请设置</span>, children: <ClassInvitationManager /> },
         { key: 'applications', label: <span><TeamOutlined /> 入学申请</span>, children: <ApplicationManagement /> },
         { key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> },
       ];

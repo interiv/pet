@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Row, Col, Button, Tabs, Badge, Statistic, message, List, Avatar, TabsProps } from 'antd';
 import { ShoppingCartOutlined, DollarCircleOutlined, GiftOutlined } from '@ant-design/icons';
-import { itemAPI, petAPI } from '../utils/api';
+import { itemAPI, petAPI, authAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
 
 
@@ -12,7 +12,7 @@ interface Props {
 }
 
 const ShopAndBackpack: React.FC<Props> = ({ defaultTab = 'shop', viewMode = 'all' }) => {
-  const { user } = useAuthStore();
+  const { user, setUser } = useAuthStore();
   const { pet, setPet } = usePetStore();
   
   const [shopItems, setShopItems] = useState<any[]>([]);
@@ -70,7 +70,9 @@ const ShopAndBackpack: React.FC<Props> = ({ defaultTab = 'shop', viewMode = 'all
     try {
       await itemAPI.buyItem({ item_id: itemId, quantity: 1 });
       message.success('购买成功！');
-      // 简单刷新当前金币显示(理想情况应该更新 authStore 里的 user.gold)
+      // 刷新用户金币
+      const meRes = await authAPI.getMe();
+      setUser(meRes.data.user);
     } catch (error: any) {
       message.error(error.response?.data?.error || '购买失败');
     } finally {

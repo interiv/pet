@@ -250,7 +250,7 @@ const Friends: React.FC = () => {
                         <Button type="link" icon={<FireOutlined />} onClick={() => handleFriendBattle(item)}>对战</Button>,
                         <Popconfirm
                           title="确定要删除该好友吗？"
-                          onConfirm={() => handleRemoveFriend(item.id)}
+                          onConfirm={() => handleRemoveFriend(item.friend_id)}
                           okText="确定"
                           cancelText="取消"
                         >

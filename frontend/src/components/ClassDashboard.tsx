@@ -65,13 +65,11 @@ const ClassDashboard: React.FC = () => {
     };
     socket.on('assignment-submitted', handler);
     socket.on('connect', reconnectHandler);
-    socket.io?.on?.('reconnect', reconnectHandler);
     return () => {
       // 离开旧班级房间，避免收到旧班级的推送
       socket.emit('leave-class-chat', currentClassId);
       socket.off('assignment-submitted', handler);
       socket.off('connect', reconnectHandler);
-      socket.io?.off?.('reconnect', reconnectHandler);
     };
   }, [socket, selectedClassId]);
 

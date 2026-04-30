@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Card, Row, Col, Button, Tabs, List, Tag, Statistic, message, Avatar, TabsProps, Modal, Progress } from 'antd';
 import { TrophyOutlined, FireOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { petAPI, battleAPI, authAPI } from '../utils/api';
@@ -32,6 +32,7 @@ const Battle: React.FC = () => {
   const [battleAnimationComplete, setBattleAnimationComplete] = useState(false);
   
   // 庆祝动画
+  const animationCancelledRef = useRef(false);
   const [showCelebration, setShowCelebration] = useState(false);
   const [celebrationData, setCelebrationData] = useState({
     expReward: 0,
@@ -92,21 +93,24 @@ const Battle: React.FC = () => {
       });
       
       // 显示战斗动画
+      animationCancelledRef.current = false;
       setShowBattleAnimation(true);
       setCurrentRound(0);
       setBattleAnimationComplete(false);
       setBattleModalVisible(true);
-      
+
       // 逐回合播放动画
       if (battleLog && battleLog.rounds) {
         for (let i = 0; i < battleLog.rounds.length; i++) {
           await new Promise(resolve => setTimeout(resolve, 1500));
+          if (animationCancelledRef.current) return;
           setCurrentRound(i + 1);
         }
       }
-      
+
       // 动画完成后显示完整结果
       await new Promise(resolve => setTimeout(resolve, 1000));
+      if (animationCancelledRef.current) return;
       setBattleAnimationComplete(true);
       
       if (winner === '我') {
@@ -288,6 +292,7 @@ const Battle: React.FC = () => {
         }
         open={battleModalVisible}
         onCancel={() => {
+          animationCancelledRef.current = true;
           setBattleModalVisible(false);
           setShowBattleAnimation(false);
           setCurrentRound(0);
@@ -295,6 +300,7 @@ const Battle: React.FC = () => {
         }}
         footer={[
           <Button key="close" type="primary" onClick={() => {
+            animationCancelledRef.current = true;
             setBattleModalVisible(false);
             setShowBattleAnimation(false);
             setCurrentRound(0);
@@ -309,7 +315,7 @@ const Battle: React.FC = () => {
         {battleResult && (
           <div>
             {/* 战斗中动画 */}
-            {showBattleAnimation && !battleAnimationComplete && battleResult.battleLog && battleResult.battleLog.rounds && (
+            {showBattleAnimation && !battleAnimationComplete && battleResult.battleLog && battleResult.battleLog.rounds && battleResult.battleLog.rounds.length > 0 && (
               <div style={{ marginBottom: 24 }}>
                 <Progress 
                   percent={Math.round((currentRound / battleResult.battleLog.rounds.length) * 100)} 

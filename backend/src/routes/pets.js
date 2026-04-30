@@ -3,6 +3,7 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { updateTaskProgress } = require('./daily-tasks');
+const { checkAndAwardAchievement } = require('./achievements');
 
 // 检查升级
 function checkLevelUp(pet) {
@@ -34,6 +35,8 @@ function checkLevelUp(pet) {
     if (newStage !== pet.growth_stage) {
       db.prepare('UPDATE pets SET growth_stage = ? WHERE user_id = ?').run(newStage, pet.user_id);
     }
+
+    try { checkAndAwardAchievement(pet.user_id, 'pet_level', newLevel); } catch (e) { console.error('成就检查失败:', e); }
 
     return {
       leveledUp: true,
@@ -186,12 +189,24 @@ router.post('/create', authenticateToken, (req, res) => {
       insertEquip.run(req.user.userId, eq.id);
     }
 
+    // 赠送新手初始道具：3个普通粮食
+    const starterItem = db.prepare('SELECT id FROM items WHERE name = ?').get('普通粮食');
+    if (starterItem) {
+      db.prepare('INSERT INTO user_items (user_id, item_id, quantity) VALUES (?, ?, ?)').run(req.user.userId, starterItem.id, 3);
+    }
+
     const pet = db.prepare(`
       SELECT p.*, ps.name as species_name, ps.element_type, ps.image_urls
       FROM pets p
       JOIN pet_species ps ON p.species_id = ps.id
       WHERE p.id = ?
     `).get(result.lastInsertRowid);
+
+    try {
+      checkAndAwardAchievement(req.user.userId, 'create_pet', 1);
+      const equipCount = db.prepare('SELECT COUNT(*) as c FROM user_equipment WHERE user_id = ?').get(req.user.userId)?.c || 0;
+      checkAndAwardAchievement(req.user.userId, 'collect_equipment', equipCount);
+    } catch (e) { console.error('成就检查失败:', e); }
 
     res.status(201).json({
       message: '宠物创建成功',
@@ -298,6 +313,11 @@ router.post('/feed', authenticateToken, (req, res) => {
 
     const updatedPet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(req.user.userId);
     const levelUp = checkLevelUp(updatedPet);
+
+    try {
+      const feedCount = db.prepare('SELECT COUNT(*) as c FROM daily_task_logs WHERE user_id = ? AND task_type = ?').get(req.user.userId, 'feed_pet')?.c || 0;
+      checkAndAwardAchievement(req.user.userId, 'feed_pet', feedCount + 1);
+    } catch (e) { console.error('成就检查失败:', e); }
 
     res.json({
       message: '投喂成功',

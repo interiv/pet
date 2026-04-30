@@ -201,7 +201,7 @@ const PetSkills: React.FC = () => {
                   percent={skill.mastery || 0}
                   size="small"
                   strokeColor="#fff"
-                  format={() => `精通度: ${skill.mastery}%`}
+                  format={() => `精通度: ${skill.mastery !== undefined ? skill.mastery : 0}%`}
                   style={{ marginBottom: 12 }}
                 />
 
@@ -213,7 +213,7 @@ const PetSkills: React.FC = () => {
                   onClick={() => handleUpgradeSkill(skill.id)}
                   style={{ background: '#fff', color: '#667eea', border: 'none' }}
                 >
-                  升级 (需要 {skill.level! * 50} 金币)
+                  升级 (需要 {(skill.level || 1) * 50} 金币)
                 </Button>
               </Card>
             </Badge.Ribbon>

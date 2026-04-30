@@ -143,6 +143,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     }
   }, [user]);
 
+  useEffect(() => {
+    if (user) loadAssignments();
+  }, [selectedClass]);
+
   const loadClasses = async () => {
     try {
       const res = await adminAPI.getClasses();
@@ -381,8 +385,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     if (!submitResult?.wrong_questions || submitResult.wrong_questions.length === 0) return;
     
     const wrongQs = submitResult.wrong_questions;
-    const retryQuestions = wrongQs.map((wq: any) => ({
+    const retryQuestions = wrongQs.map((wq: any, idx: number) => ({
       ...wq.retry_question,
+      id: wq.retry_question?.id ?? wq.retry_question?.question_id ?? `retry_${idx}`,
       originalId: wq.original_question_id
     }));
     
@@ -639,7 +644,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <h2 style={{ margin: 0 }}>📝 班级作业</h2>
           {isAdmin && (
-            <Select placeholder="筛选班级" allowClear style={{ width: 200 }} onChange={(v) => { setSelectedClass(v); loadAssignments(); }} value={selectedClass}>
+            <Select placeholder="筛选班级" allowClear style={{ width: 200 }} onChange={(v) => setSelectedClass(v)} value={selectedClass}>
               {classes.map(c => <Option key={c.id} value={c.id}>{c.name}</Option>)}
             </Select>
           )}

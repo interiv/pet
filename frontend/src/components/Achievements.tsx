@@ -9,6 +9,7 @@ interface Achievement {
   name: string;
   description: string;
   icon?: string;
+  category?: string;
   condition?: string;
   reward_type?: string;
   reward_value?: number;
@@ -26,30 +27,19 @@ interface UserAchievement {
 const categoryNames: Record<string, string> = {
   'battle': '战斗成就',
   'pet': '宠物成就',
+  'learning': '学习成就',
   'social': '社交成就',
   'collection': '收集成就',
-  'special': '特殊成就'
+  'special': '综合成就',
 };
 
 const categoryColors: Record<string, string> = {
   'battle': '#ff4d4f',
   'pet': '#52c41a',
-  'social': '#1890ff',
+  'learning': '#1677ff',
+  'social': '#722ed1',
   'collection': '#faad14',
-  'special': '#722ed1'
-};
-
-const inferCategory = (condition: string): string => {
-  try {
-    const cond = JSON.parse(condition);
-    if (cond.type.includes('battle') || cond.type.includes('win') || cond.type.includes('streak')) return 'battle';
-    if (cond.type.includes('pet') || cond.type.includes('level') || cond.type.includes('create_pet')) return 'pet';
-    if (cond.type.includes('friend') || cond.type.includes('social')) return 'social';
-    if (cond.type.includes('collect') || cond.type.includes('equipment')) return 'collection';
-    return 'special';
-  } catch {
-    return 'special';
-  }
+  'special': '#8c8c8c',
 };
 
 const Achievements: React.FC = () => {
@@ -95,7 +85,7 @@ const Achievements: React.FC = () => {
   };
 
   const getProgressByCategory = (category: string) => {
-    const categoryAchievements = achievements.filter(a => inferCategory(a.condition || '') === category);
+    const categoryAchievements = achievements.filter(a => (a.category || 'special') === category);
     if (categoryAchievements.length === 0) return 0;
     const completed = categoryAchievements.filter(a => isCompleted(a.id));
     return Math.round((completed.length / categoryAchievements.length) * 100);
@@ -104,7 +94,7 @@ const Achievements: React.FC = () => {
   const renderAchievementCard = (achievement: Achievement) => {
     const completed = isCompleted(achievement.id);
     const userAch = getUserAchievement(achievement.id);
-    const category = inferCategory(achievement.condition || '');
+    const category = achievement.category || 'special';
     const completedAt = userAch?.completed_at;
 
     return (
@@ -192,7 +182,7 @@ const Achievements: React.FC = () => {
 
   const groupedAchievements: Record<string, Achievement[]> = {};
   achievements.forEach(a => {
-    const category = inferCategory(a.condition || '');
+    const category = a.category || 'special';
     if (!groupedAchievements[category]) {
       groupedAchievements[category] = [];
     }

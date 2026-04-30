@@ -483,7 +483,10 @@ db.exec(`
     description TEXT,
     condition TEXT,
     reward_type TEXT,
-    reward_value INTEGER
+    reward_value INTEGER,
+    category TEXT DEFAULT 'special',
+    icon TEXT DEFAULT '🏆',
+    sort_order INTEGER DEFAULT 0
   );
 
   -- ==================== 用户成就 ====================
@@ -493,7 +496,8 @@ db.exec(`
     achievement_id INTEGER NOT NULL,
     completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (achievement_id) REFERENCES achievements(id)
+    FOREIGN KEY (achievement_id) REFERENCES achievements(id),
+    UNIQUE(user_id, achievement_id)
   );
 
   -- ==================== 错题本 ====================
@@ -1028,64 +1032,61 @@ const insertSkill = db.prepare('INSERT INTO skills (name, description, icon, ski
 skills.forEach(s => insertSkill.run(s.name, s.description, s.icon, s.skill_type, s.subject, s.base_damage, s.base_defense, s.base_speed, s.cooldown, s.required_level, s.required_knowledge_point, s.required_accuracy));
 console.log('   ✓ 技能数据初始化完成 (9个)');
 
-// --- 成就 (100+个) ---
+// --- 成就 (42个) ---
 const achievements = [
-  // 新手入门
-  { name: '初入江湖', description: '创建第一只宠物', condition: JSON.stringify({ type: 'create_pet', count: 1 }), reward_type: 'gold', reward_value: 100 },
-  { name: '初露锋芒', description: '宠物达到5级', condition: JSON.stringify({ type: 'pet_level', level: 5 }), reward_type: 'gold', reward_value: 150 },
-  { name: '小有所成', description: '宠物达到10级', condition: JSON.stringify({ type: 'pet_level', level: 10 }), reward_type: 'item', reward_value: 3 },
-  { name: '渐入佳境', description: '宠物达到15级', condition: JSON.stringify({ type: 'pet_level', level: 15 }), reward_type: 'gold', reward_value: 300 },
-  { name: '崭露头角', description: '宠物达到20级', condition: JSON.stringify({ type: 'pet_level', level: 20 }), reward_type: 'item', reward_value: 5 },
-  { name: '声名鹊起', description: '宠物达到25级', condition: JSON.stringify({ type: 'pet_level', level: 25 }), reward_type: 'gold', reward_value: 500 },
-  { name: '一方霸主', description: '宠物达到30级', condition: JSON.stringify({ type: 'pet_level', level: 30 }), reward_type: 'item', reward_value: 8 },
-  { name: '威震八方', description: '宠物达到40级', condition: JSON.stringify({ type: 'pet_level', level: 40 }), reward_type: 'gold', reward_value: 800 },
-  { name: '登峰造极', description: '宠物达到50级', condition: JSON.stringify({ type: 'pet_level', level: 50 }), reward_type: 'item', reward_value: 10 },
-  { name: '超凡入圣', description: '宠物达到60级', condition: JSON.stringify({ type: 'pet_level', level: 60 }), reward_type: 'gold', reward_value: 1000 },
-  { name: '天下无敌', description: '宠物达到70级', condition: JSON.stringify({ type: 'pet_level', level: 70 }), reward_type: 'item', reward_value: 15 },
-  { name: '传奇诞生', description: '宠物达到80级', condition: JSON.stringify({ type: 'pet_level', level: 80 }), reward_type: 'gold', reward_value: 2000 },
-  { name: '神话降临', description: '宠物达到90级', condition: JSON.stringify({ type: 'pet_level', level: 90 }), reward_type: 'item', reward_value: 20 },
-  { name: '满级成就', description: '宠物达到100级', condition: JSON.stringify({ type: 'pet_level', level: 100 }), reward_type: 'gold', reward_value: 5000 },
-  // 经验积累
-  { name: '初学乍练', description: '累计获得1000经验', condition: JSON.stringify({ type: 'total_exp', exp: 1000 }), reward_type: 'gold', reward_value: 100 },
-  { name: '学有小成', description: '累计获得5000经验', condition: JSON.stringify({ type: 'total_exp', exp: 5000 }), reward_type: 'gold', reward_value: 200 },
-  { name: '学有所成', description: '累计获得10000经验', condition: JSON.stringify({ type: 'total_exp', exp: 10000 }), reward_type: 'item', reward_value: 2 },
-  { name: '学富五车', description: '累计获得50000经验', condition: JSON.stringify({ type: 'total_exp', exp: 50000 }), reward_type: 'gold', reward_value: 500 },
-  { name: '博学多才', description: '累计获得100000经验', condition: JSON.stringify({ type: 'total_exp', exp: 100000 }), reward_type: 'item', reward_value: 5 },
-  // 战斗相关
-  { name: '首战告捷', description: '获得第一场战斗胜利', condition: JSON.stringify({ type: 'win_battle', count: 1 }), reward_type: 'gold', reward_value: 200 },
-  { name: '战斗新手', description: '累计胜利10场', condition: JSON.stringify({ type: 'win_battle', count: 10 }), reward_type: 'gold', reward_value: 300 },
-  { name: '身经百战', description: '累计胜利50场', condition: JSON.stringify({ type: 'win_battle', count: 50 }), reward_type: 'item', reward_value: 3 },
-  { name: '百战不殆', description: '累计胜利100场', condition: JSON.stringify({ type: 'win_battle', count: 100 }), reward_type: 'gold', reward_value: 800 },
-  { name: '连胜新星', description: '获得3连胜', condition: JSON.stringify({ type: 'win_streak', count: 3 }), reward_type: 'gold', reward_value: 150 },
-  { name: '连胜达人', description: '获得10连胜', condition: JSON.stringify({ type: 'win_streak', count: 10 }), reward_type: 'item', reward_value: 5 },
-  { name: '首战失利', description: '经历第一次战败', condition: JSON.stringify({ type: 'lose_battle', count: 1 }), reward_type: 'gold', reward_value: 50 },
-  // 作业相关
-  { name: '作业新手', description: '完成第一次作业', condition: JSON.stringify({ type: 'submit_assignment', count: 1 }), reward_type: 'gold', reward_value: 100 },
-  { name: '作业达人', description: '完成50次作业', condition: JSON.stringify({ type: 'submit_assignment', count: 50 }), reward_type: 'item', reward_value: 3 },
-  { name: '作业大师', description: '完成200次作业', condition: JSON.stringify({ type: 'submit_assignment', count: 200 }), reward_type: 'item', reward_value: 8 },
-  { name: '优秀学生', description: '作业获得90分以上10次', condition: JSON.stringify({ type: 'high_score', count: 10, score: 90 }), reward_type: 'gold', reward_value: 500 },
-  { name: '满分达人', description: '作业获得100分5次', condition: JSON.stringify({ type: 'perfect_score', count: 5 }), reward_type: 'gold', reward_value: 800 },
-  // 社交相关
-  { name: '认识新朋友', description: '添加1个好友', condition: JSON.stringify({ type: 'add_friends', count: 1 }), reward_type: 'gold', reward_value: 50 },
-  { name: '社交达人', description: '添加10个好友', condition: JSON.stringify({ type: 'add_friends', count: 10 }), reward_type: 'item', reward_value: 3 },
-  { name: '初次聊天', description: '发送第一条消息', condition: JSON.stringify({ type: 'send_message', count: 1 }), reward_type: 'gold', reward_value: 30 },
-  // 收集相关
-  { name: '初获装备', description: '获得第一件装备', condition: JSON.stringify({ type: 'collect_equipment', count: 1 }), reward_type: 'gold', reward_value: 100 },
-  { name: '装备收藏家', description: '收集10件装备', condition: JSON.stringify({ type: 'collect_equipment', count: 10 }), reward_type: 'item', reward_value: 3 },
-  // 登录相关
-  { name: '首次登录', description: '第一天登录游戏', condition: JSON.stringify({ type: 'login', count: 1 }), reward_type: 'gold', reward_value: 50 },
-  { name: '连续登录', description: '连续登录7天', condition: JSON.stringify({ type: 'continuous_login', days: 7 }), reward_type: 'item', reward_value: 2 },
-  { name: '登录常客', description: '连续登录30天', condition: JSON.stringify({ type: 'continuous_login', days: 30 }), reward_type: 'item', reward_value: 5 },
-  // 金币相关
-  { name: '小有积蓄', description: '累计获得1000金币', condition: JSON.stringify({ type: 'total_gold', gold: 1000 }), reward_type: 'item', reward_value: 2 },
-  { name: '富甲一方', description: '累计获得100000金币', condition: JSON.stringify({ type: 'total_gold', gold: 100000 }), reward_type: 'item', reward_value: 10 },
-  // 每日任务
-  { name: '每日任务初体验', description: '完成第一个每日任务', condition: JSON.stringify({ type: 'complete_daily_task', count: 1 }), reward_type: 'gold', reward_value: 50 },
-  { name: '任务达人', description: '累计完成50个每日任务', condition: JSON.stringify({ type: 'complete_daily_task', count: 50 }), reward_type: 'gold', reward_value: 300 }
+  // 宠物
+  { name: '初入江湖', description: '创建第一只宠物', condition: JSON.stringify({ type: 'create_pet', count: 1 }), reward_type: 'gold', reward_value: 100, category: 'pet', icon: '🐾', sort_order: 1 },
+  { name: '初露锋芒', description: '宠物达到5级', condition: JSON.stringify({ type: 'pet_level', level: 5 }), reward_type: 'gold', reward_value: 150, category: 'pet', icon: '⭐', sort_order: 2 },
+  { name: '小有所成', description: '宠物达到10级', condition: JSON.stringify({ type: 'pet_level', level: 10 }), reward_type: 'item', reward_value: 3, category: 'pet', icon: '🌟', sort_order: 3 },
+  { name: '渐入佳境', description: '宠物达到15级', condition: JSON.stringify({ type: 'pet_level', level: 15 }), reward_type: 'gold', reward_value: 300, category: 'pet', icon: '💫', sort_order: 4 },
+  { name: '崭露头角', description: '宠物达到20级', condition: JSON.stringify({ type: 'pet_level', level: 20 }), reward_type: 'item', reward_value: 5, category: 'pet', icon: '✨', sort_order: 5 },
+  { name: '声名鹊起', description: '宠物达到25级', condition: JSON.stringify({ type: 'pet_level', level: 25 }), reward_type: 'gold', reward_value: 500, category: 'pet', icon: '🔥', sort_order: 6 },
+  { name: '一方霸主', description: '宠物达到30级', condition: JSON.stringify({ type: 'pet_level', level: 30 }), reward_type: 'item', reward_value: 8, category: 'pet', icon: '👑', sort_order: 7 },
+  { name: '威震八方', description: '宠物达到40级', condition: JSON.stringify({ type: 'pet_level', level: 40 }), reward_type: 'gold', reward_value: 800, category: 'pet', icon: '💎', sort_order: 8 },
+  { name: '登峰造极', description: '宠物达到50级', condition: JSON.stringify({ type: 'pet_level', level: 50 }), reward_type: 'item', reward_value: 10, category: 'pet', icon: '🏰', sort_order: 9 },
+  { name: '超凡入圣', description: '宠物达到60级', condition: JSON.stringify({ type: 'pet_level', level: 60 }), reward_type: 'gold', reward_value: 1000, category: 'pet', icon: '🌈', sort_order: 10 },
+  { name: '天下无敌', description: '宠物达到70级', condition: JSON.stringify({ type: 'pet_level', level: 70 }), reward_type: 'item', reward_value: 15, category: 'pet', icon: '⚡', sort_order: 11 },
+  { name: '传奇诞生', description: '宠物达到80级', condition: JSON.stringify({ type: 'pet_level', level: 80 }), reward_type: 'gold', reward_value: 2000, category: 'pet', icon: '🏆', sort_order: 12 },
+  { name: '神话降临', description: '宠物达到90级', condition: JSON.stringify({ type: 'pet_level', level: 90 }), reward_type: 'item', reward_value: 20, category: 'pet', icon: '🌠', sort_order: 13 },
+  { name: '满级成就', description: '宠物达到100级', condition: JSON.stringify({ type: 'pet_level', level: 100 }), reward_type: 'gold', reward_value: 5000, category: 'pet', icon: '🎯', sort_order: 14 },
+  { name: '初学乍练', description: '累计获得1000经验', condition: JSON.stringify({ type: 'total_exp', exp: 1000 }), reward_type: 'gold', reward_value: 100, category: 'pet', icon: '📖', sort_order: 15 },
+  { name: '学有小成', description: '累计获得5000经验', condition: JSON.stringify({ type: 'total_exp', exp: 5000 }), reward_type: 'gold', reward_value: 200, category: 'pet', icon: '📚', sort_order: 16 },
+  { name: '学有所成', description: '累计获得10000经验', condition: JSON.stringify({ type: 'total_exp', exp: 10000 }), reward_type: 'item', reward_value: 2, category: 'pet', icon: '🎓', sort_order: 17 },
+  { name: '学富五车', description: '累计获得50000经验', condition: JSON.stringify({ type: 'total_exp', exp: 50000 }), reward_type: 'gold', reward_value: 500, category: 'pet', icon: '🏫', sort_order: 18 },
+  { name: '博学多才', description: '累计获得100000经验', condition: JSON.stringify({ type: 'total_exp', exp: 100000 }), reward_type: 'item', reward_value: 5, category: 'pet', icon: '👨‍🎓', sort_order: 19 },
+  // 战斗
+  { name: '首战告捷', description: '获得第一场战斗胜利', condition: JSON.stringify({ type: 'win_battle', count: 1 }), reward_type: 'gold', reward_value: 200, category: 'battle', icon: '⚔️', sort_order: 20 },
+  { name: '战斗新手', description: '累计胜利10场', condition: JSON.stringify({ type: 'win_battle', count: 10 }), reward_type: 'gold', reward_value: 300, category: 'battle', icon: '🗡️', sort_order: 21 },
+  { name: '身经百战', description: '累计胜利50场', condition: JSON.stringify({ type: 'win_battle', count: 50 }), reward_type: 'item', reward_value: 3, category: 'battle', icon: '🛡️', sort_order: 22 },
+  { name: '百战不殆', description: '累计胜利100场', condition: JSON.stringify({ type: 'win_battle', count: 100 }), reward_type: 'gold', reward_value: 800, category: 'battle', icon: '🏅', sort_order: 23 },
+  { name: '连胜新星', description: '获得3连胜', condition: JSON.stringify({ type: 'win_streak', count: 3 }), reward_type: 'gold', reward_value: 150, category: 'battle', icon: '🔥', sort_order: 24 },
+  { name: '连胜达人', description: '获得10连胜', condition: JSON.stringify({ type: 'win_streak', count: 10 }), reward_type: 'item', reward_value: 5, category: 'battle', icon: '💥', sort_order: 25 },
+  { name: '首战失利', description: '经历第一次战败', condition: JSON.stringify({ type: 'lose_battle', count: 1 }), reward_type: 'gold', reward_value: 50, category: 'battle', icon: '💪', sort_order: 26 },
+  // 学习
+  { name: '作业新手', description: '完成第一次作业', condition: JSON.stringify({ type: 'submit_assignment', count: 1 }), reward_type: 'gold', reward_value: 100, category: 'learning', icon: '📝', sort_order: 30 },
+  { name: '作业达人', description: '完成50次作业', condition: JSON.stringify({ type: 'submit_assignment', count: 50 }), reward_type: 'item', reward_value: 3, category: 'learning', icon: '✏️', sort_order: 31 },
+  { name: '作业大师', description: '完成200次作业', condition: JSON.stringify({ type: 'submit_assignment', count: 200 }), reward_type: 'item', reward_value: 8, category: 'learning', icon: '🏅', sort_order: 32 },
+  { name: '优秀学生', description: '作业获得90分以上10次', condition: JSON.stringify({ type: 'high_score', count: 10, score: 90 }), reward_type: 'gold', reward_value: 500, category: 'learning', icon: '💯', sort_order: 33 },
+  { name: '满分达人', description: '作业获得100分5次', condition: JSON.stringify({ type: 'perfect_score', count: 5 }), reward_type: 'gold', reward_value: 800, category: 'learning', icon: '🥇', sort_order: 34 },
+  // 社交
+  { name: '认识新朋友', description: '添加1个好友', condition: JSON.stringify({ type: 'add_friends', count: 1 }), reward_type: 'gold', reward_value: 50, category: 'social', icon: '👋', sort_order: 40 },
+  { name: '社交达人', description: '添加10个好友', condition: JSON.stringify({ type: 'add_friends', count: 10 }), reward_type: 'item', reward_value: 3, category: 'social', icon: '🤝', sort_order: 41 },
+  { name: '初次聊天', description: '发送第一条消息', condition: JSON.stringify({ type: 'send_message', count: 1 }), reward_type: 'gold', reward_value: 30, category: 'social', icon: '💬', sort_order: 42 },
+  // 收集
+  { name: '初获装备', description: '获得第一件装备', condition: JSON.stringify({ type: 'collect_equipment', count: 1 }), reward_type: 'gold', reward_value: 100, category: 'collection', icon: '🎁', sort_order: 50 },
+  { name: '装备收藏家', description: '收集10件装备', condition: JSON.stringify({ type: 'collect_equipment', count: 10 }), reward_type: 'item', reward_value: 3, category: 'collection', icon: '🎒', sort_order: 51 },
+  // 签到
+  { name: '首次登录', description: '第一天登录游戏', condition: JSON.stringify({ type: 'login', count: 1 }), reward_type: 'gold', reward_value: 50, category: 'special', icon: '📅', sort_order: 60 },
+  { name: '连续登录', description: '连续登录7天', condition: JSON.stringify({ type: 'continuous_login', days: 7 }), reward_type: 'item', reward_value: 2, category: 'special', icon: '🔥', sort_order: 61 },
+  { name: '登录常客', description: '连续登录30天', condition: JSON.stringify({ type: 'continuous_login', days: 30 }), reward_type: 'item', reward_value: 5, category: 'special', icon: '👑', sort_order: 62 },
+  { name: '小有积蓄', description: '累计获得1000金币', condition: JSON.stringify({ type: 'total_gold', gold: 1000 }), reward_type: 'item', reward_value: 2, category: 'collection', icon: '💰', sort_order: 52 },
+  { name: '富甲一方', description: '累计获得100000金币', condition: JSON.stringify({ type: 'total_gold', gold: 100000 }), reward_type: 'item', reward_value: 10, category: 'collection', icon: '🤑', sort_order: 53 },
+  { name: '每日任务初体验', description: '完成第一个每日任务', condition: JSON.stringify({ type: 'complete_daily_task', count: 1 }), reward_type: 'gold', reward_value: 50, category: 'special', icon: '✅', sort_order: 63 },
+  { name: '任务达人', description: '累计完成50个每日任务', condition: JSON.stringify({ type: 'complete_daily_task', count: 50 }), reward_type: 'gold', reward_value: 300, category: 'special', icon: '🎯', sort_order: 64 }
 ];
 
-const insertAchievement = db.prepare('INSERT INTO achievements (name, description, condition, reward_type, reward_value) VALUES (?, ?, ?, ?, ?)');
-achievements.forEach(a => insertAchievement.run(a.name, a.description, a.condition, a.reward_type, a.reward_value));
+const insertAchievement = db.prepare('INSERT INTO achievements (name, description, condition, reward_type, reward_value, category, icon, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+achievements.forEach(a => insertAchievement.run(a.name, a.description, a.condition, a.reward_type, a.reward_value, a.category, a.icon, a.sort_order));
 console.log('   ✓ 成就数据初始化完成 (' + achievements.length + '个)');
 
 // --- 任务 ---

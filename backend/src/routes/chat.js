@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { checkAndAwardAchievement } = require('./achievements');
 
 // ==================== 聊天系统 ====================
 
@@ -206,6 +207,12 @@ router.post('/messages', authenticateToken, (req, res) => {
     `).get(result.lastInsertRowid);
 
     res.status(201).json({ message: message });
+
+    // 成就检查
+    try {
+      const msgCount = db.prepare("SELECT COUNT(*) as c FROM chat_messages WHERE user_id = ?").get(userId)?.c || 0;
+      checkAndAwardAchievement(userId, 'send_message', msgCount);
+    } catch (e) { console.error('成就检查失败:', e); }
   } catch (error) {
     console.error('发送消息失败:', error);
     res.status(500).json({ error: '发送消息失败' });

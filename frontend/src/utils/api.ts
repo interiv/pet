@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { usePetStore } from '../store/authStore';
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
 
@@ -41,6 +42,9 @@ api.interceptors.response.use(
       // token 过期或无效，清除并跳转登录页
       localStorage.removeItem('token');
       localStorage.removeItem('user');
+      localStorage.removeItem('currentClass');
+      localStorage.removeItem('pet');
+      usePetStore.getState().clearPet();
       // 只有在明确需要登录的页面才跳转
       if (window.location.pathname !== '/' && window.location.pathname !== '/login' && window.location.pathname !== '/register') {
         window.location.href = '/login';
@@ -211,6 +215,14 @@ export const achievementAPI = {
 
   checkAchievement: (data: { type: string; value: number }) =>
     api.post('/achievements/check', data),
+
+  getConditionTypes: () => api.get('/achievements/condition-types'),
+
+  // 管理员
+  adminGetItems: () => api.get('/achievements/admin/items'),
+  adminCreate: (data: any) => api.post('/achievements/admin', data),
+  adminUpdate: (id: number, data: any) => api.put(`/achievements/admin/${id}`, data),
+  adminDelete: (id: number) => api.delete(`/achievements/admin/${id}`),
 };
 
 // 宠物相关 API 扩展
@@ -378,7 +390,7 @@ export const forumAPI = {
 // 通知系统相关 API
 export const notificationAPI = {
   getNotifications: (params?: { type?: string; page?: number; limit?: number }) =>
-    api.get('/notifications/', { params }),
+    api.get('/notifications', { params }),
 
   getUnreadCount: () => api.get('/notifications/unread-count'),
 
@@ -450,6 +462,14 @@ export const schoolAPI = {
     api.put(`/schools/${id}`, data),
   deleteSchool: (id: number) => api.delete(`/schools/${id}`),
   getClassesOfSchool: (schoolId: number) => api.get(`/schools/${schoolId}/classes`),
+};
+
+// BOSS战相关 API
+export const bossBattleAPI = {
+  getCurrentBoss: (classId: number) => api.get(`/boss-battles/current/${classId}`),
+  getQuestion: (bossId: number) => api.get(`/boss-battles/${bossId}/question`),
+  attack: (bossId: number, data: { question_id: number; answer: string }) =>
+    api.post(`/boss-battles/${bossId}/attack`, data),
 };
 
 export default api;

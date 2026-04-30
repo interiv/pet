@@ -7,21 +7,10 @@ import { BookOutlined, CheckCircleOutlined, EyeOutlined, AimOutlined, Thunderbol
 
 const { Option } = Select;
 
-const useMobile = () => {
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, []);
-  return isMobile;
-};
-
 const subjectOptions = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治'];
 
 const WrongQuestions: React.FC = () => {
   const { user } = useAuthStore();
-  const isMobile = useMobile();
   const [wrongQuestions, setWrongQuestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [filterSubject, setFilterSubject] = useState<string>('');

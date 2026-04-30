@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
+const { checkAndAwardAchievement } = require('./achievements');
 
 // 获取班级当前BOSS
 router.get('/current/:classId', authenticateToken, (req, res) => {
@@ -398,6 +399,16 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
       boss_max_hp: boss.boss_max_hp,
       leaderboard
     });
+
+    // 成就检查
+    try {
+      const myTotalDamage = participant.damage_dealt + totalDamage;
+      checkAndAwardAchievement(req.user.userId, 'boss_damage', myTotalDamage);
+      if (bossDefeated) {
+        const killCount = db.prepare("SELECT COUNT(*) as c FROM boss_battles WHERE status = 'defeated' AND id IN (SELECT boss_battle_id FROM boss_battle_participants WHERE user_id = ?)").get(req.user.userId)?.c || 0;
+        checkAndAwardAchievement(req.user.userId, 'boss_kill', killCount);
+      }
+    } catch (e) { console.error('成就检查失败:', e); }
   } catch (error) {
     console.error('攻击BOSS失败:', error);
     res.status(500).json({ error: '攻击BOSS失败' });

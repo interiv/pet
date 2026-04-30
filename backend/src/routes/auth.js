@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { checkAndAwardAchievement } = require('./achievements');
 
 // 用户注册
 router.post('/register', async (req, res) => {
@@ -120,6 +121,15 @@ router.post('/login', async (req, res) => {
     // 更新最后登录时间
     db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
 
+    // 成就检查
+    try {
+      const loginCount = db.prepare("SELECT COUNT(*) as c FROM users WHERE id = ? AND last_login IS NOT NULL").get(user.id)?.c || 0;
+      checkAndAwardAchievement(user.id, 'login', loginCount > 0 ? loginCount : 1);
+    } catch (e) { console.error('成就检查失败:', e); }
+
+    // 获取班级slug
+    const classInfo = db.prepare('SELECT slug FROM classes WHERE id = ?').get(user.class_id);
+
     // 宠物属性每小时变化处理（登录时计算离线时间）
     const myPet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(user.id);
     if (myPet) {
@@ -183,6 +193,17 @@ router.post('/login', async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
+    // 教师：获取其所在的班级列表
+    let teacher_classes = [];
+    if (user.role === 'teacher' || user.role === 'admin') {
+      teacher_classes = db.prepare(`
+        SELECT c.id, c.name, c.slug, c.grade, ct.role AS class_role
+        FROM class_teachers ct JOIN classes c ON ct.class_id = c.id
+        WHERE ct.teacher_id = ?
+        ORDER BY c.created_at DESC
+      `).all(user.id);
+    }
+
     res.json({
       message: '登录成功',
       token,
@@ -192,7 +213,10 @@ router.post('/login', async (req, res) => {
         email: user.email,
         role: user.role,
         class_id: user.class_id,
-        avatar: user.avatar
+        class_slug: classInfo?.slug || null,
+        status: user.status,
+        avatar: user.avatar,
+        teacher_classes
       }
     });
   } catch (error) {

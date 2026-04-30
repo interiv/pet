@@ -57,9 +57,15 @@ const ChatRoom: React.FC = () => {
   // 手机端：列表视图/聊天视图切换
   const [mobileView, setMobileView] = useState<'list' | 'chat'>('list');
 
+  // 保持 activeChatRef 与 activeChat 同步
+  useEffect(() => {
+    activeChatRef.current = activeChat;
+  }, [activeChat]);
+
   const socketRef = useRef<Socket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeChatRef = useRef<Conversation | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
 
   useEffect(() => {
@@ -82,17 +88,30 @@ const ChatRoom: React.FC = () => {
       transports: ['websocket'],
     });
 
-    socket.on('connect', () => console.log('聊天 Socket 已连接'));
+    socket.on('connect', () => {
+      console.log('聊天 Socket 已连接');
+      // 重连后重新加入房间
+      const chat = activeChatRef.current;
+      if (chat) {
+        if (chat.type === 'class' && chat.class_id) {
+          socket.emit('join-class-chat', { class_id: chat.class_id });
+        } else if (chat.type === 'private' && chat.target_user_id) {
+          socket.emit('join-private-chat', { target_user_id: chat.target_user_id });
+        }
+      }
+    });
 
     socket.on('new-class-message', (msg: Message) => {
-      if (activeChat && activeChat.type === 'class') {
+      const chat = activeChatRef.current;
+      if (chat && chat.type === 'class') {
         setMessages(prev => [...prev, msg]);
         scrollToBottom();
       }
     });
 
     socket.on('new-private-message', (msg: Message) => {
-      if (activeChat && activeChat.type === 'private') {
+      const chat = activeChatRef.current;
+      if (chat && chat.type === 'private') {
         setMessages(prev => [...prev, msg]);
         scrollToBottom();
       }
@@ -110,7 +129,7 @@ const ChatRoom: React.FC = () => {
     });
 
     socketRef.current = socket;
-  }, [user, activeChat]);
+  }, [user]);
 
   const loadConversations = async () => {
     setLoading(true);

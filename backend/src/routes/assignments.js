@@ -4,6 +4,7 @@ const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { checkLevelUp } = require('./pets');
 const { updateTaskProgress } = require('./daily-tasks');
+const { checkAndAwardAchievement } = require('./achievements');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
@@ -745,6 +746,20 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
         can_retry: wrongQuestions.length > 0
       });
 
+      // 成就检查
+      try {
+        const submitCount = db.prepare('SELECT COUNT(DISTINCT assignment_id) as c FROM submissions WHERE user_id = ?').get(req.user.userId)?.c || 0;
+        checkAndAwardAchievement(req.user.userId, 'submit_assignment', submitCount);
+        if (totalScore >= 90) {
+          const highScoreCount = db.prepare("SELECT COUNT(*) as c FROM submissions WHERE user_id = ? AND total_score >= 90").get(req.user.userId)?.c || 0;
+          checkAndAwardAchievement(req.user.userId, 'high_score', highScoreCount);
+        }
+        if (totalScore === 100) {
+          const perfectCount = db.prepare("SELECT COUNT(*) as c FROM submissions WHERE user_id = ? AND total_score = 100").get(req.user.userId)?.c || 0;
+          checkAndAwardAchievement(req.user.userId, 'perfect_score', perfectCount);
+        }
+      } catch (e) { console.error('成就检查失败:', e); }
+
       // ✨ 向所在班级广播提交事件（教师端实时接收）
       try {
         const io = req.app.get('io');
@@ -1081,6 +1096,13 @@ router.post('/wrong/:id/review', authenticateToken, (req, res) => {
         updateTaskProgress(req.user.userId, 'review_weak_point', (taskLog.task_progress || 0) + 1);
       }
     } catch (e) { /* ignore */ }
+
+    // 成就检查
+    try {
+      const reviewedCount = db.prepare("SELECT COUNT(*) as c FROM wrong_questions WHERE user_id = ? AND reviewed = 1").get(req.user.userId)?.c || 0;
+      checkAndAwardAchievement(req.user.userId, 'review_wrong', reviewedCount);
+    } catch (e) { console.error('成就检查失败:', e); }
+
     res.json({ message: '标记复习成功' });
   } catch (error) {
     res.status(500).json({ error: '操作失败' });

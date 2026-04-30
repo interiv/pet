@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { checkAndAwardAchievement } = require('./achievements');
 
 // 获取今日任务
 router.get('/', authenticateToken, (req, res) => {
@@ -130,10 +131,16 @@ function updateTaskProgress(userId, taskType, progress) {
     // 如果任务刚完成，更新总完成数
     if (isCompleted && taskLog.is_completed === 0) {
       db.prepare(`
-        UPDATE daily_tasks 
+        UPDATE daily_tasks
         SET tasks_completed = tasks_completed + 1, last_updated = CURRENT_TIMESTAMP
         WHERE user_id = ? AND date = ?
       `).run(userId, today);
+
+      // 成就检查
+      try {
+        const totalCompleted = db.prepare("SELECT COUNT(*) as c FROM daily_task_logs WHERE user_id = ? AND is_completed = 1").get(userId)?.c || 0;
+        checkAndAwardAchievement(userId, 'complete_daily_task', totalCompleted + 1);
+      } catch (e) { console.error('成就检查失败:', e); }
     }
   } catch (error) {
     console.error('更新任务进度失败:', error);

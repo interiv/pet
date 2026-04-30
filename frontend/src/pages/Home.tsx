@@ -8,40 +8,25 @@ import {
   UserOutlined,
   LogoutOutlined,
   SettingOutlined,
-  TeamOutlined,
-  ExclamationCircleOutlined,
   MessageOutlined,
   BellOutlined,
   NotificationOutlined,
   MenuOutlined,
-  CommentOutlined,
-  FireOutlined,
   BarChartOutlined,
-  ThunderboltOutlined,
   HeartOutlined,
 } from '@ant-design/icons';
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
-import PetDisplay from '../components/PetDisplay';
 import CreatePet from '../components/CreatePet';
-import Assignments from '../components/Assignments';
-import WrongQuestions from '../components/WrongQuestions';
-import Battle from '../components/Battle';
-import ShopAndBackpack from '../components/ShopAndBackpack';
-import Friends from '../components/Friends';
 import Admin from '../components/Admin';
 import Profile from '../components/Profile';
-import Achievements from '../components/Achievements';
-import Posts from '../components/Posts';
-import ChatRoom from '../components/ChatRoom';
-import Forum from '../components/Forum';
 import Notifications from '../components/Notifications';
-import ClassInvitationManager from '../components/ClassInvitationManager';
-import DailyTasks from '../components/DailyTasks';
-import LearningDashboard from '../components/LearningDashboard';
-import PetSkills from '../components/PetSkills';
-import BossBattle from '../components/BossBattle';
 import ClassDashboard from '../components/ClassDashboard';
+import Arena from '../components/Arena';
+import StudyCenter from '../components/StudyCenter';
+import PetCenter from '../components/PetCenter';
+import SocialHub from '../components/SocialHub';
+import AchievementCenter from '../components/AchievementCenter';
 
 const { Header, Content, Sider, Footer } = Layout;
 
@@ -59,7 +44,7 @@ const useMobile = () => {
 const Home: React.FC = () => {
   const navigate = useNavigate();
   const { user, logout, isAuthenticated } = useAuthStore();
-  const { pet, setPet, hasPet } = usePetStore();
+  const { pet, setPet } = usePetStore();
   const isMobile = useMobile();
 
   const [siteSettings, setSiteSettings] = useState<any>({});
@@ -223,6 +208,7 @@ const Home: React.FC = () => {
     setNewbieStep(1);
     message.success('🎉 宠物创建成功！让我们开始新手任务吧！');
     loadPetData();
+    loadAllPets();
   };
   
   const handleNewbieNextStep = () => {
@@ -267,59 +253,30 @@ const Home: React.FC = () => {
   };
 
   const menuItems: any[] = [
-    {
-      key: 'home',
-      icon: <HomeOutlined />,
-      label: '首页',
-    },
+    { key: 'home', icon: <HomeOutlined />, label: '首页' },
   ];
 
   if (isStudent) {
     menuItems.push(
+      { key: 'study', icon: <BookOutlined />, label: '学习中心' },
       { key: 'pet', icon: <HomeOutlined />, label: '我的宠物' },
-      { key: 'assignment', icon: <BookOutlined />, label: '作业' },
-      { key: 'wrong_questions', icon: <ExclamationCircleOutlined />, label: '错题本' },
-      { key: 'battle', icon: <TrophyOutlined />, label: '战斗' },
+      { key: 'arena', icon: <TrophyOutlined />, label: '挑战' },
+      { key: 'achievement', icon: <TrophyOutlined />, label: '成就与数据' },
+      { key: 'social', icon: <MessageOutlined />, label: '班级' },
+      { key: 'notifications', icon: <BellOutlined />, label: '通知' },
     );
   } else if (isTeacher) {
     menuItems.push(
-      { key: 'assignment', icon: <BookOutlined />, label: '作业' },
+      { key: 'study', icon: <BookOutlined />, label: '教学管理' },
       { key: 'class-dashboard', icon: <BarChartOutlined />, label: '班级学情' },
+      { key: 'social', icon: <MessageOutlined />, label: '沟通' },
+      { key: 'notifications', icon: <BellOutlined />, label: '通知' },
     );
-  }
-
-  menuItems.push(
-    { key: 'friends', icon: <UserOutlined />, label: '我的好友' },
-    { key: 'daily-tasks', icon: <FireOutlined />, label: '每日任务' },
-    { key: 'learning-dashboard', icon: <BarChartOutlined />, label: '学习数据' },
-    { key: 'pet-skills', icon: <ThunderboltOutlined />, label: '宠物技能' },
-    { key: 'boss-battle', icon: <FireOutlined />, label: 'BOSS战' },
-    { key: 'achievements', icon: <TrophyOutlined />, label: '成就' },
-    { key: 'posts', icon: <NotificationOutlined />, label: '班级动态' },
-    { key: 'chat', icon: <MessageOutlined />, label: '群聊' },
-    { key: 'forum', icon: <CommentOutlined />, label: '论坛' },
-    { key: 'notifications', icon: <BellOutlined />, label: '通知中心' },
-  );
-
-  if (user?.role === 'admin') {
-    menuItems.push({
-      key: 'admin',
-      icon: <SettingOutlined />,
-      label: '管理后台',
-    });
-  }
-
-  if (user?.role === 'teacher') {
-    menuItems.push({
-      key: 'applications',
-      icon: <TeamOutlined />,
-      label: '教师工作台',
-    });
-    menuItems.push({
-      key: 'class-management',
-      icon: <TeamOutlined />,
-      label: '班级管理',
-    });
+    if (user?.role === 'admin') {
+      menuItems.push({ key: 'admin', icon: <SettingOutlined />, label: '管理后台' });
+    } else {
+      menuItems.push({ key: 'admin', icon: <SettingOutlined />, label: '工作台' });
+    }
   }
 
   const userMenu = {
@@ -607,11 +564,50 @@ const Home: React.FC = () => {
     { key: 'class_leaderboard', label: '本班宠物排行', children: leaderboardChildren },
   ];
 
-  const studentPetTabItems: TabsProps['items'] = [
-    { key: 'pet', label: '我的宠物', children: hasPet ? <PetDisplay pet={pet} onNavigate={setActiveMenu} /> : <CreatePet onSuccess={loadPetData} /> },
-    { key: 'shop', label: '道具商店', children: <ShopAndBackpack defaultTab="shop" viewMode="shop" /> },
-    { key: 'backpack', label: '我的背包', children: <ShopAndBackpack defaultTab="backpack" viewMode="backpack" /> },
-  ];
+  const renderContent = () => {
+    if (activeMenu === 'study') return <StudyCenter onNavigate={setActiveMenu} />;
+    if (activeMenu === 'pet') return <PetCenter onNavigate={setActiveMenu} />;
+    if (activeMenu === 'arena') return <Arena />;
+    if (activeMenu === 'achievement') return <AchievementCenter />;
+    if (activeMenu === 'social') return <SocialHub />;
+    if (activeMenu === 'notifications') return <Notifications />;
+    if (activeMenu === 'class-dashboard') return <ClassDashboard />;
+    if (activeMenu === 'admin') return <Admin />;
+    if (activeMenu === 'profile') return <Profile />;
+
+    if (isAuthenticated && isTeacher) {
+      return (
+        <Tabs
+          activeKey={activeMenu === 'home' ? 'class_leaderboard' : activeMenu}
+          onChange={(key) => setActiveMenu(key)}
+          items={teacherTabItems}
+          size={isMobile ? 'small' : 'middle'}
+          centered={isMobile}
+        />
+      );
+    }
+
+    if (isAuthenticated && isStudent) {
+      return (
+        <Tabs
+          activeKey="class_leaderboard"
+          items={studentHomeTabItems}
+          size={isMobile ? 'small' : 'middle'}
+          centered={isMobile}
+        />
+      );
+    }
+
+    return (
+      <Tabs
+        activeKey={['all_pets', 'leaderboard'].includes(activeMenu) ? activeMenu : 'all_pets'}
+        onChange={(key) => setActiveMenu(key)}
+        items={[{ key: 'all_pets', label: '全校宠物', children: allPetsChildren }, { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }]}
+        size={isMobile ? 'small' : 'middle'}
+        centered={isMobile}
+      />
+    );
+  };
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -715,77 +711,7 @@ const Home: React.FC = () => {
                 boxShadow: '0 4px 12px rgba(0,0,0,0.05)', 
                 minHeight: '100%' 
               }}>
-                {activeMenu === 'assignment' ? (
-                  <Assignments onNavigate={setActiveMenu} />
-                ) : activeMenu === 'wrong_questions' ? (
-                  <WrongQuestions />
-                ) : activeMenu === 'battle' ? (
-                  <Battle />
-                ) : activeMenu === 'friends' ? (
-                  <Friends />
-                ) : activeMenu === 'daily-tasks' ? (
-                  <DailyTasks />
-                ) : activeMenu === 'learning-dashboard' ? (
-                  <LearningDashboard />
-                ) : activeMenu === 'pet-skills' ? (
-                  <PetSkills />
-                ) : activeMenu === 'boss-battle' ? (
-                  <BossBattle />
-                ) : activeMenu === 'achievements' ? (
-                  <Achievements />
-                ) : activeMenu === 'posts' ? (
-                  <Posts />
-                ) : activeMenu === 'chat' ? (
-                  <ChatRoom />
-                ) : activeMenu === 'forum' ? (
-                  <Forum />
-                ) : activeMenu === 'notifications' ? (
-                  <Notifications />
-                ) : activeMenu === 'admin' ? (
-                  <Admin />
-                ) : activeMenu === 'applications' ? (
-                  <Admin defaultTab="applications" />
-                ) : activeMenu === 'class-management' ? (
-                  <ClassInvitationManager />
-                ) : activeMenu === 'class-dashboard' ? (
-                  <ClassDashboard />
-                ) : activeMenu === 'profile' ? (
-                  <Profile />
-                ) : isAuthenticated && isTeacher ? (
-                  <Tabs
-                    activeKey={activeMenu === 'home' ? 'class_leaderboard' : activeMenu}
-                    onChange={(key) => setActiveMenu(key)}
-                    items={teacherTabItems}
-                    size={isMobile ? 'small' : 'middle'}
-                    centered={isMobile}
-                  />
-                ) : isAuthenticated && isStudent ? (
-                  <Tabs
-                    activeKey={['pet', 'shop', 'backpack'].includes(activeMenu) ? activeMenu : 'class_leaderboard'}
-                    onChange={(key) => {
-                      setActiveMenu(key);
-                    }}
-                    items={['pet', 'shop', 'backpack'].includes(activeMenu) ? studentPetTabItems : studentHomeTabItems}
-                    size={isMobile ? 'small' : 'middle'}
-                    centered={isMobile}
-                  />
-                ) : isAuthenticated ? (
-                  <Tabs
-                    activeKey="all_pets"
-                    onChange={(key) => setActiveMenu(key)}
-                    items={[{ key: 'all_pets', label: '全校宠物', children: allPetsChildren }, { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }]}
-                    size={isMobile ? 'small' : 'middle'}
-                    centered={isMobile}
-                  />
-                ) : (
-                  <Tabs 
-                    activeKey={['all_pets', 'leaderboard'].includes(activeMenu) ? activeMenu : 'all_pets'} 
-                    onChange={(key) => setActiveMenu(key)}
-                    items={[{ key: 'all_pets', label: '全校宠物', children: allPetsChildren }, { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }]}
-                    size={isMobile ? 'small' : 'middle'}
-                    centered={isMobile}
-                  />
-                )}
+                {renderContent()}
               </div>
             </Content>
           </>
@@ -806,69 +732,7 @@ const Home: React.FC = () => {
 
             <Content style={{ padding: '24px 40px', background: '#f0f2f5', minHeight: 'calc(100vh - 64px)' }}>
               <div style={{ background: '#fff', padding: 32, borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.05)', minHeight: '100%' }}>
-                {activeMenu === 'assignment' ? (
-                  <Assignments onNavigate={setActiveMenu} />
-                ) : activeMenu === 'wrong_questions' ? (
-                  <WrongQuestions />
-                ) : activeMenu === 'battle' ? (
-                  <Battle />
-                ) : activeMenu === 'friends' ? (
-                  <Friends />
-                ) : activeMenu === 'daily-tasks' ? (
-                  <DailyTasks />
-                ) : activeMenu === 'learning-dashboard' ? (
-                  <LearningDashboard />
-                ) : activeMenu === 'pet-skills' ? (
-                  <PetSkills />
-                ) : activeMenu === 'boss-battle' ? (
-                  <BossBattle />
-                ) : activeMenu === 'achievements' ? (
-                  <Achievements />
-                ) : activeMenu === 'posts' ? (
-                  <Posts />
-                ) : activeMenu === 'chat' ? (
-                  <ChatRoom />
-                ) : activeMenu === 'forum' ? (
-                  <Forum />
-                ) : activeMenu === 'notifications' ? (
-                  <Notifications />
-                ) : activeMenu === 'admin' ? (
-                  <Admin />
-                ) : activeMenu === 'applications' ? (
-                  <Admin defaultTab="applications" />
-                ) : activeMenu === 'class-management' ? (
-                  <ClassInvitationManager />
-                ) : activeMenu === 'class-dashboard' ? (
-                  <ClassDashboard />
-                ) : activeMenu === 'profile' ? (
-                  <Profile />
-                ) : isAuthenticated && isTeacher ? (
-                  <Tabs
-                    activeKey={activeMenu === 'home' ? 'class_leaderboard' : activeMenu}
-                    onChange={(key) => setActiveMenu(key)}
-                    items={teacherTabItems}
-                  />
-                ) : isAuthenticated && isStudent ? (
-                  <Tabs
-                    activeKey={['pet', 'shop', 'backpack'].includes(activeMenu) ? activeMenu : 'class_leaderboard'}
-                    onChange={(key) => {
-                      setActiveMenu(key);
-                    }}
-                    items={['pet', 'shop', 'backpack'].includes(activeMenu) ? studentPetTabItems : studentHomeTabItems}
-                  />
-                ) : isAuthenticated ? (
-                  <Tabs
-                    activeKey="all_pets"
-                    onChange={(key) => setActiveMenu(key)}
-                    items={[{ key: 'all_pets', label: '全校宠物', children: allPetsChildren }, { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }]}
-                  />
-                ) : (
-                  <Tabs 
-                    activeKey="all_pets"
-                    onChange={(key) => setActiveMenu(key)}
-                    items={[{ key: 'all_pets', label: '全校宠物', children: allPetsChildren }, { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }]}
-                  />
-                )}
+                {renderContent()}
               </div>
             </Content>
           </>
@@ -1055,12 +919,11 @@ const Home: React.FC = () => {
         title="🎮 新手引导"
         open={newbieGuideVisible}
         onCancel={() => {
-          // 不允许关闭，必须完成引导
           message.info('请完成新手引导后继续使用');
         }}
-        footer={[
+        footer={newbieStep === 0 ? null : [
           <Button key="next" type="primary" onClick={handleNewbieNextStep}>
-            {newbieStep === 0 ? '创建宠物' : newbieStep < 3 ? '下一步' : '完成引导'}
+            {newbieStep < 3 ? '下一步' : '完成引导'}
           </Button>
         ]}
         width={isMobile ? '95vw' : 700}

@@ -16,16 +16,6 @@ import { useNavigate } from 'react-router-dom';
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
 
-const useMobile = () => {
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, []);
-  return isMobile;
-};
-
 interface DailyTask {
   id: number;
   user_id: number;
@@ -50,7 +40,6 @@ interface DailyTaskData {
 
 const DailyTasks: React.FC = () => {
   const navigate = useNavigate();
-  const isMobile = useMobile();
   const [loading, setLoading] = useState(false);
   const [taskData, setTaskData] = useState<DailyTaskData | null>(null);
   const [claiming, setClaiming] = useState<number | null>(null);

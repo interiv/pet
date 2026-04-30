@@ -3,16 +3,6 @@ import { Card, Row, Col, Button, List, Tag, Badge, message, Tooltip } from 'antd
 import { SkinOutlined, ArrowUpOutlined, SafetyCertificateOutlined, ThunderboltOutlined, HeartOutlined, RocketOutlined } from '@ant-design/icons';
 import { equipmentAPI } from '../utils/api';
 
-const useMobile = () => {
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, []);
-  return isMobile;
-};
-
 interface EquipmentPanelProps {
   onEquipChange?: () => void;
 }
@@ -32,7 +22,6 @@ const slotColors: Record<string, string> = {
 };
 
 export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange }) => {
-  const isMobile = useMobile();
   const [equipments, setEquipments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [setBonus, setSetBonus] = useState<any>(null);

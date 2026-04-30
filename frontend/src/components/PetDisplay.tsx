@@ -51,7 +51,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
 
   useEffect(() => {
     loadEquipments();
-  }, []);
+  }, [pet?.level]);
 
   const loadEquipments = async () => {
     try {

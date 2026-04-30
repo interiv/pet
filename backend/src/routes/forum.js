@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { checkAndAwardAchievement } = require('./achievements');
 
 // ==================== 论坛系统 ====================
 
@@ -182,6 +183,12 @@ router.post('/threads', authenticateToken, (req, res) => {
     `).run(parseInt(forum_id), parseInt(forum_id), parseInt(forum_id));
 
     res.status(201).json({ message: '发布成功', thread_id: threadId });
+
+    // 成就检查
+    try {
+      const forumCount = db.prepare("SELECT COUNT(*) as c FROM forum_posts WHERE user_id = ? AND status = 'active'").get(req.user.userId)?.c || 0;
+      checkAndAwardAchievement(req.user.userId, 'forum_post', forumCount);
+    } catch (e) { console.error('成就检查失败:', e); }
   } catch (error) {
     console.error('发布帖子失败:', error);
     res.status(500).json({ error: '发布帖子失败' });
@@ -249,6 +256,12 @@ router.post('/threads/:id/reply', authenticateToken, (req, res) => {
     `).get(result.lastInsertRowid);
 
     res.status(201).json({ message: '回复成功', post });
+
+    // 成就检查
+    try {
+      const forumCount = db.prepare("SELECT COUNT(*) as c FROM forum_posts WHERE user_id = ? AND status = 'active'").get(req.user.userId)?.c || 0;
+      checkAndAwardAchievement(req.user.userId, 'forum_post', forumCount);
+    } catch (e) { console.error('成就检查失败:', e); }
   } catch (error) {
     console.error('回复帖子失败:', error);
     res.status(500).json({ error: '回复帖子失败' });

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { checkAndAwardAchievement } = require('./achievements');
 
 // ==================== 动态/留言板 ====================
 
@@ -100,6 +101,12 @@ router.post('/posts', authenticateToken, (req, res) => {
     `).get(result.lastInsertRowid);
 
     res.status(201).json({ message: '发布成功', post: newPost });
+
+    // 成就检查
+    try {
+      const postCount = db.prepare("SELECT COUNT(*) as c FROM posts WHERE user_id = ?").get(userId)?.c || 0;
+      checkAndAwardAchievement(userId, 'post_count', postCount);
+    } catch (e) { console.error('成就检查失败:', e); }
   } catch (error) {
     console.error('发布动态失败:', error);
     res.status(500).json({ error: '发布动态失败' });

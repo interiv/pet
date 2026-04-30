@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { checkAndAwardAchievement } = require('./achievements');
 
 // 获取好友列表（只返回已通过的好友）
 router.get('/list', authenticateToken, (req, res) => {
@@ -80,6 +81,14 @@ router.post('/add', authenticateToken, (req, res) => {
         VALUES (?, 'friend_accepted', '好友请求已通过', ?, 'friend', ?)
       `).run(friend.id, `${req.user.username} 通过了你的好友请求`, req.user.userId);
       
+      // 成就检查
+      try {
+        const friendCount = db.prepare("SELECT COUNT(*) as c FROM friends WHERE user_id = ? AND status = 'active'").get(req.user.userId)?.c || 0;
+        checkAndAwardAchievement(req.user.userId, 'add_friends', friendCount);
+        const friendCount2 = db.prepare("SELECT COUNT(*) as c FROM friends WHERE user_id = ? AND status = 'active'").get(friend.id)?.c || 0;
+        checkAndAwardAchievement(friend.id, 'add_friends', friendCount2);
+      } catch (e) { console.error('成就检查失败:', e); }
+
       return res.json({ message: '好友添加成功' });
     }
 
@@ -124,6 +133,14 @@ router.post('/accept-request', authenticateToken, (req, res) => {
       INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
       VALUES (?, 'friend_accepted', '好友请求已通过', ?, 'friend', ?)
     `).run(request.sender_id, `${req.user.username} 通过了你的好友请求`, req.user.userId);
+
+    // 成就检查
+    try {
+      const friendCount = db.prepare("SELECT COUNT(*) as c FROM friends WHERE user_id = ? AND status = 'active'").get(req.user.userId)?.c || 0;
+      checkAndAwardAchievement(req.user.userId, 'add_friends', friendCount);
+      const friendCount2 = db.prepare("SELECT COUNT(*) as c FROM friends WHERE user_id = ? AND status = 'active'").get(request.sender_id)?.c || 0;
+      checkAndAwardAchievement(request.sender_id, 'add_friends', friendCount2);
+    } catch (e) { console.error('成就检查失败:', e); }
 
     res.json({ message: '已接受好友请求' });
   } catch (error) {

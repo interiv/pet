@@ -8,10 +8,8 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
 } from '@ant-design/icons';
-import axios from 'axios';
+import { bossBattleAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
-
-const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
 
 const useMobile = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -61,7 +59,7 @@ const BossBattle: React.FC = () => {
 
   // 冷却计时器
   const [cooldown, setCooldown] = useState(0);
-  const cooldownTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (user?.class_id) {
@@ -101,10 +99,7 @@ const BossBattle: React.FC = () => {
 
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      const response = await axios.get(`${API_BASE_URL}/boss-battles/current/${user.class_id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const response = await bossBattleAPI.getCurrentBoss(user.class_id);
       setBossData(response.data);
     } catch (error: any) {
       console.error('加载BOSS失败:', error);
@@ -119,11 +114,7 @@ const BossBattle: React.FC = () => {
 
     try {
       setQuestionLoading(true);
-      const token = localStorage.getItem('token');
-      const response = await axios.get(
-        `${API_BASE_URL}/boss-battles/${bossData.boss.id}/question`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      const response = await bossBattleAPI.getQuestion(bossData.boss.id);
       setCurrentQuestion(response.data);
       setSelectedAnswer('');
       setAttackResult(null);
@@ -144,15 +135,10 @@ const BossBattle: React.FC = () => {
 
     try {
       setSubmitting(true);
-      const token = localStorage.getItem('token');
-      const response = await axios.post(
-        `${API_BASE_URL}/boss-battles/${bossData.boss.id}/attack`,
-        {
-          question_id: currentQuestion.question_id,
-          answer: selectedAnswer
-        },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      const response = await bossBattleAPI.attack(bossData.boss.id, {
+        question_id: currentQuestion.question_id,
+        answer: selectedAnswer
+      });
 
       setAttackResult(response.data);
       setQuizModalVisible(false);
@@ -550,7 +536,7 @@ const BossBattle: React.FC = () => {
                 BOSS剩余血量: {attackResult.boss_current_hp} / {attackResult.boss_max_hp}
               </div>
               <Progress
-                percent={Math.round((attackResult.boss_current_hp / attackResult.boss_max_hp) * 100)}
+                percent={attackResult.boss_max_hp > 0 ? Math.round((attackResult.boss_current_hp / attackResult.boss_max_hp) * 100) : 0}
                 strokeColor={{ from: '#f5222d', to: '#fa8c16' }}
               />
             </div>

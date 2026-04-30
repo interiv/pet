@@ -57,6 +57,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     localStorage.removeItem('user');
     localStorage.removeItem('currentClass');
     set({ token: null, user: null, isAuthenticated: false, currentClass: null });
+    usePetStore.getState().clearPet();
   },
   
   checkAuth: async () => {
@@ -86,7 +87,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       // Token 无效或过期，清除登录状态
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      set({ token: null, user: null, isAuthenticated: false });
+      localStorage.removeItem('currentClass');
+      set({ token: null, user: null, isAuthenticated: false, currentClass: null });
     }
   },
   

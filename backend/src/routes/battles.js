@@ -3,6 +3,7 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { checkLevelUp } = require('./pets');
+const { checkAndAwardAchievement } = require('./achievements');
 
 // 生成战斗日志
 function generateBattleLog(myPet, opponentPet, winner, myWinChance, moodCriticalBonus = 0) {
@@ -141,6 +142,26 @@ router.post('/start', authenticateToken, (req, res) => {
 
     const updatedMyPet = db.prepare('SELECT * FROM pets WHERE id = ?').get(myPet.id);
     const myLevelUp = checkLevelUp(updatedMyPet);
+
+    // 成就检查
+    try {
+      if (winner === myPet.id) {
+        const winCount = db.prepare('SELECT win_count FROM pets WHERE id = ?').get(myPet.id)?.win_count || 0;
+        checkAndAwardAchievement(req.user.userId, 'win_battle', winCount);
+        // 连胜检查
+        const recentBattles = db.prepare(`
+          SELECT CASE WHEN winner_id = ? THEN 1 ELSE 0 END as is_win
+          FROM battles WHERE pet1_id = ? OR pet2_id = ? ORDER BY battle_date DESC LIMIT 50
+        `).all(myPet.id, myPet.id, myPet.id);
+        let streak = 0;
+        for (const b of recentBattles) { if (b.is_win) streak++; else break; }
+        checkAndAwardAchievement(req.user.userId, 'win_streak', streak);
+      } else {
+        const totalBattles = db.prepare('SELECT total_battles FROM pets WHERE id = ?').get(myPet.id)?.total_battles || 0;
+        const lossCount = totalBattles - (db.prepare('SELECT win_count FROM pets WHERE id = ?').get(myPet.id)?.win_count || 0);
+        checkAndAwardAchievement(req.user.userId, 'lose_battle', lossCount);
+      }
+    } catch (e) { console.error('成就检查失败:', e); }
 
     res.json({
       message: '战斗结束',

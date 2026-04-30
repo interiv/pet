@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layout, Button, Row, Col, Card, Statistic, List, Tag, Avatar, Spin, Space, Typography, Divider, Empty } from 'antd';
+import { Layout, Button, Row, Col, Card, Statistic, List, Tag, Avatar, Spin, Space, Typography } from 'antd';
 import {
   LoginOutlined, UserAddOutlined, TrophyOutlined, TeamOutlined,
   HeartOutlined, ThunderboltOutlined, FireOutlined,
-  RocketOutlined, StarOutlined, BookOutlined, BulbOutlined,
+  RocketOutlined, BookOutlined, BulbOutlined,
   ArrowDownOutlined, RightOutlined,
 } from '@ant-design/icons';
 import { adminAPI, petAPI, leaderboardAPI, schoolAPI, classAPI } from '../utils/api';
