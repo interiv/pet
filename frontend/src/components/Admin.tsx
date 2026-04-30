@@ -50,14 +50,20 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
         { key: 'achievements', label: <span><TrophyOutlined /> 成就管理</span>, children: <AchievementManagement /> },
       ];
     } else if (isTeacher) {
-      return [
+      const isHeadTeacher = (user as any).teacher_classes?.some((c: any) => c.class_role === 'head_teacher');
+      const items = [
         { key: 'dashboard', label: <span><TeamOutlined /> 总览</span>, children: <Dashboard /> },
         { key: 'students', label: <span><TeamOutlined /> 学生管理</span>, children: <StudentManagement /> },
         { key: 'classes', label: <span><FolderOutlined /> 班级管理</span>, children: <ClassManagement /> },
-        { key: 'class-invitation', label: <span><TeamOutlined /> 邀请设置</span>, children: <ClassInvitationManager /> },
-        { key: 'applications', label: <span><TeamOutlined /> 入学申请</span>, children: <ApplicationManagement /> },
-        { key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> },
       ];
+      if (isHeadTeacher) {
+        items.push(
+          { key: 'class-invitation', label: <span><TeamOutlined /> 邀请设置</span>, children: <ClassInvitationManager /> },
+          { key: 'applications', label: <span><TeamOutlined /> 入学申请</span>, children: <ApplicationManagement /> },
+        );
+      }
+      items.push({ key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> });
+      return items;
     }
     return [];
   };
@@ -261,7 +267,7 @@ const ApplicationManagement: React.FC = () => {
       let allClasses = res.data.classes || [];
       if (isTeacher && !isAdmin) {
         allClasses = allClasses.filter((c: any) =>
-          c.teachers?.some((t: any) => t.teacher_id === user?.id)
+          c.teachers?.some((t: any) => t.teacher_id === user?.id && t.role === 'head_teacher')
         );
       }
       setClasses(allClasses);

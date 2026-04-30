@@ -199,15 +199,37 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
   const handleCreateAssignment = async (values: any) => {
     try {
-      const payload = {
-        ...values,
+      const classIds: number[] = values.class_ids || [];
+      if (classIds.length === 0) {
+        message.error('请选择至少一个班级');
+        return;
+      }
+      const basePayload = {
+        title: values.title,
+        description: values.description,
+        subject: values.subject,
+        question_type: values.question_type,
+        max_exp: values.max_exp,
         due_date: values.due_date.toISOString(),
-        class_id: values.class_id || selectedClass,
         question_ids: generatedData?.allQuestionIds || [],
         ai_config: { auto_grade: true, question_type: values.question_type }
       };
-      await assignmentAPI.createAssignment(payload);
-      message.success('作业发布成功！');
+      let successCount = 0;
+      let failCount = 0;
+      for (const cid of classIds) {
+        try {
+          await assignmentAPI.createAssignment({ ...basePayload, class_id: cid });
+          successCount++;
+        } catch {
+          failCount++;
+        }
+      }
+      if (successCount > 0) {
+        message.success(`作业发布成功！已发布到 ${successCount} 个班级${failCount > 0 ? `，${failCount} 个班级发布失败` : ''}`);
+      } else {
+        message.error('作业发布失败');
+        return;
+      }
       setIsCreateModalVisible(false);
       form.resetFields();
       setGeneratedData(null);
@@ -735,8 +757,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             children: generatedData ? (
               <Form form={form} layout="vertical" onFinish={handleCreateAssignment}>
                 {(isAdmin || user?.role === 'teacher') && (
-                  <Form.Item name="class_id" label="发布到班级" rules={[{ required: true }]}>
-                    <Select placeholder="选择班级">{classes.map(c => <Option key={c.id} value={c.id}>{c.name}</Option>)}</Select>
+                  <Form.Item name="class_ids" label="发布到班级" rules={[{ required: true, message: '请选择至少一个班级' }]}>
+                    <Select mode="multiple" placeholder="选择班级（可多选）" maxTagCount={3}>{classes.map(c => <Option key={c.id} value={c.id}>{c.name}</Option>)}</Select>
                   </Form.Item>
                 )}
                 <Form.Item name="title" label="作业标题" rules={[{ required: true }]} initialValue={generatedData.title}>
