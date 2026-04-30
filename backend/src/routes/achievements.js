@@ -34,11 +34,11 @@ function checkAndAwardAchievement(userId, achievementType, currentValue) {
       ).run(userId, ach.id);
 
       if (ach.reward_type === 'gold') {
-        db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(ach.reward_value, userId);
+        db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(ach.reward_value, ach.reward_value, userId);
       } else if (ach.reward_type === 'exp') {
         const pet = db.prepare('SELECT id FROM pets WHERE user_id = ?').get(userId);
         if (pet) {
-          db.prepare('UPDATE pets SET exp = exp + ? WHERE id = ?').run(ach.reward_value, pet.id);
+          db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ? WHERE id = ?').run(ach.reward_value, ach.reward_value, pet.id);
         }
       } else if (ach.reward_type === 'item') {
         const existingItem = db.prepare(

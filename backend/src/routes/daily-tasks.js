@@ -202,8 +202,14 @@ router.post('/claim', authenticateToken, (req, res) => {
 
     // 发放金币
     db.prepare(`
-      UPDATE users SET gold = gold + ? WHERE id = ?
-    `).run(rewardGold, userId);
+      UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?
+    `).run(rewardGold, rewardGold, userId);
+
+    // 累计金币成就检查
+    try {
+      const totalGold = db.prepare('SELECT total_gold_earned FROM users WHERE id = ?').get(userId)?.total_gold_earned || 0;
+      checkAndAwardAchievement(userId, 'total_gold', totalGold);
+    } catch (e) { console.error('成就检查失败:', e); }
 
     // 标记奖励已领取
     db.prepare(`

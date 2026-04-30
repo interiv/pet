@@ -127,15 +127,16 @@ router.post('/start', authenticateToken, (req, res) => {
         SET win_count = win_count + 1,
             total_battles = total_battles + 1,
             exp = exp + ?,
+            total_exp_earned = total_exp_earned + ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(myExpGain, myPet.id);
+      `).run(myExpGain, myExpGain, myPet.id);
     } else {
-      db.prepare('UPDATE pets SET total_battles = total_battles + 1, exp = exp + 10 WHERE id = ?').run(myPet.id);
+      db.prepare('UPDATE pets SET total_battles = total_battles + 1, exp = exp + 10, total_exp_earned = total_exp_earned + 10 WHERE id = ?').run(myPet.id);
     }
 
     if (opponentExpGain > 0) {
-      db.prepare('UPDATE pets SET exp = exp + ? WHERE id = ?').run(opponentExpGain, opponentPet.id);
+      db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ? WHERE id = ?').run(opponentExpGain, opponentExpGain, opponentPet.id);
       const updatedOpponent = db.prepare('SELECT * FROM pets WHERE id = ?').get(opponentPet.id);
       checkLevelUp(updatedOpponent);
     }

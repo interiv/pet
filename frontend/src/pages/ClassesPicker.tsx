@@ -55,7 +55,8 @@ const ClassesPicker: React.FC = () => {
             </Paragraph>
           </div>
           <Space>
-            <Button icon={<LogoutOutlined />} onClick={() => { logout(); navigate('/login'); }}>
+            <Button onClick={() => navigate('/')}>返回首页</Button>
+            <Button icon={<LogoutOutlined />} onClick={() => { logout(); navigate('/'); }}>
               退出登录
             </Button>
           </Space>

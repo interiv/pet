@@ -438,9 +438,9 @@ router.post('/:bossId/claim-reward', authenticateToken, (req, res) => {
 
     // 发放奖励
     if (reward.reward_type === 'gold') {
-      db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(reward.reward_value, req.user.userId);
+      db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(reward.reward_value, reward.reward_value, req.user.userId);
     } else if (reward.reward_type === 'exp') {
-      db.prepare('UPDATE pets SET exp = exp + ? WHERE user_id = ?').run(reward.reward_value, req.user.userId);
+      db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ? WHERE user_id = ?').run(reward.reward_value, reward.reward_value, req.user.userId);
     }
 
     // 标记已领取

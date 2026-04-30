@@ -35,6 +35,30 @@ const aiCoachRoutes = require('./routes/ai-coach');
 // 初始化数据库
 initDatabase();
 
+// 自动回填班级 slug（为 slug 为 NULL 的已有班级生成 slug）
+const { db } = require('./config/database');
+const crypto = require('crypto');
+try {
+  const classesWithoutSlug = db.prepare('SELECT id, name FROM classes WHERE slug IS NULL').all();
+  if (classesWithoutSlug.length > 0) {
+    const updateStmt = db.prepare('UPDATE classes SET slug = ? WHERE id = ?');
+    const usedSlugs = new Set(db.prepare('SELECT slug FROM classes WHERE slug IS NOT NULL').all().map(r => r.slug));
+    for (const cls of classesWithoutSlug) {
+      let slug;
+      do {
+        const base = cls.name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-').replace(/^-+|-+$/g, '');
+        const suffix = crypto.randomBytes(3).toString('hex');
+        slug = `${base || 'class'}-${suffix}`;
+      } while (usedSlugs.has(slug));
+      usedSlugs.add(slug);
+      updateStmt.run(slug, cls.id);
+    }
+    console.log(`✅ 已为 ${classesWithoutSlug.length} 个班级自动生成 slug`);
+  }
+} catch (err) {
+  console.error('回填班级 slug 失败:', err);
+}
+
 const app = express();
 const server = http.createServer(app);
 

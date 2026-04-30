@@ -476,6 +476,8 @@ const TeacherManagement: React.FC = () => {
 
 const StudentManagement: React.FC = () => {
   const isMobile = useMobile();
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'admin';
   const [students, setStudents] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -563,9 +565,17 @@ const StudentManagement: React.FC = () => {
       await adminAPI.deleteStudent(id, action);
       message.success(action === 'delete' ? '学生已删除' : '学生已禁用');
       loadStudents();
-    } catch (error) {
-      message.error('操作失败');
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '操作失败');
     }
+  };
+
+  const isHeadTeacherOfStudent = (record: any) => {
+    if (isAdmin) return true;
+    if (!user || user.role !== 'teacher') return false;
+    const cls = classes.find((c: any) => c.id === record.class_id);
+    if (!cls) return false;
+    return cls.teachers?.some((t: any) => t.teacher_id === user.id && t.role === 'head_teacher');
   };
 
   const columns = [
@@ -587,19 +597,26 @@ const StudentManagement: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      render: (_: any, record: any) => (
-        <Space>
-          <Button type="link" onClick={() => viewDetail(record.id)}>详情</Button>
-          <Button type="link" onClick={() => { setSelectedStudent(record); goldForm.setFieldsValue({ amount: 0 }); setGoldModalVisible(true); }}>调金币</Button>
-          <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
-          {record.status !== 'disabled' && (
-            <Button type="link" danger onClick={() => handleDelete(record.id, 'disable')}>禁用</Button>
-          )}
-          <Popconfirm title="确定删除该学生？（包括其所有宠物和物品）" onConfirm={() => handleDelete(record.id, 'delete')}>
-            <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
-          </Popconfirm>
-        </Space>
-      ),
+      render: (_: any, record: any) => {
+        const canManage = isHeadTeacherOfStudent(record);
+        return (
+          <Space>
+            <Button type="link" onClick={() => viewDetail(record.id)}>详情</Button>
+            {canManage && (
+              <>
+                <Button type="link" onClick={() => { setSelectedStudent(record); goldForm.setFieldsValue({ amount: 0 }); setGoldModalVisible(true); }}>调金币</Button>
+                <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
+                {record.status !== 'disabled' && (
+                  <Button type="link" danger onClick={() => handleDelete(record.id, 'disable')}>禁用</Button>
+                )}
+                <Popconfirm title="确定删除该学生？（包括其所有宠物和物品）" onConfirm={() => handleDelete(record.id, 'delete')}>
+                  <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+                </Popconfirm>
+              </>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -839,8 +856,8 @@ const ClassManagement: React.FC = () => {
           {(record.teachers || []).map((t: any) => (
             <Tag
               key={t.teacher_id}
-              closable={isAdmin || isHeadTeacherOf(record)}
-              onClose={() => (isAdmin || isHeadTeacherOf(record)) ? handleRemoveTeacher(record.id, t.teacher_id) : undefined}
+              closable={(isAdmin || isHeadTeacherOf(record)) && t.role !== 'head_teacher'}
+              onClose={() => (isAdmin || isHeadTeacherOf(record)) && t.role !== 'head_teacher' ? handleRemoveTeacher(record.id, t.teacher_id) : undefined}
               color={t.role === 'head_teacher' ? 'blue' : 'default'}
             >
               {t.username} {t.role === 'head_teacher' ? '(班主任)' : ''}

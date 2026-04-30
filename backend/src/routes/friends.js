@@ -285,7 +285,7 @@ router.post('/friend-battle', authenticateToken, (req, res) => {
 
     if (winner === myPet.id) {
       db.prepare('UPDATE pets SET exp = exp + ?, win_count = win_count + 1, total_battles = total_battles + 1 WHERE id = ?').run(expReward * 2, myPet.id);
-      db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(goldReward, req.user.userId);
+      db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(goldReward, goldReward, req.user.userId);
     } else {
       db.prepare('UPDATE pets SET exp = exp + ? WHERE id = ?').run(expReward, myPet.id);
     }

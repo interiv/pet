@@ -12,7 +12,6 @@ import {
   BellOutlined,
   NotificationOutlined,
   MenuOutlined,
-  BarChartOutlined,
   HeartOutlined,
 } from '@ant-design/icons';
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
@@ -268,7 +267,6 @@ const Home: React.FC = () => {
   } else if (isTeacher) {
     menuItems.push(
       { key: 'study', icon: <BookOutlined />, label: '教学管理' },
-      { key: 'class-dashboard', icon: <BarChartOutlined />, label: '班级学情' },
       { key: 'social', icon: <MessageOutlined />, label: '沟通' },
       { key: 'notifications', icon: <BellOutlined />, label: '通知' },
     );
@@ -295,7 +293,7 @@ const Home: React.FC = () => {
         label: '退出登录',
         onClick: () => {
           logout();
-          navigate('/login');
+          navigate('/');
         },
       },
     ],
@@ -646,6 +644,15 @@ const Home: React.FC = () => {
                   <span>⭐ Lv.{pet.level}</span>
                 </div>
               )}
+              <Button
+                size={isMobile ? 'small' : 'middle'}
+                type="primary"
+                ghost
+                icon={<HomeOutlined />}
+                onClick={() => navigate('/')}
+              >
+                退出班级
+              </Button>
               {!isMobile && <span style={{ color: 'rgba(255,255,255,0.85)' }}>欢迎，{user?.username}</span>}
               {isMobile && <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13, maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.username}</span>}
               <Dropdown menu={userMenu} placement="bottomRight">

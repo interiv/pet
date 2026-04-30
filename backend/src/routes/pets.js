@@ -36,7 +36,12 @@ function checkLevelUp(pet) {
       db.prepare('UPDATE pets SET growth_stage = ? WHERE user_id = ?').run(newStage, pet.user_id);
     }
 
-    try { checkAndAwardAchievement(pet.user_id, 'pet_level', newLevel); } catch (e) { console.error('成就检查失败:', e); }
+    try {
+      checkAndAwardAchievement(pet.user_id, 'pet_level', newLevel);
+      // total_exp_earned 已在调用方更新，这里检查累计经验成就
+      const updatedPet = db.prepare('SELECT total_exp_earned FROM pets WHERE id = ?').get(pet.id);
+      if (updatedPet) checkAndAwardAchievement(pet.user_id, 'total_exp', updatedPet.total_exp_earned);
+    } catch (e) { console.error('成就检查失败:', e); }
 
     return {
       leveledUp: true,
@@ -265,8 +270,8 @@ router.post('/feed', authenticateToken, (req, res) => {
     let updateValues = [];
 
     if (userItem.effect_type === 'exp') {
-      updateQuery = 'exp = exp + ?';
-      updateValues = [userItem.effect_value];
+      updateQuery = 'exp = exp + ?, total_exp_earned = total_exp_earned + ?';
+      updateValues = [userItem.effect_value, userItem.effect_value];
     } else if (userItem.effect_type === 'hunger') {
       updateQuery = 'hunger = MIN(100, hunger + ?)';
       updateValues = [userItem.effect_value];

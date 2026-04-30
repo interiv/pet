@@ -5,9 +5,10 @@ import {
   LoginOutlined, UserAddOutlined, TrophyOutlined, TeamOutlined,
   HeartOutlined, ThunderboltOutlined, FireOutlined,
   RocketOutlined, BookOutlined, BulbOutlined,
-  ArrowDownOutlined, RightOutlined,
+  ArrowDownOutlined, RightOutlined, LogoutOutlined,
 } from '@ant-design/icons';
 import { adminAPI, petAPI, leaderboardAPI, schoolAPI, classAPI } from '../utils/api';
+import { useAuthStore } from '../store/authStore';
 
 const { Header, Content, Footer } = Layout;
 const { Title, Paragraph, Text } = Typography;
@@ -41,6 +42,29 @@ const LandingPage: React.FC = () => {
   const navigate = useNavigate();
   const isMobile = useMobile();
   const statsRef = useRef<HTMLDivElement>(null);
+  const { user, isAuthenticated, logout } = useAuthStore();
+
+  const isStudent = user?.role === 'student';
+  const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
+  const teacherClassCount = user?.teacher_classes?.length || 0;
+  const classButtonLabel = isStudent || teacherClassCount <= 1 ? '进入班级' : '选择班级';
+
+  const handleEnterClass = () => {
+    if (isStudent && user?.class_slug) {
+      navigate(`/c/${user.class_slug}/app`);
+    } else if (isTeacher) {
+      if (teacherClassCount === 1 && user?.teacher_classes?.[0]?.slug) {
+        navigate(`/c/${user.teacher_classes[0].slug}/app`);
+      } else {
+        navigate('/classes-picker');
+      }
+    }
+  };
+
+  const handleLogout = () => {
+    logout();
+    navigate('/');
+  };
 
   const [loading, setLoading] = useState(true);
   const [siteSettings, setSiteSettings] = useState<any>({});
@@ -116,8 +140,20 @@ const LandingPage: React.FC = () => {
           </span>
         </div>
         <Space size={isMobile ? 8 : 12}>
-          <Button type="primary" ghost icon={<LoginOutlined />} size={isMobile ? 'small' : 'middle'} onClick={() => navigate('/login')}>登录</Button>
-          <Button icon={<UserAddOutlined />} size={isMobile ? 'small' : 'middle'} style={{ background: '#fff', borderColor: '#fff' }} onClick={() => navigate('/register')}>注册</Button>
+          {isAuthenticated ? (
+            <>
+              {(isStudent && user?.class_slug) || (isTeacher && teacherClassCount > 0) ? (
+                <Button type="primary" ghost icon={<RocketOutlined />} size={isMobile ? 'small' : 'middle'} onClick={handleEnterClass}>{classButtonLabel}</Button>
+              ) : null}
+              {!isMobile && <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14 }}>欢迎，{user?.username}</span>}
+              <Button icon={<LogoutOutlined />} size={isMobile ? 'small' : 'middle'} style={{ background: 'rgba(255,255,255,0.15)', borderColor: 'rgba(255,255,255,0.3)', color: '#fff' }} onClick={handleLogout}>退出登录</Button>
+            </>
+          ) : (
+            <>
+              <Button type="primary" ghost icon={<LoginOutlined />} size={isMobile ? 'small' : 'middle'} onClick={() => navigate('/login')}>登录</Button>
+              <Button icon={<UserAddOutlined />} size={isMobile ? 'small' : 'middle'} style={{ background: '#fff', borderColor: '#fff' }} onClick={() => navigate('/register')}>注册</Button>
+            </>
+          )}
         </Space>
       </Header>
 
@@ -137,12 +173,27 @@ const LandingPage: React.FC = () => {
               通过完成作业获得经验值，让你的宠物不断成长进化，和全班同学一起在知识的海洋中冒险！
             </Paragraph>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-              <Button type="primary" size="large" icon={<RocketOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, boxShadow: '0 4px 15px rgba(0,0,0,0.2)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={() => navigate('/register')}>
-                立即注册
-              </Button>
-              <Button size="large" ghost icon={<ArrowDownOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, color: '#fff', borderColor: 'rgba(255,255,255,0.6)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={scrollToStats}>
-                了解更多
-              </Button>
+              {isAuthenticated ? (
+                <>
+                  {(isStudent && user?.class_slug) || (isTeacher && teacherClassCount > 0) ? (
+                    <Button type="primary" size="large" icon={<RocketOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, boxShadow: '0 4px 15px rgba(0,0,0,0.2)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={handleEnterClass}>
+                      {classButtonLabel}
+                    </Button>
+                  ) : null}
+                  <Button size="large" ghost icon={<ArrowDownOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, color: '#fff', borderColor: 'rgba(255,255,255,0.6)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={scrollToStats}>
+                    了解更多
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button type="primary" size="large" icon={<RocketOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, boxShadow: '0 4px 15px rgba(0,0,0,0.2)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={() => navigate('/register')}>
+                    立即注册
+                  </Button>
+                  <Button size="large" ghost icon={<ArrowDownOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, color: '#fff', borderColor: 'rgba(255,255,255,0.6)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={scrollToStats}>
+                    了解更多
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -312,17 +363,34 @@ const LandingPage: React.FC = () => {
           padding: isMobile ? '40px 20px' : '60px 40px',
           textAlign: 'center',
         }}>
-          <Title level={2} style={{ color: '#fff', marginBottom: 12, fontSize: isMobile ? 20 : undefined }}>准备好开始了吗？</Title>
+          <Title level={2} style={{ color: '#fff', marginBottom: 12, fontSize: isMobile ? 20 : undefined }}>
+            {isAuthenticated ? '开始你的学习之旅' : '准备好开始了吗？'}
+          </Title>
           <Paragraph style={{ color: 'rgba(255,255,255,0.85)', fontSize: isMobile ? 14 : 16, marginBottom: 32 }}>
-            加入班级宠物养成系统，让学习变得更有趣
+            {isAuthenticated ? '进入班级，和同学们一起养成宠物吧' : '加入班级宠物养成系统，让学习变得更有趣'}
           </Paragraph>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Button type="primary" size="large" icon={<RocketOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, background: '#fff', color: '#667eea', borderColor: '#fff', fontWeight: 600, flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={() => navigate('/register')}>
-              立即注册
-            </Button>
-            <Button size="large" ghost icon={<LoginOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, color: '#fff', borderColor: 'rgba(255,255,255,0.6)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={() => navigate('/login')}>
-              已有账号？登录
-            </Button>
+            {isAuthenticated ? (
+              <>
+                {(isStudent && user?.class_slug) || (isTeacher && teacherClassCount > 0) ? (
+                  <Button type="primary" size="large" icon={<RocketOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, background: '#fff', color: '#667eea', borderColor: '#fff', fontWeight: 600, flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={handleEnterClass}>
+                    {classButtonLabel}
+                  </Button>
+                ) : null}
+                <Button size="large" ghost icon={<LogoutOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, color: '#fff', borderColor: 'rgba(255,255,255,0.6)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={handleLogout}>
+                  退出登录
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button type="primary" size="large" icon={<RocketOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, background: '#fff', color: '#667eea', borderColor: '#fff', fontWeight: 600, flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={() => navigate('/register')}>
+                  立即注册
+                </Button>
+                <Button size="large" ghost icon={<LoginOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, color: '#fff', borderColor: 'rgba(255,255,255,0.6)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={() => navigate('/login')}>
+                  已有账号？登录
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </Content>

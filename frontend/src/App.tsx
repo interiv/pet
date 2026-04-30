@@ -1,10 +1,9 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ConfigProvider, Spin, Alert, Button, Space } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import Login from './pages/Login';
 import Register from './pages/Register';
-import Home from './pages/Home';
 import LandingPage from './pages/LandingPage';
 import ClassHome from './pages/ClassHome';
 import ClassesPicker from './pages/ClassesPicker';
@@ -20,39 +19,10 @@ export const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children
     : <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
 };
 
-// 根路径分发：未登录留在集体首页（Home），登录后根据角色跳转
+// 根路径：始终展示首页内容
 const RootRedirect: React.FC = () => {
-  const { isAuthenticated, user, currentClass } = useAuthStore();
-  const navigate = useNavigate();
-  useEffect(() => {
-    if (!isAuthenticated || !user) return;
-    // 班主任/教师有多班时进入选择页
-    if ((user.role === 'teacher' || user.role === 'admin') && (user.teacher_classes?.length || 0) > 1) {
-      navigate('/classes-picker', { replace: true });
-      return;
-    }
-    // 单班教师：直接进入自己的班级
-    if ((user.role === 'teacher' || user.role === 'admin') && user.teacher_classes?.length === 1) {
-      navigate(`/c/${user.teacher_classes[0].slug}/app`, { replace: true });
-      return;
-    }
-    // 学生：进入所属班级
-    if (user.class_slug) {
-      navigate(`/c/${user.class_slug}/app`, { replace: true });
-      return;
-    }
-    // 保留上次所选班级（需确保 slug 有效）
-    if (currentClass?.slug && currentClass.slug !== 'null' && currentClass.slug !== 'undefined') {
-      navigate(`/c/${currentClass.slug}/app`, { replace: true });
-    }
-  }, [isAuthenticated, user, currentClass, navigate]);
+  const { user } = useAuthStore();
 
-  // 未登录：展示落地页
-  if (!isAuthenticated) {
-    return <LandingPage />;
-  }
-
-  // 学生待审批 或 无所属班级：在集体首页顶部显示提示条
   const pendingStudent = user && user.role === 'student'
     && ((user as any).status === 'pending_approval' || !user.class_slug);
 
@@ -73,7 +43,7 @@ const RootRedirect: React.FC = () => {
           />
         </div>
       )}
-      <Home />
+      <LandingPage />
     </>
   );
 };

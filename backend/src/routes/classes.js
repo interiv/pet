@@ -11,6 +11,16 @@ function generateInviteCode() {
   return crypto.randomBytes(4).toString('hex').toUpperCase();
 }
 
+// 生成班级 slug：基于名称拼音 + 随机后缀
+function generateSlug(name) {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  const suffix = crypto.randomBytes(3).toString('hex');
+  return `${base || 'class'}-${suffix}`;
+}
+
 router.get('/public-list', (req, res) => {
   try {
     const classes = db.prepare(`
@@ -268,10 +278,11 @@ router.post('/create', authenticateToken, (req, res) => {
     }
 
     // 创建班级，教师自动成为班主任
+    const slug = generateSlug(name);
     const result = db.prepare(`
-      INSERT INTO classes (name, grade, head_teacher_id, student_count, total_exp, created_at)
-      VALUES (?, ?, ?, 0, 0, datetime('now'))
-    `).run(name, grade || null, teacherId);
+      INSERT INTO classes (name, grade, slug, head_teacher_id, student_count, total_exp, created_at)
+      VALUES (?, ?, ?, ?, 0, 0, datetime('now'))
+    `).run(name, grade || null, slug, teacherId);
 
     const classId = result.lastInsertRowid;
 

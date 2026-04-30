@@ -183,10 +183,16 @@ router.get('/students', authenticateToken, (req, res) => {
 });
 
 // 获取学生详情（含宠物、物品、装备）
-router.get('/students/:id', authenticateToken, requireAdmin, (req, res) => {
+router.get('/students/:id', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
-    
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    if (userRole === 'student') {
+      return res.status(403).json({ error: '无权查看学生详情' });
+    }
+
     const student = db.prepare(`
       SELECT u.id, u.username, u.email, u.avatar, u.class_id, u.gold, u.created_at, u.last_login, u.status, c.name as class_name
       FROM users u LEFT JOIN classes c ON u.class_id = c.id
@@ -195,6 +201,15 @@ router.get('/students/:id', authenticateToken, requireAdmin, (req, res) => {
     
     if (!student) {
       return res.status(404).json({ error: '学生不存在' });
+    }
+
+    if (userRole === 'teacher') {
+      const isMyClass = db.prepare(
+        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
+      ).get(userId, student.class_id);
+      if (!isMyClass) {
+        return res.status(403).json({ error: '只能查看本班学生详情' });
+      }
     }
     
     const pets = db.prepare(`SELECT * FROM pets WHERE user_id = ?`).all(id);
@@ -216,15 +231,30 @@ router.get('/students/:id', authenticateToken, requireAdmin, (req, res) => {
   }
 });
 
-// 更新学生信息
-router.put('/students/:id', authenticateToken, requireAdmin, (req, res) => {
+// 更新学生信息（管理员 或 本班班主任）
+router.put('/students/:id', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
     const { username, email, avatar, class_id, status } = req.body;
-    
-    const student = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'student'`).get(id);
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    if (userRole === 'student') {
+      return res.status(403).json({ error: '无权修改学生信息' });
+    }
+
+    const student = db.prepare(`SELECT id, class_id FROM users WHERE id = ? AND role = 'student'`).get(id);
     if (!student) {
       return res.status(404).json({ error: '学生不存在' });
+    }
+
+    if (userRole === 'teacher') {
+      const isHeadTeacher = db.prepare(
+        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'`
+      ).get(userId, student.class_id);
+      if (!isHeadTeacher) {
+        return res.status(403).json({ error: '只有班主任可以修改本班学生信息' });
+      }
     }
     
     const updates = [];
@@ -248,19 +278,34 @@ router.put('/students/:id', authenticateToken, requireAdmin, (req, res) => {
   }
 });
 
-// 调整学生金币
-router.post('/students/:id/gold', authenticateToken, requireAdmin, (req, res) => {
+// 调整学生金币（管理员 或 本班班主任）
+router.post('/students/:id/gold', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
     const { amount, reason } = req.body;
-    
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    if (userRole === 'student') {
+      return res.status(403).json({ error: '无权调整金币' });
+    }
+
     if (typeof amount !== 'number' || amount === 0) {
       return res.status(400).json({ error: '金币调整量无效' });
     }
     
-    const student = db.prepare(`SELECT gold FROM users WHERE id = ? AND role = 'student'`).get(id);
+    const student = db.prepare(`SELECT gold, class_id FROM users WHERE id = ? AND role = 'student'`).get(id);
     if (!student) {
       return res.status(404).json({ error: '学生不存在' });
+    }
+
+    if (userRole === 'teacher') {
+      const isHeadTeacher = db.prepare(
+        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'`
+      ).get(userId, student.class_id);
+      if (!isHeadTeacher) {
+        return res.status(403).json({ error: '只有班主任可以调整本班学生金币' });
+      }
     }
     
     const newGold = student.gold + amount;
@@ -276,15 +321,30 @@ router.post('/students/:id/gold', authenticateToken, requireAdmin, (req, res) =>
   }
 });
 
-// 删除/禁用学生
-router.delete('/students/:id', authenticateToken, requireAdmin, (req, res) => {
+// 删除/禁用学生（管理员 或 本班班主任）
+router.delete('/students/:id', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
     const { action } = req.body;
-    
-    const student = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'student'`).get(id);
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    if (userRole === 'student') {
+      return res.status(403).json({ error: '无权操作' });
+    }
+
+    const student = db.prepare(`SELECT id, class_id FROM users WHERE id = ? AND role = 'student'`).get(id);
     if (!student) {
       return res.status(404).json({ error: '学生不存在' });
+    }
+
+    if (userRole === 'teacher') {
+      const isHeadTeacher = db.prepare(
+        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'`
+      ).get(userId, student.class_id);
+      if (!isHeadTeacher) {
+        return res.status(403).json({ error: '只有班主任可以禁用或删除本班学生' });
+      }
     }
     
     if (action === 'disable') {
@@ -403,10 +463,31 @@ router.post('/classes/:id/teachers', authenticateToken, (req, res) => {
   }
 });
 
-// 从班级移除老师
-router.delete('/classes/:id/teachers/:teacherId', authenticateToken, requireAdmin, (req, res) => {
+// 从班级移除老师（管理员 或 本班班主任）
+router.delete('/classes/:id/teachers/:teacherId', authenticateToken, (req, res) => {
   try {
     const { id, teacherId } = req.params;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    if (userRole !== 'admin') {
+      const isHeadTeacher = db.prepare(
+        `SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ? AND role = 'head_teacher'`
+      ).get(id, userId);
+      if (!isHeadTeacher) {
+        return res.status(403).json({ error: '只有班主任或管理员可以移除教师' });
+      }
+    }
+
+    const targetRecord = db.prepare(
+      `SELECT role FROM class_teachers WHERE class_id = ? AND teacher_id = ?`
+    ).get(id, teacherId);
+    if (!targetRecord) {
+      return res.status(404).json({ error: '该教师不在班级中' });
+    }
+    if (targetRecord.role === 'head_teacher') {
+      return res.status(400).json({ error: '不能移除班主任，请先更换班主任' });
+    }
 
     const result = db.prepare(`DELETE FROM class_teachers WHERE class_id = ? AND teacher_id = ?`).run(id, teacherId);
     if (result.changes === 0) {

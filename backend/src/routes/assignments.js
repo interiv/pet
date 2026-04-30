@@ -636,6 +636,11 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
           VALUES (?, ?, ?, ?, ?, 100, ?, 1, ?)
         `).run(req.params.id, req.user.userId, JSON.stringify(answers), finalStatus, totalScore, goldReward, finalStatus);
 
+        // 发放金币
+        if (goldReward > 0) {
+          db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(goldReward, goldReward, req.user.userId);
+        }
+
         const newSubId = result.lastInsertRowid;
         const insertQA = db.prepare(`
           INSERT INTO question_answers (submission_id, question_bank_id, attempt_number, student_answer, is_correct, score, max_score, answered_at)
@@ -678,7 +683,7 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
 
         // 只增加金币差额
         if (goldRewardDiff > 0) {
-          db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(goldRewardDiff, req.user.userId);
+          db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(goldRewardDiff, goldRewardDiff, req.user.userId);
         }
       }
 
@@ -758,6 +763,9 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
           const perfectCount = db.prepare("SELECT COUNT(*) as c FROM submissions WHERE user_id = ? AND total_score = 100").get(req.user.userId)?.c || 0;
           checkAndAwardAchievement(req.user.userId, 'perfect_score', perfectCount);
         }
+        // 累计金币成就
+        const totalGold = db.prepare('SELECT total_gold_earned FROM users WHERE id = ?').get(req.user.userId)?.total_gold_earned || 0;
+        checkAndAwardAchievement(req.user.userId, 'total_gold', totalGold);
       } catch (e) { console.error('成就检查失败:', e); }
 
       // ✨ 向所在班级广播提交事件（教师端实时接收）
@@ -928,7 +936,7 @@ ${qa.student_answer || '(未提供文字答案)'}
       UPDATE submissions SET total_score = ?, gold_reward = ?, review_status = 'completed', graded_at = CURRENT_TIMESTAMP WHERE id = ?
     `).run(avgScore, goldReward, submissionId);
 
-    db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(goldReward, userId);
+    db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(goldReward, goldReward, userId);
 
     for (const qa of questionAnswers) {
       const qaRecord = db.prepare('SELECT is_correct, score FROM question_answers WHERE id = ?').get(qa.id);
