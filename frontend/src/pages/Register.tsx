@@ -27,6 +27,7 @@ const Register: React.FC = () => {
   const [schools, setSchools] = useState<any[]>([]);
   const [selectedSchoolId, setSelectedSchoolId] = useState<number | null>(null);
   const [selectedRole, setSelectedRole] = useState('student');
+  const [teacherAction, setTeacherAction] = useState<'create' | 'join'>('create');
   const [inviteCode, setInviteCode] = useState('');
   const [inviteInfo, setInviteInfo] = useState<any>(null);
   const isMobile = useMobile();
@@ -99,17 +100,39 @@ const Register: React.FC = () => {
         navigate('/');
       } else {
         // 普通注册流程
-        const response = await authAPI.register({
-          ...registerData,
-          requested_class_ids: values.requested_class_ids
-        });
-        if (response.data.pending) {
-          message.success(response.data.message);
-          navigate('/login');
-        } else {
+        // 如果是教师且选择创建新班级
+        if (role === 'teacher' && teacherAction === 'create') {
+          // 先注册账号
+          const response = await authAPI.register(registerData);
           login(response.data.token, response.data.user);
-          message.success('注册成功！');
-          navigate('/');
+          
+          // 然后创建班级
+          try {
+            const classResponse = await classAPI.createClass({
+              name: values.class_name,
+              grade: values.class_grade
+            });
+            
+            message.success(`注册成功！班级「${values.class_name}」已创建，推荐码：${classResponse.data.invitation_code}`);
+            navigate('/');
+          } catch (classError: any) {
+            message.error(`账号注册成功，但班级创建失败：${classError.response?.data?.error || '未知错误'}`);
+            navigate('/');
+          }
+        } else {
+          // 学生或申请加入现有班级的教师
+          const response = await authAPI.register({
+            ...registerData,
+            requested_class_ids: values.requested_class_ids
+          });
+          if (response.data.pending) {
+            message.success(response.data.message);
+            navigate('/login');
+          } else {
+            login(response.data.token, response.data.user);
+            message.success('注册成功！');
+            navigate('/');
+          }
         }
       }
     } catch (error: any) {
@@ -283,17 +306,64 @@ const Register: React.FC = () => {
           )}
 
           {!inviteInfo && selectedRole === 'teacher' && (
-            <Form.Item
-              name="requested_class_ids"
-              label="选择要申请的班级（可多选）"
-              rules={[{ required: true, message: '请至少选择一个班级' }]}
-            >
-              <Select mode="multiple" placeholder={filteredClasses.length ? '选择要申请的班级' : '当前学校暂无公开班级'} maxTagCount={2} showSearch optionFilterProp="children">
-                {filteredClasses.map(c => (
-                  <Option key={c.id} value={c.id}>{c.name} {c.grade ? `(${c.grade})` : ''}{c.school_name ? ` · ${c.school_name}` : ''}</Option>
-                ))}
-              </Select>
-            </Form.Item>
+            <>
+              <Form.Item
+                name="teacher_action"
+                label="您希望如何加入系统？"
+                initialValue="create"
+              >
+                <Select onChange={(value) => setTeacherAction(value)}>
+                  <Option value="create">创建新班级（成为班主任）</Option>
+                  <Option value="join">申请加入现有班级</Option>
+                </Select>
+              </Form.Item>
+
+              {teacherAction === 'create' && (
+                <>
+                  <Form.Item
+                    name="class_name"
+                    label="班级名称"
+                    rules={[
+                      { required: true, message: '请输入班级名称!' },
+                      { min: 2, max: 50, message: '班级名称长度为2-50个字符!' }
+                    ]}
+                    tooltip="例如：三年级二班、高一(3)班"
+                  >
+                    <Input placeholder="输入班级名称，例如：三年级二班" />
+                  </Form.Item>
+
+                  <Form.Item
+                    name="class_grade"
+                    label="年级（可选）"
+                    tooltip="例如：三年级、高一、2024级"
+                  >
+                    <Input placeholder="输入年级，例如：三年级" />
+                  </Form.Item>
+
+                  <Alert
+                    message="创建班级说明"
+                    description="创建后您将成为该班级的班主任，自动生成推荐码，学生可通过推荐码加入您的班级。"
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                  />
+                </>
+              )}
+
+              {teacherAction === 'join' && (
+                <Form.Item
+                  name="requested_class_ids"
+                  label="选择要申请的班级（可多选）"
+                  rules={[{ required: true, message: '请至少选择一个班级' }]}
+                >
+                  <Select mode="multiple" placeholder={filteredClasses.length ? '选择要申请的班级' : '当前暂无公开班级'} maxTagCount={2} showSearch optionFilterProp="children">
+                    {filteredClasses.map(c => (
+                      <Option key={c.id} value={c.id}>{c.name} {c.grade ? `(${c.grade})` : ''}{c.school_name ? ` · ${c.school_name}` : ''}</Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              )}
+            </>
           )}
 
           <Form.Item>

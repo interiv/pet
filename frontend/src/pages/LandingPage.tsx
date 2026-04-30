@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Layout, Button, Row, Col, Card, Statistic, List, Tag, Avatar, Spin, Space, Typography, Divider, Empty } from 'antd';
 import {
   LoginOutlined, UserAddOutlined, TrophyOutlined, TeamOutlined,
-  HeartOutlined, ThunderboltOutlined, FireOutlined, SchoolOutlined,
+  HeartOutlined, ThunderboltOutlined, FireOutlined,
   RocketOutlined, StarOutlined, BookOutlined, BulbOutlined,
   ArrowDownOutlined, RightOutlined,
 } from '@ant-design/icons';
@@ -153,7 +153,7 @@ const LandingPage: React.FC = () => {
             <Row gutter={[16, 16]}>
               {[
                 { icon: <TeamOutlined />, color: '#667eea', value: stats.students, title: '注册学生' },
-                { icon: <SchoolOutlined />, color: '#52c41a', value: stats.classes, title: '班级数量' },
+                { icon: <TeamOutlined />, color: '#52c41a', value: stats.classes, title: '班级数量' },
                 { icon: <HeartOutlined />, color: '#eb2f96', value: stats.pets, title: '宠物总数' },
                 { icon: <FireOutlined />, color: '#fa541c', value: stats.battles, title: '战斗次数' },
               ].map((item, idx) => (
@@ -267,7 +267,7 @@ const LandingPage: React.FC = () => {
           <div style={{ background: '#fff', padding: isMobile ? '40px 16px' : '60px 24px' }}>
             <div style={{ maxWidth: 1200, margin: '0 auto' }}>
               <div style={{ textAlign: 'center', marginBottom: isMobile ? 24 : 40 }}>
-                <Title level={2} style={{ marginBottom: 8, fontSize: isMobile ? 20 : undefined }}><SchoolOutlined style={{ color: '#52c41a' }} /> 加入学校</Title>
+                <Title level={2} style={{ marginBottom: 8, fontSize: isMobile ? 20 : undefined }}><TeamOutlined style={{ color: '#52c41a' }} /> 加入学校</Title>
                 <Paragraph style={{ color: '#8c8c8c', fontSize: isMobile ? 14 : 16 }}>找到你的学校，和同校同学一起养成宠物</Paragraph>
               </div>
               <Row gutter={[20, 20]}>
@@ -277,7 +277,7 @@ const LandingPage: React.FC = () => {
                     <Col xs={24} sm={12} md={8} key={school.id}>
                       <Card hoverable style={{ borderRadius: 12, borderLeft: `4px solid ${school.theme_color || '#667eea'}`, height: '100%' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-                          {school.logo ? <Avatar src={school.logo} size={40} /> : <Avatar style={{ background: school.theme_color || '#667eea' }} size={40} icon={<SchoolOutlined />} />}
+                          {school.logo ? <Avatar src={school.logo} size={40} /> : <Avatar style={{ background: school.theme_color || '#667eea' }} size={40} icon={<TeamOutlined />} />}
                           <div>
                             <Text strong style={{ fontSize: 16 }}>{school.name}</Text>
                             <div style={{ color: '#8c8c8c', fontSize: 12 }}>{school.city || ''}{school.city && school.region ? ' · ' : ''}{school.region || ''}</div>
