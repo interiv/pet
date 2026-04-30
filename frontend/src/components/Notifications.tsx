@@ -10,6 +10,7 @@ import {
   TrophyOutlined,
   UserAddOutlined,
   NotificationOutlined,
+  EditOutlined,
 } from '@ant-design/icons';
 import { notificationAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
@@ -34,6 +35,7 @@ const typeConfig: Record<string, { icon: React.ReactNode; color: string; label: 
   forum_reply: { icon: <MessageOutlined />, color: 'purple', label: '论坛回复' },
   forum_like: { icon: <HeartOutlined />, color: 'red', label: '论坛点赞' },
   forum_quote: { icon: <MessageOutlined />, color: 'orange', label: '被引用' },
+  answer_changed: { icon: <EditOutlined />, color: 'volcano', label: '答案更正' },
   system: { icon: <NotificationOutlined />, color: 'default', label: '系统通知' },
 };
 

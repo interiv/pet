@@ -306,6 +306,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
               options: questions[vIdx].options ? (typeof questions[vIdx].options === 'string' ? JSON.parse(questions[vIdx].options) : questions[vIdx].options) : null,
               answer: questions[vIdx].answer !== undefined ? (Array.isArray(questions[vIdx].answer) ? questions[vIdx].answer.join(',') : String(questions[vIdx].answer)) : '',
               explanation: questions[vIdx].explanation || '',
+              type: question_type,
               knowledge_point: processedQuestions[vIdx]?.knowledge_point || topic
             });
           }
@@ -350,7 +351,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
 router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
   try {
     const qid = parseInt(req.params.id);
-    const existing = db.prepare('SELECT id, variant_group_id FROM question_bank WHERE id = ?').get(qid);
+    const existing = db.prepare('SELECT id, variant_group_id, type, answer as old_answer FROM question_bank WHERE id = ?').get(qid);
     if (!existing) return res.status(404).json({ error: '题目不存在' });
 
     const { content, options, answer, explanation, analysis, knowledge_point, difficulty, hint, sync_group } = req.body;
@@ -358,9 +359,10 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
     const values = [];
     if (content !== undefined) { fields.push('content = ?'); values.push(content); }
     if (options !== undefined) { fields.push('options = ?'); values.push(options ? JSON.stringify(options) : null); }
+    let newAnswerStr = null;
     if (answer !== undefined) {
-      const answerStr = Array.isArray(answer) ? answer.join(',') : typeof answer === 'boolean' ? (answer ? 'true' : 'false') : String(answer);
-      fields.push('answer = ?'); values.push(answerStr);
+      newAnswerStr = Array.isArray(answer) ? answer.join(',') : typeof answer === 'boolean' ? (answer ? 'true' : 'false') : String(answer);
+      fields.push('answer = ?'); values.push(newAnswerStr);
     }
     if (explanation !== undefined) { fields.push('explanation = ?'); values.push(explanation); }
     if (analysis !== undefined) { fields.push('analysis = ?'); values.push(analysis); }
@@ -380,6 +382,86 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
       if (difficulty !== undefined) { groupFields.push('difficulty = ?'); groupValues.push(difficulty); }
       groupValues.push(existing.variant_group_id);
       db.prepare(`UPDATE question_bank SET ${groupFields.join(', ')} WHERE variant_group_id = ?`).run(...groupValues);
+    }
+
+    // 答案变更时，自动重算所有作答记录、错题本、提交分数，并通知受影响学生
+    if (newAnswerStr !== null && newAnswerStr !== existing.old_answer) {
+      const affectedAnswers = db.prepare(`
+        SELECT qa.id, qa.submission_id, qa.student_answer, qa.is_correct, qa.score, qa.max_score,
+               s.user_id, s.assignment_id, s.id as sub_id
+        FROM question_answers qa
+        JOIN submissions s ON qa.submission_id = s.id
+        WHERE qa.question_bank_id = ?
+      `).all(qid);
+
+      const updatedQuestion = db.prepare('SELECT type, answer FROM question_bank WHERE id = ?').get(qid);
+      const notifiedUsers = new Set();
+
+      for (const qa of affectedAnswers) {
+        let newCorrect = false;
+        const ua = qa.student_answer;
+
+        if (updatedQuestion.type === 'choice_single' || updatedQuestion.type === 'fill_blank') {
+          newCorrect = String(ua).trim().toLowerCase() === String(updatedQuestion.answer).trim().toLowerCase();
+        } else if (updatedQuestion.type === 'choice_multi') {
+          const correctSet = updatedQuestion.answer.split(',').map(s => s.trim().toLowerCase()).sort().join(',');
+          const userSet = (Array.isArray(ua) ? ua : [ua]).map(s => String(s).trim().toLowerCase()).sort().join(',');
+          newCorrect = correctSet === userSet;
+        } else if (updatedQuestion.type === 'judgment') {
+          const uas = String(ua).trim().toLowerCase();
+          const cas = String(updatedQuestion.answer).trim().toLowerCase();
+          newCorrect = uas === cas || (uas === 'true' && cas === 'true') || (uas === 'false' && cas === 'false');
+        } else {
+          continue;
+        }
+
+        const wasCorrect = qa.is_correct === 1;
+        if (wasCorrect === newCorrect) continue;
+
+        const newScore = newCorrect ? qa.max_score : 0;
+        db.prepare('UPDATE question_answers SET is_correct = ?, score = ? WHERE id = ?')
+          .run(newCorrect ? 1 : 0, newScore, qa.id);
+
+        // 更新错题本
+        if (wasCorrect && !newCorrect) {
+          db.prepare(`
+            INSERT OR IGNORE INTO wrong_questions (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed, wrong_count)
+            VALUES (?, ?, ?, ?, ?, '', 0, 1)
+          `).run(qa.user_id, qa.assignment_id, qid, ua, updatedQuestion.answer);
+        } else if (!wasCorrect && newCorrect) {
+          db.prepare('DELETE FROM wrong_questions WHERE user_id = ? AND question_id = ?')
+            .run(qa.user_id, qid);
+        }
+
+        // 重新计算该提交的总分
+        const allQA = db.prepare('SELECT score, max_score FROM question_answers WHERE submission_id = ?').all(qa.submission_id);
+        const totalScore = allQA.reduce((sum, a) => sum + (a.score || 0), 0);
+        const maxTotal = allQA.reduce((sum, a) => sum + (a.max_score || 100), 0);
+        const assignmentInfo = db.prepare('SELECT max_exp FROM assignments WHERE id = ?').get(qa.assignment_id);
+        const maxExp = assignmentInfo?.max_exp || 100;
+        const newGoldReward = Math.floor((totalScore / maxTotal) * maxExp);
+        const oldGold = db.prepare('SELECT gold_reward FROM submissions WHERE id = ?').get(qa.submission_id)?.gold_reward || 0;
+        const goldDiff = newGoldReward - oldGold;
+
+        db.prepare('UPDATE submissions SET total_score = ?, gold_reward = ? WHERE id = ?')
+          .run(totalScore, newGoldReward, qa.submission_id);
+
+        if (goldDiff !== 0) {
+          db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?')
+            .run(goldDiff, goldDiff, qa.user_id);
+        }
+
+        // 通知受影响的学生
+        if (!notifiedUsers.has(qa.user_id)) {
+          notifiedUsers.add(qa.user_id);
+          const direction = wasCorrect && !newCorrect ? '变更为错误' : '变更为正确';
+          const assignmentTitle = db.prepare('SELECT title FROM assignments WHERE id = ?').get(qa.assignment_id)?.title || '作业';
+          db.prepare(`
+            INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
+            VALUES (?, 'answer_changed', '题目答案已更正', ?, 'assignment', ?)
+          `).run(qa.user_id, `「${assignmentTitle}」中有一道题目的标准答案被老师修改，你的作答结果${direction}，请查看最新成绩`, qa.assignment_id);
+        }
+      }
     }
 
     const updated = db.prepare('SELECT * FROM question_bank WHERE id = ?').get(qid);

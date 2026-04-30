@@ -23,13 +23,15 @@ interface Question {
   id?: number;
   tempId?: number;
   variantIds?: number[];
-  variants?: { tempId: number; content: string; options?: string[] | null; answer?: string; explanation?: string; knowledge_point: string }[];
+  variants?: { tempId: number; content: string; options?: string[] | null; answer?: string; explanation?: string; type?: string; knowledge_point: string }[];
   content: string;
   options?: string[] | null;
   answer?: string;
   explanation?: string;
+  analysis?: string;
   type: string;
   knowledge_point?: string;
+  difficulty?: string;
   hasVariants?: boolean;
 }
 
@@ -501,6 +503,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       for (let qi = 0; qi < newQuestions.length; qi++) {
         if (newQuestions[qi].id === editingQuestion.id) {
           newQuestions[qi] = { ...newQuestions[qi], ...updatedQuestion };
+          if (updatedQuestion.answer !== undefined) {
+            setStudentAnswers(prev => ({ ...prev, [editingQuestion.id!]: updatedQuestion.answer }));
+          }
           break;
         }
         const variants = (newQuestions[qi] as any).variants;
@@ -642,6 +647,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                   setStudentAnswers(prev => ({ ...prev, [q.id!]: originalLetter }));
                 }}
                 value={studentAnswers[q.id!] ? mapOriginalToDisplay(studentAnswers[q.id!]) : null}
+                disabled={isTeacher}
               >
                 {optShuffle.map((origIdx, displayIdx) => {
                   const displayLetter = String.fromCharCode(65 + displayIdx);
@@ -662,6 +668,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 }}
                 value={studentAnswers[q.id!] ? (studentAnswers[q.id!] as string[]).map((v: string) => mapOriginalToDisplay(v)) : []}
                 style={{ width: '100%' }}
+                disabled={isTeacher}
               >
                 {optShuffle.map((origIdx, displayIdx) => {
                   const displayLetter = String.fromCharCode(65 + displayIdx);
@@ -685,6 +692,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             onChange={(e) => setStudentAnswers(prev => ({ ...prev, [q.id!]: e.target.value }))}
             value={studentAnswers[q.id!] || null}
             style={{ marginLeft: 8 }}
+            disabled={isTeacher}
           >
             <Radio value="true" style={{ marginRight: 24, color: isTeacher && q.answer === 'true' ? '#52c41a' : undefined, fontWeight: isTeacher && q.answer === 'true' ? 600 : undefined }}>正确{isTeacher && q.answer === 'true' ? ' ✓' : ''}</Radio>
             <Radio value="false" style={{ color: isTeacher && q.answer === 'false' ? '#52c41a' : undefined, fontWeight: isTeacher && q.answer === 'false' ? 600 : undefined }}>错误{isTeacher && q.answer === 'false' ? ' ✓' : ''}</Radio>
@@ -726,26 +734,61 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         )}
 
         {isEssay && isTeacher && (
-          <>
-            <TextArea 
-              rows={4} 
-              placeholder="修改评阅标准..."
-              value={studentAnswers[q.id!] || ''}
-              onChange={(e) => setStudentAnswers(prev => ({ ...prev, [q.id!]: e.target.value }))}
-              style={{ marginBottom: 8 }}
-            />
-            <Alert 
-              type="info" 
-              showIcon 
-              message="提交后将替换默认评阅标准" 
-              style={{ marginTop: 8 }} 
-            />
-          </>
+          <div style={{ marginTop: 8 }}>
+            {q.answer && (
+              <div style={{ padding: '8px 12px', background: '#f6ffed', borderRadius: 6, border: '1px solid #b7eb8f', marginBottom: 8 }}>
+                <div style={{ color: '#52c41a', fontSize: 12, marginBottom: 4 }}>评阅标准：</div>
+                <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>{q.answer}</div>
+              </div>
+            )}
+            {q.explanation && (
+              <div style={{ color: '#8c8c8c', fontSize: 12, fontStyle: 'italic' }}>
+                解析：{q.explanation}
+              </div>
+            )}
+            <Button size="small" icon={<EditOutlined />} onClick={() => {
+              setEditingQuestion(q);
+              setEditingQuestionIndex(-1);
+              setEditingVariantParentIndex(-1);
+              setEditingVariantIndex(-1);
+              let answerVal: any = q.answer || '';
+              editForm.setFieldsValue({
+                content: q.content,
+                options: q.options ? q.options.join('\n') : '',
+                difficulty: q.difficulty || 'medium',
+                knowledge_point: q.knowledge_point || '',
+                answer: answerVal,
+                explanation: q.explanation || '',
+                analysis: q.analysis || ''
+              });
+              setEditModalVisible(true);
+            }} style={{ marginTop: 4 }}>编辑</Button>
+          </div>
         )}
 
         {isTeacher && q.answer && !isEssay && (
-          <div style={{ marginTop: 8 }}>
+          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
             <Tag color="green">正确答案：{q.answer}{isJudgment && (q.answer === 'true' ? '（正确）' : '（错误）')}</Tag>
+            <Button size="small" icon={<EditOutlined />} onClick={() => {
+              setEditingQuestion(q);
+              setEditingQuestionIndex(-1);
+              setEditingVariantParentIndex(-1);
+              setEditingVariantIndex(-1);
+              let answerVal: any = q.answer || '';
+              if (q.type === 'choice_multi' && typeof answerVal === 'string') {
+                answerVal = answerVal.split(',').map((a: string) => a.trim()).filter(Boolean);
+              }
+              editForm.setFieldsValue({
+                content: q.content,
+                options: q.options ? q.options.join('\n') : '',
+                difficulty: q.difficulty || 'medium',
+                knowledge_point: q.knowledge_point || '',
+                answer: answerVal,
+                explanation: q.explanation || '',
+                analysis: q.analysis || ''
+              });
+              setEditModalVisible(true);
+            }}>编辑</Button>
           </div>
         )}
 
@@ -922,7 +965,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           )}
           {isTeacher && (
             <>
-              <Button size="small" icon={<EyeOutlined />} onClick={() => handleStartDoing(record)}>预览</Button>
+              <Button size="small" icon={<EditOutlined />} onClick={() => handleStartDoing(record)}>编辑</Button>
               <Button size="small" icon={<BarChartOutlined />} onClick={() => handleViewStatistics(record)}>统计</Button>
               {record.status !== 'cancelled' && (
                 <Popconfirm
@@ -1221,7 +1264,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
       {/* 学生作答弹窗 */}
       <Modal
-        title={isTeacher ? `👁️ 预览作业: ${currentAssignment?.title || ''}` : `📝 ${currentAssignment?.isRetryMode ? '错题重做' : '完成作业'}: ${currentAssignment?.title || ''}`}
+        title={isTeacher ? `✏️ 编辑作业: ${currentAssignment?.title || ''}` : `📝 ${currentAssignment?.isRetryMode ? '错题重做' : '完成作业'}: ${currentAssignment?.title || ''}`}
         open={isDoModalVisible}
         onCancel={() => setIsDoModalVisible(false)}
         width={isMobile ? '95vw' : 700}
@@ -1244,9 +1287,11 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
               </div>
             )}
             <Button onClick={() => setIsDoModalVisible(false)}>{isTeacher ? '关闭' : '取消'}</Button>
-            <Button type="primary" loading={submitting} onClick={handleSubmitAnswers}>
-              {submitting ? "提交中..." : isTeacher ? "保存修改" : "提交答案"}
-            </Button>
+            {!isTeacher && (
+              <Button type="primary" loading={submitting} onClick={handleSubmitAnswers}>
+                {submitting ? "提交中..." : "提交答案"}
+              </Button>
+            )}
           </div>
         }
       >
@@ -1257,7 +1302,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
               showIcon 
               message={
                 isTeacher 
-                  ? `预览模式 | 共${currentAssignment.questions?.length || 0}道题 | 可修改答案/评阅标准后点击"保存修改"`
+                  ? `编辑模式 | 共${currentAssignment.questions?.length || 0}道题 | 点击"编辑"按钮修改题目或答案`
                   : currentAssignment.isRetryMode 
                     ? "这是根据你之前做错的题目生成的相似题，再试一次吧！" 
                     : `${currentAssignment.subject} | 共${currentAssignment.questions?.length || 0}道题 | 金币奖励: +${currentAssignment.max_exp}`
@@ -1475,6 +1520,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         }}
         onOk={() => editForm.submit()}
         width={isMobile ? '95vw' : 600}
+        zIndex={2000}
         okText="保存"
         cancelText="取消"
       >
