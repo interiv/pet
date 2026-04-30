@@ -6,8 +6,11 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import LandingPage from './pages/LandingPage';
 import ClassHome from './pages/ClassHome';
-import ClassesPicker from './pages/ClassesPicker';
 import Workspace from './pages/Workspace';
+import AboutPage from './pages/AboutPage';
+import HelpPage from './pages/HelpPage';
+import PrivacyPage from './pages/PrivacyPage';
+import ContactPage from './pages/ContactPage';
 import { useAuthStore } from './store/authStore';
 
 // 路由守卫组件：未登录跳 /login 并带上原地址
@@ -81,9 +84,13 @@ const App: React.FC = () => {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
-          <Route path="/classes-picker" element={<PrivateRoute><ClassesPicker /></PrivateRoute>} />
+          <Route path="/workspace" element={<PrivateRoute><Workspace /></PrivateRoute>} />
           <Route path="/c/:slug" element={<ClassHome />} />
           <Route path="/c/:slug/app" element={<PrivateRoute><Workspace /></PrivateRoute>} />
+          <Route path="/about" element={<AboutPage />} />
+          <Route path="/help" element={<HelpPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/contact" element={<ContactPage />} />
           <Route path="/" element={<RootRedirect />} />
         </Routes>
       </Router>

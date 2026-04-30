@@ -5,11 +5,6 @@ import Home from './Home';
 import { useAuthStore } from '../store/authStore';
 import { classAPI } from '../utils/api';
 
-/**
- * Workspace: 登录后的工作台。
- * 通过路径参数 /c/:slug/app 进入，解析出 class 后设置到 currentClass，
- * 再直接复用 Home 作为具体业务页面（以避免大面积重写）。
- */
 const Workspace: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
@@ -19,12 +14,20 @@ const Workspace: React.FC = () => {
 
   useEffect(() => {
     if (!slug) {
+      if (user?.role === 'teacher' || user?.role === 'admin') {
+        setCurrentClass(null);
+        setLoading(false);
+        return;
+      }
+      if (user?.role === 'student' && user?.class_slug) {
+        navigate(`/c/${user.class_slug}/app`, { replace: true });
+        return;
+      }
       setError('缺少班级标识');
       setLoading(false);
       return;
     }
 
-    // 若已有匹配的 currentClass，直接通过
     if (currentClass && currentClass.slug === slug) {
       setLoading(false);
       return;
@@ -50,7 +53,7 @@ const Workspace: React.FC = () => {
         setLoading(false);
       }
     })();
-  }, [slug, currentClass, setCurrentClass]);
+  }, [slug, currentClass, setCurrentClass, user, navigate]);
 
   if (loading) {
     return (
@@ -71,9 +74,6 @@ const Workspace: React.FC = () => {
         extra={
           <>
             <Button type="primary" onClick={() => navigate('/')}>返回首页</Button>
-            {user && (user.role === 'teacher' || user.role === 'admin') && (
-              <Button onClick={() => navigate('/classes-picker')} style={{ marginLeft: 8 }}>选择班级</Button>
-            )}
           </>
         }
       />

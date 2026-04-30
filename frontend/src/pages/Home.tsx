@@ -621,7 +621,7 @@ const Home: React.FC = () => {
         position: 'sticky',
         top: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 20, cursor: 'pointer' }} onClick={() => navigate('/')}>
           {isMobile && (
             <Button
               type="text"
@@ -774,13 +774,13 @@ const Home: React.FC = () => {
             {siteSettings.site_description || '寓教于乐，让学习更有趣'}
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginBottom: 12 }}>
-            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }}>关于我们</a>
-            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }}>使用帮助</a>
-            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }}>隐私政策</a>
-            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }}>联系我们</a>
+            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }} onClick={() => navigate('/about')}>关于我们</a>
+            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }} onClick={() => navigate('/help')}>使用帮助</a>
+            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }} onClick={() => navigate('/privacy')}>隐私政策</a>
+            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }} onClick={() => navigate('/contact')}>联系我们</a>
           </div>
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 8 }}>
-            <span style={{ fontSize: 12 }}>{siteSettings.site_footer || '© 2024 班级宠物养成系统'}</span>
+            <span style={{ fontSize: 12 }}>{siteSettings.site_footer || '© 2026 班级宠物养成系统'}</span>
             <span style={{ margin: '0 8', fontSize: 12 }}>|</span>
             <span style={{ fontSize: 12 }}>用 <HeartOutlined style={{ color: '#ff4d4f' }} /> 打造</span>
           </div>

@@ -1240,7 +1240,7 @@ const SiteSettings: React.FC = () => {
         site_name: data.site_name || '班级宠物养成系统',
         site_description: data.site_description || '寓教于乐，让学习更有趣',
         site_logo: data.site_logo || '🐾',
-        site_footer: data.site_footer || '© 2024 班级宠物养成系统',
+        site_footer: data.site_footer || '© 2026 班级宠物养成系统',
         site_announcement: data.site_announcement || '',
         registration_enabled: data.registration_enabled === 'true',
         battle_enabled: data.battle_enabled === 'true',
@@ -1248,6 +1248,9 @@ const SiteSettings: React.FC = () => {
         max_pets_per_user: parseInt(data.max_pets_per_user) || 1,
         daily_login_gold: parseInt(data.daily_login_gold) || 10,
         battle_stamina_cost: parseInt(data.battle_stamina_cost) || 20,
+        perm_battle_records: data.perm_battle_records || 'head_teacher',
+        perm_homework_records: data.perm_homework_records || 'subject_teacher',
+        perm_purchase_records: data.perm_purchase_records || 'head_teacher',
       });
     } catch (error) {
       message.error('加载网站设置失败');
@@ -1300,7 +1303,7 @@ const SiteSettings: React.FC = () => {
             <Input placeholder="寓教于乐，让学习更有趣" />
           </Form.Item>
           <Form.Item name="site_footer" label="底部版权信息">
-            <Input placeholder="© 2024 班级宠物养成系统" />
+            <Input placeholder="© 2026 班级宠物养成系统" />
           </Form.Item>
           <Form.Item name="site_announcement" label="全局公告">
             <Input.TextArea rows={2} placeholder="输入公告内容，留空则不显示公告栏" />
@@ -1342,6 +1345,51 @@ const SiteSettings: React.FC = () => {
             <Col xs={24} md={8}>
               <Form.Item name="battle_stamina_cost" label="战斗体力消耗">
                 <InputNumber min={0} max={200} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Card>
+
+        <Card title={<span><SafetyOutlined /> 数据查看权限</span>} style={{ marginBottom: 16 }}>
+          <Alert
+            message="权限说明"
+            description={
+              <ul style={{ margin: 0, paddingLeft: 16 }}>
+                <li><b>仅班主任</b>：只有班主任可以查看</li>
+                <li><b>任课教师</b>：任课教师可以查看自己任教班级的数据，班主任可查看所有</li>
+                <li><b>所有教师</b>：所有教师均可查看任教班级的数据</li>
+              </ul>
+            }
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+          <Row gutter={16}>
+            <Col xs={24} md={8}>
+              <Form.Item name="perm_battle_records" label="战斗记录查看权限">
+                <Select>
+                  <Select.Option value="head_teacher">仅班主任</Select.Option>
+                  <Select.Option value="subject_teacher">任课教师</Select.Option>
+                  <Select.Option value="all_teacher">所有教师</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="perm_homework_records" label="作业记录查看权限">
+                <Select>
+                  <Select.Option value="head_teacher">仅班主任</Select.Option>
+                  <Select.Option value="subject_teacher">任课教师</Select.Option>
+                  <Select.Option value="all_teacher">所有教师</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="perm_purchase_records" label="购买记录查看权限">
+                <Select>
+                  <Select.Option value="head_teacher">仅班主任</Select.Option>
+                  <Select.Option value="subject_teacher">任课教师</Select.Option>
+                  <Select.Option value="all_teacher">所有教师</Select.Option>
+                </Select>
               </Form.Item>
             </Col>
           </Row>
@@ -1419,29 +1467,59 @@ const AISettings: React.FC = () => {
 };
 
 const DataView: React.FC = () => {
+  const { user } = useAuthStore();
   const [battles, setBattles] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
   const [shopRecords, setShopRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('battles');
+  const [activeTab, setActiveTab] = useState('assignments');
+
+  const isAdmin = user?.role === 'admin';
+  const isHeadTeacher = user?.role === 'teacher' && (user as any).teacher_classes?.some(
+    (c: any) => c.class_role === 'head_teacher'
+  );
+
+  const canViewBattles = isAdmin || isHeadTeacher;
+  const canViewShop = isAdmin || isHeadTeacher;
 
   useEffect(() => {
     loadData();
   }, []);
 
+  useEffect(() => {
+    if (activeTab === 'battles' && !canViewBattles) {
+      setActiveTab('assignments');
+    }
+    if (activeTab === 'shop' && !canViewShop) {
+      setActiveTab('assignments');
+    }
+  }, [canViewBattles, canViewShop]);
+
   const loadData = async () => {
     setLoading(true);
     try {
-      const [battlesRes, assignmentsRes, recordsRes] = await Promise.all([
-        adminAPI.getBattles(),
-        adminAPI.getAssignments(),
-        adminAPI.getShopRecords(),
-      ]);
-      setBattles(battlesRes.data.battles || []);
-      setAssignments(assignmentsRes.data.assignments || []);
-      setShopRecords(recordsRes.data.records || []);
-    } catch (error) {
-      message.error('加载数据失败');
+      const promises: Promise<any>[] = [];
+      if (canViewBattles) promises.push(adminAPI.getBattles());
+      promises.push(adminAPI.getAssignments());
+      if (canViewShop) promises.push(adminAPI.getShopRecords());
+
+      const results = await Promise.all(promises);
+      let idx = 0;
+      if (canViewBattles) {
+        setBattles(results[idx].data.battles || []);
+        idx++;
+      }
+      setAssignments(results[idx].data.assignments || []);
+      idx++;
+      if (canViewShop) {
+        setShopRecords(results[idx].data.records || []);
+      }
+    } catch (error: any) {
+      if (error?.response?.status === 403) {
+        message.warning('部分数据无权查看');
+      } else {
+        message.error('加载数据失败');
+      }
     } finally {
       setLoading(false);
     }
@@ -1479,9 +1557,9 @@ const DataView: React.FC = () => {
   ];
 
   const dataViewTabItems = [
-    { key: 'battles', label: '战斗记录', children: <Table dataSource={battles} columns={battleColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" scroll={{ x: true }} /> },
+    ...(canViewBattles ? [{ key: 'battles', label: '战斗记录', children: <Table dataSource={battles} columns={battleColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" scroll={{ x: true }} /> }] : []),
     { key: 'assignments', label: '作业记录', children: <Table dataSource={assignments} columns={assignmentColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" scroll={{ x: true }} /> },
-    { key: 'shop', label: '购买记录', children: <Table dataSource={shopRecords} columns={shopColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" scroll={{ x: true }} /> },
+    ...(canViewShop ? [{ key: 'shop', label: '购买记录', children: <Table dataSource={shopRecords} columns={shopColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" scroll={{ x: true }} /> }] : []),
   ];
 
   return (

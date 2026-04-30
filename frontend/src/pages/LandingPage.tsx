@@ -46,18 +46,12 @@ const LandingPage: React.FC = () => {
 
   const isStudent = user?.role === 'student';
   const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
-  const teacherClassCount = user?.teacher_classes?.length || 0;
-  const classButtonLabel = isStudent || teacherClassCount <= 1 ? '进入班级' : '选择班级';
 
   const handleEnterClass = () => {
     if (isStudent && user?.class_slug) {
       navigate(`/c/${user.class_slug}/app`);
     } else if (isTeacher) {
-      if (teacherClassCount === 1 && user?.teacher_classes?.[0]?.slug) {
-        navigate(`/c/${user.teacher_classes[0].slug}/app`);
-      } else {
-        navigate('/classes-picker');
-      }
+      navigate('/workspace');
     }
   };
 
@@ -133,7 +127,7 @@ const LandingPage: React.FC = () => {
         padding: isMobile ? '0 12px' : '0 24px',
         height: isMobile ? 56 : 64, position: 'sticky', top: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 20, cursor: 'pointer' }} onClick={() => navigate('/')}>
           <span style={{ fontSize: isMobile ? 22 : 28 }}>{siteSettings.site_logo || '🐾'}</span>
           <span style={{ fontSize: isMobile ? 14 : 18, fontWeight: 'bold', color: '#fff' }}>
             {siteSettings.site_name || '班级宠物养成系统'}
@@ -142,8 +136,8 @@ const LandingPage: React.FC = () => {
         <Space size={isMobile ? 8 : 12}>
           {isAuthenticated ? (
             <>
-              {(isStudent && user?.class_slug) || (isTeacher && teacherClassCount > 0) ? (
-                <Button type="primary" ghost icon={<RocketOutlined />} size={isMobile ? 'small' : 'middle'} onClick={handleEnterClass}>{classButtonLabel}</Button>
+              {(isStudent && user?.class_slug) || isTeacher ? (
+                <Button type="primary" ghost icon={<RocketOutlined />} size={isMobile ? 'small' : 'middle'} onClick={handleEnterClass}>进入班级</Button>
               ) : null}
               {!isMobile && <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14 }}>欢迎，{user?.username}</span>}
               <Button icon={<LogoutOutlined />} size={isMobile ? 'small' : 'middle'} style={{ background: 'rgba(255,255,255,0.15)', borderColor: 'rgba(255,255,255,0.3)', color: '#fff' }} onClick={handleLogout}>退出登录</Button>
@@ -175,9 +169,9 @@ const LandingPage: React.FC = () => {
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
               {isAuthenticated ? (
                 <>
-                  {(isStudent && user?.class_slug) || (isTeacher && teacherClassCount > 0) ? (
+                  {(isStudent && user?.class_slug) || isTeacher ? (
                     <Button type="primary" size="large" icon={<RocketOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, boxShadow: '0 4px 15px rgba(0,0,0,0.2)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={handleEnterClass}>
-                      {classButtonLabel}
+                      进入班级
                     </Button>
                   ) : null}
                   <Button size="large" ghost icon={<ArrowDownOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, color: '#fff', borderColor: 'rgba(255,255,255,0.6)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={scrollToStats}>
@@ -372,9 +366,9 @@ const LandingPage: React.FC = () => {
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
             {isAuthenticated ? (
               <>
-                {(isStudent && user?.class_slug) || (isTeacher && teacherClassCount > 0) ? (
+                {(isStudent && user?.class_slug) || isTeacher ? (
                   <Button type="primary" size="large" icon={<RocketOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, background: '#fff', color: '#667eea', borderColor: '#fff', fontWeight: 600, flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={handleEnterClass}>
-                    {classButtonLabel}
+                    进入班级
                   </Button>
                 ) : null}
                 <Button size="large" ghost icon={<LogoutOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, color: '#fff', borderColor: 'rgba(255,255,255,0.6)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={handleLogout}>
@@ -409,8 +403,14 @@ const LandingPage: React.FC = () => {
           <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginBottom: 12 }}>
             {siteSettings.site_description || '寓教于乐，让学习更有趣'}
           </p>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginBottom: 12 }}>
+            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }} onClick={() => navigate('/about')}>关于我们</a>
+            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }} onClick={() => navigate('/help')}>使用帮助</a>
+            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }} onClick={() => navigate('/privacy')}>隐私政策</a>
+            <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }} onClick={() => navigate('/contact')}>联系我们</a>
+          </div>
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 12 }}>
-            <span style={{ fontSize: 12 }}>{siteSettings.site_footer || '© 2024 班级宠物养成系统'}</span>
+            <span style={{ fontSize: 12 }}>{siteSettings.site_footer || '© 2026 班级宠物养成系统'}</span>
             <span style={{ margin: '0 8px', fontSize: 12 }}>|</span>
             <span style={{ fontSize: 12 }}>用 <HeartOutlined style={{ color: '#ff4d4f' }} /> 打造</span>
           </div>

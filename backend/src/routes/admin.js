@@ -1111,12 +1111,42 @@ router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
   }
 });
 
+function checkDataPermission(permKey, userId, userRole) {
+  if (userRole === 'admin') return { allowed: true, classIds: null };
+
+  ensureSettingsTable();
+  const setting = db.prepare(`SELECT value FROM settings WHERE key = ?`).get(permKey);
+  const permLevel = setting?.value || 'head_teacher';
+
+  if (userRole === 'student') return { allowed: false, classIds: [] };
+
+  if (permLevel === 'all_teacher') {
+    const classIds = db.prepare(`SELECT class_id FROM class_teachers WHERE teacher_id = ?`).all(userId).map(r => r.class_id);
+    return { allowed: classIds.length > 0, classIds };
+  }
+
+  if (permLevel === 'subject_teacher') {
+    const classIds = db.prepare(`SELECT class_id FROM class_teachers WHERE teacher_id = ?`).all(userId).map(r => r.class_id);
+    return { allowed: classIds.length > 0, classIds };
+  }
+
+  const headClassIds = db.prepare(
+    `SELECT class_id FROM class_teachers WHERE teacher_id = ? AND role = 'head_teacher'`
+  ).all(userId).map(r => r.class_id);
+  return { allowed: headClassIds.length > 0, classIds: headClassIds };
+}
+
 // 获取战斗记录
 router.get('/battles', authenticateToken, (req, res) => {
   try {
     const userId = req.user.userId;
     const userRole = req.user.role;
     const { class_id } = req.query;
+
+    const perm = checkDataPermission('perm_battle_records', userId, userRole);
+    if (!perm.allowed) {
+      return res.status(403).json({ error: '无权查看战斗记录' });
+    }
 
     let sql = `
       SELECT b.*,
@@ -1135,12 +1165,11 @@ router.get('/battles', authenticateToken, (req, res) => {
     `;
     const params = [];
 
-    if (userRole === 'teacher') {
-      const myClassIds = db.prepare(`SELECT class_id FROM class_teachers WHERE teacher_id = ?`).all(userId).map(row => row.class_id);
-      if (myClassIds.length > 0) {
-        const placeholders = myClassIds.map(() => '?').join(',');
+    if (perm.classIds !== null) {
+      if (perm.classIds.length > 0) {
+        const placeholders = perm.classIds.map(() => '?').join(',');
         sql += ` AND u1.class_id IN (${placeholders})`;
-        params.push(...myClassIds);
+        params.push(...perm.classIds);
       } else {
         sql += ` AND 1=0`;
       }
@@ -1168,6 +1197,11 @@ router.get('/assignments', authenticateToken, (req, res) => {
     const userRole = req.user.role;
     const { class_id } = req.query;
 
+    const perm = checkDataPermission('perm_homework_records', userId, userRole);
+    if (!perm.allowed) {
+      return res.status(403).json({ error: '无权查看作业记录' });
+    }
+
     let sql = `
       SELECT a.*,
         u.username as creator_name,
@@ -1179,14 +1213,28 @@ router.get('/assignments', authenticateToken, (req, res) => {
     `;
     const params = [];
 
-    if (userRole === 'teacher') {
-      const myClassIds = db.prepare(`SELECT class_id FROM class_teachers WHERE teacher_id = ?`).all(userId).map(row => row.class_id);
-      if (myClassIds.length > 0) {
-        const placeholders = myClassIds.map(() => '?').join(',');
-        sql += ` AND a.class_id IN (${placeholders})`;
-        params.push(...myClassIds);
-      } else {
-        sql += ` AND 1=0`;
+    if (perm.classIds !== null) {
+      if (userRole === 'teacher') {
+        const setting = db.prepare(`SELECT value FROM settings WHERE key = ?`).get('perm_homework_records');
+        const permLevel = setting?.value || 'subject_teacher';
+        if (permLevel === 'subject_teacher') {
+          if (perm.classIds.length > 0) {
+            const placeholders = perm.classIds.map(() => '?').join(',');
+            sql += ` AND (a.teacher_id = ? OR a.class_id IN (${placeholders}))`;
+            params.push(userId, ...perm.classIds);
+          } else {
+            sql += ` AND a.teacher_id = ?`;
+            params.push(userId);
+          }
+        } else {
+          if (perm.classIds.length > 0) {
+            const placeholders = perm.classIds.map(() => '?').join(',');
+            sql += ` AND a.class_id IN (${placeholders})`;
+            params.push(...perm.classIds);
+          } else {
+            sql += ` AND 1=0`;
+          }
+        }
       }
     }
 
@@ -1212,6 +1260,11 @@ router.get('/shop-records', authenticateToken, (req, res) => {
     const userRole = req.user.role;
     const { class_id } = req.query;
 
+    const perm = checkDataPermission('perm_purchase_records', userId, userRole);
+    if (!perm.allowed) {
+      return res.status(403).json({ error: '无权查看购买记录' });
+    }
+
     let sql = `
       SELECT ui.*,
         u.username as buyer_name,
@@ -1226,12 +1279,11 @@ router.get('/shop-records', authenticateToken, (req, res) => {
     `;
     const params = [];
 
-    if (userRole === 'teacher') {
-      const myClassIds = db.prepare(`SELECT class_id FROM class_teachers WHERE teacher_id = ?`).all(userId).map(row => row.class_id);
-      if (myClassIds.length > 0) {
-        const placeholders = myClassIds.map(() => '?').join(',');
+    if (perm.classIds !== null) {
+      if (perm.classIds.length > 0) {
+        const placeholders = perm.classIds.map(() => '?').join(',');
         sql += ` AND u.class_id IN (${placeholders})`;
-        params.push(...myClassIds);
+        params.push(...perm.classIds);
       } else {
         sql += ` AND 1=0`;
       }
@@ -1267,7 +1319,7 @@ function ensureSettingsTable() {
       ['site_name', '班级宠物养成系统'],
       ['site_description', '寓教于乐，让学习更有趣'],
       ['site_logo', '🐾'],
-      ['site_footer', '© 2024 班级宠物养成系统'],
+      ['site_footer', '© 2026 班级宠物养成系统'],
       ['site_announcement', ''],
       ['registration_enabled', 'true'],
       ['battle_enabled', 'true'],
@@ -1278,6 +1330,9 @@ function ensureSettingsTable() {
       ['ai_model', 'gpt-3.5-turbo'],
       ['ai_api_key', ''],
       ['ai_base_url', 'https://api.openai.com/v1'],
+      ['perm_battle_records', 'head_teacher'],
+      ['perm_homework_records', 'subject_teacher'],
+      ['perm_purchase_records', 'head_teacher'],
     ];
     const stmt = db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {
@@ -1307,6 +1362,7 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
       'site_announcement', 'registration_enabled', 'battle_enabled',
       'shop_enabled', 'max_pets_per_user', 'daily_login_gold',
       'battle_stamina_cost', 'ai_model', 'ai_api_key', 'ai_base_url',
+      'perm_battle_records', 'perm_homework_records', 'perm_purchase_records',
     ];
     const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {
