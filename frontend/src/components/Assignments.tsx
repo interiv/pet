@@ -26,6 +26,7 @@ interface Question {
   content: string;
   options?: string[] | null;
   type: string;
+  knowledge_point?: string;
   hasVariants?: boolean;
 }
 
@@ -86,6 +87,32 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [submitting, setSubmitting] = useState(false);
   const [studentAnswers, setStudentAnswers] = useState<Record<number, any>>({});
   const [uploadedImages, setUploadedImages] = useState<Record<number, string>>({});
+  const [progressMilestones, setProgressMilestones] = useState<Set<number>>(new Set());
+
+  // 实时答题进度激励：跨越 25% / 50% / 75% / 100% 时提示
+  useEffect(() => {
+    if (!currentAssignment || !isDoModalVisible) return;
+    const qs = currentAssignment.questions || [];
+    if (qs.length === 0) return;
+    const done = qs.filter((q: Question) => {
+      const a = studentAnswers[q.id!];
+      return a !== undefined && a !== null && a !== '' && !(Array.isArray(a) && a.length === 0);
+    }).length;
+    const percent = Math.round((done / qs.length) * 100);
+    const milestones = [25, 50, 75, 100];
+    const emojiMap: Record<number, string> = {
+      25: '👍 已完成 25%，保持节奏！',
+      50: '⚡ 已完成一半，继续加油！',
+      75: '🔥 75% 到手，胜利在望！',
+      100: '🎉 全部完成，记得检查后提交！'
+    };
+    for (const m of milestones) {
+      if (percent >= m && !progressMilestones.has(m)) {
+        message.success(emojiMap[m]);
+        setProgressMilestones(prev => new Set(prev).add(m));
+      }
+    }
+  }, [studentAnswers, currentAssignment, isDoModalVisible]);
   
   // 题目编辑状态
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
@@ -112,18 +139,14 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   useEffect(() => {
     if (user) {
       loadAssignments();
-      if (isAdmin) loadClasses();
+      if (isTeacher) loadClasses();
     }
   }, [user]);
 
   const loadClasses = async () => {
     try {
       const res = await adminAPI.getClasses();
-      let allClasses = res.data.classes || [];
-      if (!isAdmin) {
-        allClasses = allClasses.filter((c: any) => c.teachers?.some((t: any) => t.teacher_id === user?.id));
-      }
-      setClasses(allClasses);
+      setClasses(res.data.classes || []);
     } catch (e) {
       console.error('加载班级列表失败');
     }
@@ -198,6 +221,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       setStudentAnswers({});
       setUploadedImages({});
       submitForm.resetFields();
+      setProgressMilestones(new Set());
       setIsDoModalVisible(true);
     } catch (e: any) {
       message.error(e.response?.data?.error || '获取作业详情失败');
@@ -282,7 +306,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       content: question.content,
       options: question.options ? question.options.join('\n') : '',
       difficulty: 'medium',
-      knowledge_point: ''
+      knowledge_point: question.knowledge_point || ''
     });
     setEditModalVisible(true);
   };
@@ -291,13 +315,33 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const handleSaveEdit = async (values: any) => {
     if (!editingQuestion || editingQuestionIndex < 0 || !generatedData) return;
     
-    // 更新题目
+    const newOptions = values.options ? values.options.split('\n').filter((opt: string) => opt.trim()) : null;
     const updatedQuestion: Question = {
       ...editingQuestion,
       content: values.content,
-      options: values.options ? values.options.split('\n').filter((opt: string) => opt.trim()) : null,
+      options: newOptions,
+      knowledge_point: values.knowledge_point || editingQuestion.knowledge_point,
     };
     
+    // 同步到后端：教师预览阶段对题库的调整需要持久化
+    try {
+      const targetIds = editingQuestion.variantIds && editingQuestion.variantIds.length > 0
+        ? editingQuestion.variantIds
+        : [editingQuestion.tempId || editingQuestion.id].filter(Boolean) as number[];
+      for (const qid of targetIds) {
+        await assignmentAPI.updateQuestion(qid, {
+          content: values.content,
+          options: newOptions,
+          knowledge_point: values.knowledge_point,
+          difficulty: values.difficulty,
+          sync_group: true,
+        });
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.error || '保存到题库失败');
+      return;
+    }
+
     // 更新generatedData中的题目
     const newQuestions = [...generatedData.questions];
     newQuestions[editingQuestionIndex] = updatedQuestion;
@@ -380,7 +424,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         key={q.id || q.tempId} 
         size="small" 
         style={{ marginBottom: 16, borderLeft: '4px solid #1890ff' }}
-        title={<span>第 {index + 1} 题 <Tag color="blue">{typeOptions.find(t => t.value === q.type)?.label || q.type}</Tag></span>}
+        title={<span>第 {index + 1} 题 <Tag color="blue">{typeOptions.find(t => t.value === q.type)?.label || q.type}</Tag>{q.knowledge_point && <Tag color="geekblue" style={{ marginLeft: 4 }}>🏷️ {q.knowledge_point}</Tag>}</span>}
       >
         <div style={{ marginBottom: 12, fontSize: 15, lineHeight: 1.8 }}>{q.content}</div>
         
@@ -703,6 +747,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     <div key={i} style={{ padding: '8px 12px', background: i % 2 === 0 ? '#fafafa' : '#fff', borderRadius: 6, marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ flex: 1 }}>
                         <strong>Q{i + 1}.</strong> [{typeOptions.find(t => t.value === q.type)?.label}] {q.content}
+                        {q.knowledge_point && <Tag color="blue" style={{ marginLeft: 8 }}>🏷️ {q.knowledge_point}</Tag>}
                         {q.hasVariants && <Tag color="orange" style={{ marginLeft: 8 }}>含变体</Tag>}
                       </div>
                       <Space size="small">
@@ -848,6 +893,35 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 <Card size="small"><Statistic title="正确率" value={submitResult.total_count > 0 ? Math.round(submitResult.correct_count / submitResult.total_count * 100) : 0} suffix="%" valueStyle={{ fontSize: 28 }} /></Card>
               </Col>
             </Row>
+
+            {/* Combo 与全对奖励 */}
+            {(submitResult.combo_bonus > 0 || submitResult.perfect_bonus > 0) && (
+              <Alert
+                type="success"
+                showIcon={false}
+                style={{ marginBottom: 16, background: 'linear-gradient(90deg, #fff7e6 0%, #fff1b8 100%)', border: '1px solid #ffd591' }}
+                message={
+                  <div>
+                    {submitResult.combo_label && (
+                      <div style={{ fontSize: 15, fontWeight: 'bold', color: '#d46b08' }}>
+                        {submitResult.combo_label}
+                      </div>
+                    )}
+                    {submitResult.perfect_bonus > 0 && (
+                      <div style={{ fontSize: 14, fontWeight: 'bold', color: '#d4380d', marginTop: 4 }}>
+                        🏆 全部答对！额外 +{submitResult.perfect_bonus} 金币
+                      </div>
+                    )}
+                    <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                      基础金币 {submitResult.base_gold_reward || 0}
+                      {submitResult.combo_bonus > 0 && <span> + Combo {submitResult.combo_bonus}</span>}
+                      {submitResult.perfect_bonus > 0 && <span> + 全对 {submitResult.perfect_bonus}</span>}
+                      <span> = 共 {submitResult.gold_reward} 金币</span>
+                    </div>
+                  </div>
+                }
+              />
+            )}
 
             <Divider orientation="left">答题详情</Divider>
             <div style={{ maxHeight: 400, overflowY: 'auto' }}>

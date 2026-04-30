@@ -102,6 +102,9 @@ export const assignmentAPI = {
   createAssignment: (data: any) => 
     api.post('/assignments', data),
   
+  updateQuestion: (id: number, data: { content?: string; options?: any; answer?: any; explanation?: string; analysis?: string; knowledge_point?: string; difficulty?: string; hint?: string; sync_group?: boolean }) =>
+    api.patch(`/assignments/questions/${id}`, data),
+  
   submitAssignment: (id: number, data: { answers: any[]; attachments?: any[] }) => 
     api.post(`/assignments/${id}/submit`, data),
   
@@ -124,6 +127,30 @@ export const assignmentAPI = {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
   },
+};
+
+// 知识点相关 API
+export const knowledgePointAPI = {
+  getStats: (params?: { date?: string; days?: number }) => api.get('/knowledge-points', { params }),
+  getList: () => api.get('/knowledge-points/list'),
+  getHeatmap: (params?: { days?: number }) => api.get('/knowledge-points/heatmap', { params }),
+  getWeakPoints: (params?: { days?: number; threshold?: number }) => api.get('/knowledge-points/weak-points', { params }),
+  getSimilarQuestions: (params: { question_id: number; limit?: number }) =>
+    api.get('/knowledge-points/similar-questions', { params }),
+  getReviewEffectiveness: (params?: { recent_days?: number; base_days?: number }) =>
+    api.get('/knowledge-points/review-effectiveness', { params }),
+  getClassOverview: (classId: number, params?: { days?: number }) =>
+    api.get(`/knowledge-points/class/${classId}/overview`, { params }),
+  getClassStudentDetail: (classId: number, studentId: number, params?: { days?: number }) =>
+    api.get(`/knowledge-points/class/${classId}/student/${studentId}`, { params }),
+  getLearningTime: (params?: { days?: number }) =>
+    api.get('/knowledge-points/learning-time', { params }),
+};
+
+// AI学习教练 API
+export const aiCoachAPI = {
+  getLearningPlan: (params?: { days?: number }) => api.get('/ai-coach/learning-plan', { params }),
+  getDiagnosis: (params?: { days?: number }) => api.get('/ai-coach/diagnosis', { params }),
 };
 
 // 战斗相关 API

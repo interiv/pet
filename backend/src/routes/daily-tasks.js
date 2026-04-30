@@ -28,7 +28,7 @@ router.get('/', authenticateToken, (req, res) => {
 
       db.prepare(`
         INSERT INTO daily_tasks (user_id, date, tasks_completed, total_tasks, streak_days)
-        VALUES (?, ?, 0, 4, ?)
+        VALUES (?, ?, 0, 5, ?)
       `).run(userId, today, streakDays);
 
       dailyTask = db.prepare(`
@@ -47,7 +47,8 @@ router.get('/', authenticateToken, (req, res) => {
         { task_type: 'login', task_target: 1, task_progress: 1, is_completed: 1 }, // 登录自动完成
         { task_type: 'complete_assignment', task_target: 1, task_progress: 0, is_completed: 0 },
         { task_type: 'feed_pet', task_target: 1, task_progress: 0, is_completed: 0 },
-        { task_type: 'correct_rate', task_target: 80, task_progress: 0, is_completed: 0 }
+        { task_type: 'correct_rate', task_target: 80, task_progress: 0, is_completed: 0 },
+        { task_type: 'review_weak_point', task_target: 3, task_progress: 0, is_completed: 0 }
       ];
 
       const insertLog = db.prepare(`
@@ -64,6 +65,26 @@ router.get('/', authenticateToken, (req, res) => {
     const updatedTaskLogs = db.prepare(`
       SELECT * FROM daily_task_logs WHERE user_id = ? AND date = ?
     `).all(userId, today);
+
+    // 历史迁移：为已有的今日任务补上 review_weak_point（代码升级后自动生效）
+    const hasReviewTask = updatedTaskLogs.some(t => t.task_type === 'review_weak_point');
+    if (!hasReviewTask) {
+      db.prepare(`
+        INSERT INTO daily_task_logs (user_id, date, task_type, task_target, task_progress, is_completed)
+        VALUES (?, ?, 'review_weak_point', 3, 0, 0)
+      `).run(userId, today);
+      db.prepare(`
+        UPDATE daily_tasks SET total_tasks = 5 WHERE user_id = ? AND date = ? AND total_tasks < 5
+      `).run(userId, today);
+      const reloaded = db.prepare(`
+        SELECT * FROM daily_task_logs WHERE user_id = ? AND date = ?
+      `).all(userId, today);
+      updatedTaskLogs.length = 0;
+      updatedTaskLogs.push(...reloaded);
+      dailyTask = db.prepare(`
+        SELECT * FROM daily_tasks WHERE user_id = ? AND date = ?
+      `).get(userId, today);
+    }
 
     // 计算可领取的奖励
     const claimableRewards = updatedTaskLogs.filter(log => log.is_completed && !log.reward_claimed);
@@ -162,6 +183,10 @@ router.post('/claim', authenticateToken, (req, res) => {
       case 'correct_rate':
         rewardGold = 15;
         rewardMessage = '正确率达标奖励';
+        break;
+      case 'review_weak_point':
+        rewardGold = 20;
+        rewardMessage = '复习错题奖励';
         break;
       default:
         rewardGold = 5;

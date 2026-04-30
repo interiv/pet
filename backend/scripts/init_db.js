@@ -455,7 +455,7 @@ db.exec(`
     user_id INTEGER NOT NULL,
     date TEXT NOT NULL,
     tasks_completed INTEGER DEFAULT 0,
-    total_tasks INTEGER DEFAULT 4,
+    total_tasks INTEGER DEFAULT 5,
     streak_days INTEGER DEFAULT 0,
     last_updated TEXT DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, date)
@@ -1129,24 +1129,17 @@ async function createBasicUsers() {
   db.prepare('INSERT INTO users (username, password_hash, email, role, status) VALUES (?, ?, ?, ?, ?)').run('admin', hashedPassword, 'admin@school.com', 'admin', 'active');
   console.log('   ✓ admin 创建成功');
 
-  const teachers = [
-    { username: 'teacher1', email: 'teacher1@school.com' },
-    { username: 'teacher2', email: 'teacher2@school.com' }
-  ];
+  for (let i = 1; i <= 10; i++) {
+    const username = `teacher${i}`;
+    db.prepare('INSERT INTO users (username, password_hash, email, role, status) VALUES (?, ?, ?, ?, ?)').run(username, hashedPassword, `${username}@school.com`, 'teacher', 'active');
+    console.log(`   ✓ ${username} 创建成功`);
+  }
 
-  teachers.forEach(t => {
-    db.prepare('INSERT INTO users (username, password_hash, email, role, status) VALUES (?, ?, ?, ?, ?)').run(t.username, hashedPassword, t.email, 'teacher', 'active');
-    console.log(`   ✓ ${t.username} 创建成功`);
-  });
-
-  const students = [
-    { username: 'student1', email: 'student1@school.com' }
-  ];
-
-  students.forEach(s => {
-    db.prepare('INSERT INTO users (username, password_hash, email, role, status) VALUES (?, ?, ?, ?, ?)').run(s.username, hashedPassword, s.email, 'student', 'active');
-    console.log(`   ✓ ${s.username} 创建成功`);
-  });
+  for (let i = 1; i <= 50; i++) {
+    const username = `student${i}`;
+    db.prepare('INSERT INTO users (username, password_hash, email, role, status) VALUES (?, ?, ?, ?, ?)').run(username, hashedPassword, `${username}@school.com`, 'student', 'active');
+    console.log(`   ✓ ${username} 创建成功`);
+  }
 }
 
 async function createRichTestData() {
@@ -1321,10 +1314,9 @@ if (useTestData) {
     console.log(`   共创建 ${db.prepare("SELECT COUNT(*) as cnt FROM sqlite_master WHERE type='table' AND name != 'sqlite_sequence'").get().cnt} 张表`);
     console.log('\n========================================');
     console.log('基础账号信息：');
-    console.log('========================================');
     console.log('管理员: admin (密码: 111111)');
-    console.log('教师: teacher1, teacher2 (密码: 111111)');
-    console.log('学生: student1 (密码: 111111)');
+    console.log('教师: teacher1 ~ teacher10 (密码: 111111)');
+    console.log('学生: student1 ~ student50 (密码: 111111)');
     console.log('========================================');
     console.log('\n提示: 使用 --test-data 参数可创建丰富测试数据');
     db.close();

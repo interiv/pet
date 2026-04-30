@@ -9,6 +9,7 @@ import {
   CoffeeOutlined,
   TrophyOutlined,
   LoginOutlined,
+  AimOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
@@ -120,11 +121,13 @@ const DailyTasks: React.FC = () => {
         return <CoffeeOutlined />;
       case 'correct_rate':
         return <TrophyOutlined />;
+      case 'review_weak_point':
+        return <AimOutlined />;
       default:
         return <GiftOutlined />;
     }
   };
-
+  
   const getTaskTitle = (taskType: string) => {
     switch (taskType) {
       case 'login':
@@ -135,11 +138,13 @@ const DailyTasks: React.FC = () => {
         return '投喂宠物';
       case 'correct_rate':
         return '正确率达标';
+      case 'review_weak_point':
+        return '复习错题';
       default:
         return taskType;
     }
   };
-
+  
   const getTaskDescription = (task: DailyTask) => {
     switch (task.task_type) {
       case 'login':
@@ -150,11 +155,13 @@ const DailyTasks: React.FC = () => {
         return `投喂宠物 ${task.task_target} 次`;
       case 'correct_rate':
         return `作业正确率达到 ${task.task_target}%`;
+      case 'review_weak_point':
+        return `复习 ${task.task_target} 道错题（错题本标记为已复习即可累加进度）`;
       default:
         return '';
     }
   };
-
+  
   const getRewardGold = (taskType: string) => {
     switch (taskType) {
       case 'login':
@@ -165,6 +172,8 @@ const DailyTasks: React.FC = () => {
         return 5;
       case 'correct_rate':
         return 15;
+      case 'review_weak_point':
+        return 20;
       default:
         return 5;
     }

@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Table, Tag, Button, Card, Empty, Space, message, Modal, Alert, Badge, Select, Row, Col, Statistic, Progress } from 'antd';
-import { assignmentAPI } from '../utils/api';
+import { assignmentAPI, knowledgePointAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
-import { BookOutlined, CheckCircleOutlined, EyeOutlined, AimOutlined } from '@ant-design/icons';
+import { BookOutlined, CheckCircleOutlined, EyeOutlined, AimOutlined, ThunderboltOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
 
@@ -27,6 +27,10 @@ const WrongQuestions: React.FC = () => {
   const [filterSubject, setFilterSubject] = useState<string>('');
   const [isDetailVisible, setIsDetailVisible] = useState(false);
   const [currentDetail, setCurrentDetail] = useState<any>(null);
+  const [isSimilarVisible, setIsSimilarVisible] = useState(false);
+  const [similarQuestions, setSimilarQuestions] = useState<any[]>([]);
+  const [similarLoading, setSimilarLoading] = useState(false);
+  const [similarMeta, setSimilarMeta] = useState<{ knowledge_point?: string | null }>({});
 
   useEffect(() => {
     if (user) loadWrongQuestions();
@@ -58,6 +62,27 @@ const WrongQuestions: React.FC = () => {
   const handleViewDetail = (record: any) => {
     setCurrentDetail(record);
     setIsDetailVisible(true);
+  };
+
+  const handleLoadSimilar = async () => {
+    if (!currentDetail?.question_id) {
+      message.warning('无法定位题目ID');
+      return;
+    }
+    try {
+      setSimilarLoading(true);
+      const res = await knowledgePointAPI.getSimilarQuestions({ question_id: currentDetail.question_id, limit: 5 });
+      setSimilarQuestions(res.data.similar_questions || []);
+      setSimilarMeta({ knowledge_point: res.data.knowledge_point });
+      setIsSimilarVisible(true);
+      if ((res.data.similar_questions || []).length === 0) {
+        message.info('暂未找到可练习的相似题，试着让老师布置更多这个知识点的题目吧');
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.error || '加载相似题失败');
+    } finally {
+      setSimilarLoading(false);
+    }
   };
 
   const columns = [
@@ -199,6 +224,9 @@ const WrongQuestions: React.FC = () => {
         onCancel={() => setIsDetailVisible(false)}
         width={600}
         footer={[
+          <Button key="similar" icon={<ThunderboltOutlined />} loading={similarLoading} onClick={handleLoadSimilar}>
+            练习相似题
+          </Button>,
           !currentDetail?.reviewed && (
             <Button key="review" type="primary" icon={<CheckCircleOutlined />} onClick={() => { handleMarkReviewed(currentDetail.id); setIsDetailVisible(false); }}>
               标记为已复习
@@ -246,8 +274,56 @@ const WrongQuestions: React.FC = () => {
 
             <div style={{ marginTop: 12, color: '#999', fontSize: 13 }}>
               来源作业：{currentDetail.assignment_title} | 错误时间：{dayjs(currentDetail.created_at).format('YYYY-MM-DD HH:mm')}
+              {currentDetail.knowledge_point && <Tag color="blue" style={{ marginLeft: 8 }}>🏷️ {currentDetail.knowledge_point}</Tag>}
               {currentDetail.wrong_count > 1 && <Tag color="red" style={{ marginLeft: 8 }}>连续错误{currentDetail.wrong_count}次</Tag>}
             </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* 相似题弹窗 */}
+      <Modal
+        title={<span><ThunderboltOutlined /> 相似题练习{similarMeta.knowledge_point ? ` · ${similarMeta.knowledge_point}` : ''}</span>}
+        open={isSimilarVisible}
+        onCancel={() => setIsSimilarVisible(false)}
+        width={700}
+        footer={<Button onClick={() => setIsSimilarVisible(false)}>关闭</Button>}
+      >
+        {similarQuestions.length === 0 ? (
+          <Empty description="暂无可推荐的相似题" />
+        ) : (
+          <div>
+            <Alert
+              type="info"
+              showIcon
+              message={`为你找到 ${similarQuestions.length} 道相似题，试着做做看能不能巩固知识点。可先思考答案，再点开查看解析。`}
+              style={{ marginBottom: 12 }}
+            />
+            {similarQuestions.map((q, idx) => (
+              <Card
+                key={q.id}
+                size="small"
+                style={{ marginBottom: 12, borderLeft: '4px solid #1677ff' }}
+                title={<span>题{idx + 1} <Tag color="blue">{q.subject}</Tag>{q.difficulty && <Tag>{q.difficulty}</Tag>}{q.knowledge_point && <Tag color="cyan">{q.knowledge_point}</Tag>}</span>}
+              >
+                <div style={{ fontSize: 14, lineHeight: 1.8, marginBottom: 8 }}>{q.content}</div>
+                {q.options && Array.isArray(q.options) && (
+                  <div style={{ marginLeft: 8, color: '#555', marginBottom: 8 }}>
+                    {q.options.map((opt: string, i: number) => (
+                      <div key={i}>{String.fromCharCode(65 + i)}. {opt}</div>
+                    ))}
+                  </div>
+                )}
+                <details style={{ marginTop: 4 }}>
+                  <summary style={{ cursor: 'pointer', color: '#1677ff' }}>👁️ 查看答案与解析</summary>
+                  <div style={{ marginTop: 8, padding: 8, background: '#f6ffed', borderRadius: 4 }}>
+                    <div><strong style={{ color: '#52c41a' }}>答案：</strong>{String(q.answer)}</div>
+                    {q.explanation && <div style={{ marginTop: 4 }}><strong>解析：</strong>{q.explanation}</div>}
+                    {q.hint && <div style={{ marginTop: 4, color: '#d48806' }}><strong>提示：</strong>{q.hint}</div>}
+                  </div>
+                </details>
+              </Card>
+            ))}
           </div>
         )}
       </Modal>

@@ -30,6 +30,7 @@ const knowledgePointRoutes = require('./routes/knowledge-points');
 const skillRoutes = require('./routes/skills');
 const bossBattleRoutes = require('./routes/boss-battles');
 const schoolRoutes = require('./routes/schools');
+const aiCoachRoutes = require('./routes/ai-coach');
 
 // 初始化数据库
 initDatabase();
@@ -44,6 +45,9 @@ const io = new Server(server, {
     methods: ['GET', 'POST']
   }
 });
+
+// 暴露 io 给各路由使用
+app.set('io', io);
 
 // 中间件
 app.use(helmet()); // 安全头
@@ -82,6 +86,7 @@ app.use('/api/knowledge-points', knowledgePointRoutes);
 app.use('/api/skills', skillRoutes);
 app.use('/api/boss-battles', bossBattleRoutes);
 app.use('/api/schools', schoolRoutes);
+app.use('/api/ai-coach', aiCoachRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {

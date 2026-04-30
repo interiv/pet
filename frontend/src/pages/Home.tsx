@@ -41,6 +41,7 @@ import DailyTasks from '../components/DailyTasks';
 import LearningDashboard from '../components/LearningDashboard';
 import PetSkills from '../components/PetSkills';
 import BossBattle from '../components/BossBattle';
+import ClassDashboard from '../components/ClassDashboard';
 
 const { Header, Content, Sider, Footer } = Layout;
 
@@ -283,6 +284,7 @@ const Home: React.FC = () => {
   } else if (isTeacher) {
     menuItems.push(
       { key: 'assignment', icon: <BookOutlined />, label: '作业' },
+      { key: 'class-dashboard', icon: <BarChartOutlined />, label: '班级学情' },
     );
   }
 
@@ -745,6 +747,8 @@ const Home: React.FC = () => {
                   <Admin defaultTab="applications" />
                 ) : activeMenu === 'class-management' ? (
                   <ClassInvitationManager />
+                ) : activeMenu === 'class-dashboard' ? (
+                  <ClassDashboard />
                 ) : activeMenu === 'profile' ? (
                   <Profile />
                 ) : isAuthenticated && isTeacher ? (
@@ -834,6 +838,8 @@ const Home: React.FC = () => {
                   <Admin defaultTab="applications" />
                 ) : activeMenu === 'class-management' ? (
                   <ClassInvitationManager />
+                ) : activeMenu === 'class-dashboard' ? (
+                  <ClassDashboard />
                 ) : activeMenu === 'profile' ? (
                   <Profile />
                 ) : isAuthenticated && isTeacher ? (

@@ -38,6 +38,10 @@ function getAIConfig() {
   const settings = db.prepare(`SELECT key, value FROM settings WHERE key LIKE 'ai_%'`).all();
   const config = {};
   settings.forEach(s => config[s.key] = s.value);
+  // fallback 到环境变量（数据库未配置时使用）
+  if (!config.ai_api_key && process.env.AI_API_KEY) config.ai_api_key = process.env.AI_API_KEY;
+  if (!config.ai_base_url && process.env.AI_BASE_URL) config.ai_base_url = process.env.AI_BASE_URL;
+  if (!config.ai_model && process.env.AI_MODEL) config.ai_model = process.env.AI_MODEL;
   return config;
 }
 
@@ -80,14 +84,16 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
 - 正确答案（单选只有一个正确选项）
 - 详细解析（解题思路和步骤）
 - 解题分析过程
+- 细粒度知识点标签（例："一元二次方程求根公式"、"三角函数诱导公式"，8-20字）
 
 请严格按照以下JSON格式返回：
-{"questions": [{"content": "题目内容", "options": ["选项A内容", "选项B内容", "选项C内容", "选项D内容"], "answer": "A", "explanation": "详细解析", "analysis": "解题步骤/思路"}]}
+{"questions": [{"content": "题目内容", "options": ["选项A内容", "选项B内容", "选项C内容", "选项D内容"], "answer": "A", "explanation": "详细解析", "analysis": "解题步骤/思路", "knowledge_point": "细粒度知识点"}]}
 
 要求：
-1. ${actualCount}道题中，每3道为一组变体，考查相同知识点但数字/表述略有不同
+1. ${actualCount}道题中，每3道为一组变体，考查相同知识点但数字/表述略有不同；同一组变体的knowledge_point必须相同
 2. 确保所有答案都在options范围内
-3. 只返回JSON，不要任何其他内容`;
+3. knowledge_point必须具体细致，不要写大类（例如不要只写"数学"、"代数"，而要写"一元一次方程解法"）
+4. 只返回JSON，不要任何其他内容`;
     } else if (question_type === 'choice_multi') {
       prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
 
@@ -95,12 +101,13 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
 要求生成${actualCount}道多选题（每道题有A/B/C/D四个选项，可能有多个正确答案），同时生成详细解析。
 
 请严格按照以下JSON格式返回：
-{"questions": [{"content": "题目内容", "options": ["A","B","C","D"], "answer": ["A","C"], "explanation": "详细解析", "analysis": "解题步骤"}]}
+{"questions": [{"content": "题目内容", "options": ["A","B","C","D"], "answer": ["A","C"], "explanation": "详细解析", "analysis": "解题步骤", "knowledge_point": "细粒度知识点"}]}
 
 要求：
-1. 每3道题为同一知识点的变体
+1. 每3道题为同一知识点的变体；同一组变体的knowledge_point必须相同
 2. answer字段必须是数组格式
-3. 只返回JSON，不要任何其他内容`;
+3. knowledge_point必须是8-20字的具体知识点，不要只写科目或大类
+4. 只返回JSON，不要任何其他内容`;
     } else if (question_type === 'judgment') {
       prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
 
@@ -108,12 +115,13 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
 要求生成${actualCount}道判断题，同时生成详细解析。
 
 请严格按照以下JSON格式返回：
-{"questions": [{"content": "判断题陈述内容", "answer": true, "explanation": "为什么对或错的解析", "analysis": "判断依据"}]}
+{"questions": [{"content": "判断题陈述内容", "answer": true, "explanation": "为什么对或错的解析", "analysis": "判断依据", "knowledge_point": "细粒度知识点"}]}
 
 要求：
-1. 每3道题为同一知识点的变体
+1. 每3道题为同一知识点的变体；同一组变体的knowledge_point必须相同
 2. answer字段必须是布尔值true或false
-3. 只返回JSON，不要任何其他内容`;
+3. knowledge_point必须是8-20字的具体知识点，不要只写科目或大类
+4. 只返回JSON，不要任何其他内容`;
     } else if (question_type === 'essay') {
       prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
 
@@ -121,11 +129,12 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
 要求生成${count}道简答题/作文题，同时为每道题生成参考答案和评分标准。
 
 请严格按照以下JSON格式返回：
-{"questions": [{"content": "题目要求", "answer": "参考答案要点", "explanation": "评分标准和解析", "analysis": "答题思路指导"}], "title": "建议的作业标题", "description": "建议的作业描述"}
+{"questions": [{"content": "题目要求", "answer": "参考答案要点", "explanation": "评分标准和解析", "analysis": "答题思路指导", "knowledge_point": "细粒度知识点"}], "title": "建议的作业标题", "description": "建议的作业描述"}
 
 要求：
 1. 主观题不需要变体
-2. 只返回JSON，不要任何其他内容`;
+2. knowledge_point必须是8-20字的具体知识点，不要只写科目或大类
+3. 只返回JSON，不要任何其他内容`;
     }
 
     const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
@@ -191,6 +200,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
         explanation: q.explanation || '',
         analysis: q.analysis || '',
         hint: q.hint || '',
+        knowledge_point: (q.knowledge_point && String(q.knowledge_point).trim()) || topic,
         variant_group_id: isSubjective ? null : variantGroupId,
         variant_index: isSubjective ? 0 : (i % 3),
         source: 'ai',
@@ -203,8 +213,8 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     }
 
     const insertQ = db.prepare(`
-      INSERT INTO question_bank (subject, topic, difficulty, type, content, options, answer, explanation, analysis, hint, variant_group_id, variant_index, source, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO question_bank (subject, topic, difficulty, type, content, options, answer, explanation, analysis, hint, knowledge_point, variant_group_id, variant_index, source, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const transaction = db.transaction((qs) => {
@@ -213,6 +223,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
         const result = insertQ.run(
           q.subject, q.topic, q.difficulty, q.type, q.content,
           q.options, q.answer, q.explanation, q.analysis, q.hint,
+          q.knowledge_point,
           q.variant_group_id, q.variant_index, q.source, q.created_by
         );
         ids.push(result.lastInsertRowid);
@@ -228,6 +239,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
           content: questions[idx].content,
           options: questions[idx].options ? (typeof questions[idx].options === 'string' ? JSON.parse(questions[idx].options) : questions[idx].options) : null,
           type: question_type,
+          knowledge_point: processedQuestions[idx]?.knowledge_point || topic,
           hasVariants: false
         }))
       : [];
@@ -241,6 +253,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
           content: questions[baseIdx].content,
           options: questions[baseIdx].options ? (typeof questions[baseIdx].options === 'string' ? JSON.parse(questions[baseIdx].options) : questions[baseIdx].options) : null,
           type: question_type,
+          knowledge_point: processedQuestions[baseIdx]?.knowledge_point || topic,
           hasVariants: true
         });
       }
@@ -264,6 +277,51 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       return res.status(500).json({ error: 'AI请求超时，请稍后重试' });
     }
     res.status(500).json({ error: 'AI 生成作业失败: ' + (error.message || '未知错误') });
+  }
+});
+
+// 更新题目（教师/管理员预览阶段调整）
+router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  try {
+    const qid = parseInt(req.params.id);
+    const existing = db.prepare('SELECT id, variant_group_id FROM question_bank WHERE id = ?').get(qid);
+    if (!existing) return res.status(404).json({ error: '题目不存在' });
+
+    const { content, options, answer, explanation, analysis, knowledge_point, difficulty, hint, sync_group } = req.body;
+    const fields = [];
+    const values = [];
+    if (content !== undefined) { fields.push('content = ?'); values.push(content); }
+    if (options !== undefined) { fields.push('options = ?'); values.push(options ? JSON.stringify(options) : null); }
+    if (answer !== undefined) {
+      const answerStr = Array.isArray(answer) ? answer.join(',') : typeof answer === 'boolean' ? (answer ? 'true' : 'false') : String(answer);
+      fields.push('answer = ?'); values.push(answerStr);
+    }
+    if (explanation !== undefined) { fields.push('explanation = ?'); values.push(explanation); }
+    if (analysis !== undefined) { fields.push('analysis = ?'); values.push(analysis); }
+    if (knowledge_point !== undefined) { fields.push('knowledge_point = ?'); values.push(knowledge_point); }
+    if (difficulty !== undefined) { fields.push('difficulty = ?'); values.push(difficulty); }
+    if (hint !== undefined) { fields.push('hint = ?'); values.push(hint); }
+    if (fields.length === 0) return res.json({ message: '无更新' });
+
+    values.push(qid);
+    db.prepare(`UPDATE question_bank SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+
+    // 同步同一变体组内的知识点与难度（避免学生重做时版本不一致）
+    if (sync_group && existing.variant_group_id && (knowledge_point !== undefined || difficulty !== undefined)) {
+      const groupFields = [];
+      const groupValues = [];
+      if (knowledge_point !== undefined) { groupFields.push('knowledge_point = ?'); groupValues.push(knowledge_point); }
+      if (difficulty !== undefined) { groupFields.push('difficulty = ?'); groupValues.push(difficulty); }
+      groupValues.push(existing.variant_group_id);
+      db.prepare(`UPDATE question_bank SET ${groupFields.join(', ')} WHERE variant_group_id = ?`).run(...groupValues);
+    }
+
+    const updated = db.prepare('SELECT * FROM question_bank WHERE id = ?').get(qid);
+    if (updated.options) { try { updated.options = JSON.parse(updated.options); } catch(e) {} }
+    res.json({ message: '更新成功', question: updated });
+  } catch (error) {
+    console.error('更新题目错误:', error);
+    res.status(500).json({ error: '更新题目失败: ' + error.message });
   }
 });
 
@@ -433,7 +491,7 @@ router.get('/:id', authenticateToken, (req, res) => {
     const questions = db.prepare(`
       SELECT qb.id, qb.type, qb.content, qb.options, qb.hint,
              ${isStudent ? 'NULL as answer, NULL as explanation, NULL as analysis' : 'qb.answer, qb.explanation, qb.analysis'},
-             aq.sort_order, qb.variant_group_id, qb.difficulty
+             aq.sort_order, qb.variant_group_id, qb.difficulty, qb.knowledge_point, qb.subject, qb.topic
       FROM assignment_questions aq
       JOIN question_bank qb ON aq.question_bank_id = qb.id
       WHERE aq.assignment_id = ?
@@ -545,7 +603,29 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
       }
 
       const totalScore = Math.round((correctCount / questions.length) * 100);
-      const goldReward = Math.floor((totalScore / 100) * (assignment.max_exp || 30));
+      const baseGoldReward = Math.floor((totalScore / 100) * (assignment.max_exp || 30));
+
+      // 计算本次提交内的最长连续答对（streak）以及 Combo 加成
+      let bestStreak = 0, currentStreak = 0;
+      for (const r of results) {
+        if (r.is_correct) {
+          currentStreak++;
+          if (currentStreak > bestStreak) bestStreak = currentStreak;
+        } else {
+          currentStreak = 0;
+        }
+      }
+      let comboBonus = 0;
+      let comboLabel = null;
+      if (bestStreak >= 10) { comboBonus = 20; comboLabel = `🔥 ${bestStreak} 连对！额外 +${comboBonus} 金币`; }
+      else if (bestStreak >= 5) { comboBonus = 10; comboLabel = `⚡ ${bestStreak} 连对！额外 +${comboBonus} 金币`; }
+      else if (bestStreak >= 3) { comboBonus = 5; comboLabel = `✨ ${bestStreak} 连对！额外 +${comboBonus} 金币`; }
+      // 全对额外奖励
+      let perfectBonus = 0;
+      if (correctCount === questions.length && questions.length >= 3) {
+        perfectBonus = 15;
+      }
+      const goldReward = baseGoldReward + comboBonus + perfectBonus;
       const hasWrongQuestions = wrongQuestions.length > 0;
 
       if (!submissionId) {
@@ -653,12 +733,38 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
         total_score: totalScore,
         total_max_score: 100,
         gold_reward: goldReward,
+        base_gold_reward: baseGoldReward,
+        combo_bonus: comboBonus,
+        combo_streak: bestStreak,
+        combo_label: comboLabel,
+        perfect_bonus: perfectBonus,
         correct_count: correctCount,
         total_count: questions.length,
         wrong_count: questions.length - correctCount,
         wrong_questions: wrongQuestions,
         can_retry: wrongQuestions.length > 0
       });
+
+      // ✨ 向所在班级广播提交事件（教师端实时接收）
+      try {
+        const io = req.app.get('io');
+        if (io && assignment.class_id) {
+          io.to(`class:${assignment.class_id}`).emit('assignment-submitted', {
+            class_id: assignment.class_id,
+            assignment_id: assignment.id,
+            assignment_title: assignment.title,
+            user_id: req.user.userId,
+            username: req.user.username,
+            total_score: totalScore,
+            correct_count: correctCount,
+            total_count: questions.length,
+            combo_streak: bestStreak,
+            at: new Date().toISOString()
+          });
+        }
+      } catch (e) {
+        console.error('Socket 广播提交事件失败:', e);
+      }
 
     } else {
       if (existingSubmission) {
@@ -927,7 +1033,8 @@ router.get('/wrong/my', authenticateToken, (req, res) => {
     const { subject } = req.query;
     let query = `
       SELECT wq.*, qb.content as question_content, qb.options, qb.answer as correct_answer, 
-      qb.subject, qb.type as question_type, a.title as assignment_title, qb.explanation, qb.analysis
+      qb.subject, qb.type as question_type, a.title as assignment_title, qb.explanation, qb.analysis,
+      qb.knowledge_point, qb.hint, qb.difficulty
       FROM wrong_questions wq
       JOIN question_bank qb ON wq.question_id = qb.id
       LEFT JOIN assignments a ON wq.assignment_id = a.id
@@ -963,6 +1070,17 @@ router.post('/wrong/:id/review', authenticateToken, (req, res) => {
     if (result.changes === 0) {
       return res.status(404).json({ error: '错题记录不存在' });
     }
+    // 累加今日复习错题任务进度
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const taskLog = db.prepare(`
+        SELECT task_progress, task_target FROM daily_task_logs
+        WHERE user_id = ? AND date = ? AND task_type = 'review_weak_point'
+      `).get(req.user.userId, today);
+      if (taskLog) {
+        updateTaskProgress(req.user.userId, 'review_weak_point', (taskLog.task_progress || 0) + 1);
+      }
+    } catch (e) { /* ignore */ }
     res.json({ message: '标记复习成功' });
   } catch (error) {
     res.status(500).json({ error: '操作失败' });
