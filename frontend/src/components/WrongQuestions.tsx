@@ -20,6 +20,8 @@ const WrongQuestions: React.FC = () => {
   const [similarQuestions, setSimilarQuestions] = useState<any[]>([]);
   const [similarLoading, setSimilarLoading] = useState(false);
   const [similarMeta, setSimilarMeta] = useState<{ knowledge_point?: string | null }>({});
+  const [wqTablePage, setWqTablePage] = useState(1);
+  const [wqTablePageSize, setWqTablePageSize] = useState(10);
 
   useEffect(() => {
     if (user) loadWrongQuestions();
@@ -202,7 +204,14 @@ const WrongQuestions: React.FC = () => {
         dataSource={wrongQuestions}
         rowKey="id"
         loading={loading}
-        pagination={{ pageSize: 10 }}
+        pagination={{
+          current: wqTablePage,
+          pageSize: wqTablePageSize,
+          onChange: (page, size) => { setWqTablePage(page); setWqTablePageSize(size); },
+          showSizeChanger: true,
+          pageSizeOptions: ['10', '20', '50'],
+          showTotal: (total) => `共 ${total} 条`
+        }}
         scroll={{ x: true }}
         locale={{ emptyText: <Empty description="暂无错题，继续保持！" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
       />

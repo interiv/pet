@@ -29,6 +29,8 @@ const ClassInvitationManager: React.FC = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsForm] = Form.useForm();
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [invTablePage, setInvTablePage] = useState(1);
+  const [invTablePageSize, setInvTablePageSize] = useState(10);
   const isMobile = useMobile();
 
   useEffect(() => {
@@ -352,7 +354,14 @@ const ClassInvitationManager: React.FC = () => {
         dataSource={invitations}
         rowKey="id"
         loading={loading}
-        pagination={{ pageSize: 10 }}
+        pagination={{
+          current: invTablePage,
+          pageSize: invTablePageSize,
+          onChange: (page, size) => { setInvTablePage(page); setInvTablePageSize(size); },
+          showSizeChanger: true,
+          pageSizeOptions: ['10', '20', '50'],
+          showTotal: (total) => `共 ${total} 条`
+        }}
         scroll={{ x: true }}
       />
 

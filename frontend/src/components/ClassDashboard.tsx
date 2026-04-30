@@ -34,6 +34,8 @@ const ClassDashboard: React.FC = () => {
   // 实时提交流
   const [liveFeed, setLiveFeed] = useState<any[]>([]);
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [studentTablePage, setStudentTablePage] = useState(1);
+  const [studentTablePageSize, setStudentTablePageSize] = useState(10);
 
   useEffect(() => {
     const s = io(
@@ -288,7 +290,17 @@ const ClassDashboard: React.FC = () => {
                 columns={studentColumns}
                 rowKey="user_id"
                 size="small"
-                pagination={{ pageSize: 10, showSizeChanger: true }}
+                pagination={{
+                  current: studentTablePage,
+                  pageSize: studentTablePageSize,
+                  onChange: (page, size) => {
+                    setStudentTablePage(page);
+                    setStudentTablePageSize(size);
+                  },
+                  showSizeChanger: true,
+                  pageSizeOptions: ['10', '20', '50'],
+                  showTotal: (total) => `共 ${total} 条`
+                }}
               />
             </Card>
 

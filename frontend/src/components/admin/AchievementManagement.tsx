@@ -49,6 +49,8 @@ const AchievementManagement: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [achTablePage, setAchTablePage] = useState(1);
+  const [achTablePageSize, setAchTablePageSize] = useState(15);
   const [form] = Form.useForm();
 
   const selectedCondType = Form.useWatch('cond_type', form) as string | undefined;
@@ -218,7 +220,14 @@ const AchievementManagement: React.FC = () => {
         rowKey="id"
         loading={loading}
         size="small"
-        pagination={{ pageSize: 15 }}
+        pagination={{
+          current: achTablePage,
+          pageSize: achTablePageSize,
+          onChange: (page, size) => { setAchTablePage(page); setAchTablePageSize(size); },
+          showSizeChanger: true,
+          pageSizeOptions: ['10', '15', '20', '50'],
+          showTotal: (total) => `共 ${total} 条`
+        }}
       />
 
       <Modal

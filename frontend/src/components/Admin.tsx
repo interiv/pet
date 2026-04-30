@@ -1,10 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge, Switch, Alert } from 'antd';
-import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DollarOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined } from '@ant-design/icons';
-import { adminAPI, schoolAPI } from '../utils/api';
+import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DollarOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined } from '@ant-design/icons';
+import { adminAPI, schoolAPI, assignmentAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import ClassInvitationManager from './ClassInvitationManager';
 import AchievementManagement from './admin/AchievementManagement';
+
+const useTablePagination = (defaultPageSize = 10) => {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(defaultPageSize);
+  return {
+    current: page,
+    pageSize,
+    onChange: (p: number, ps: number) => { setPage(p); setPageSize(ps); },
+    showSizeChanger: true,
+    pageSizeOptions: ['10', '20', '50'],
+    showTotal: (total: number) => `共 ${total} 条`
+  };
+};
 
 const useMobile = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -246,6 +259,7 @@ const Dashboard: React.FC = () => {
 };
 
 const ApplicationManagement: React.FC = () => {
+  const pagination = useTablePagination();
   const { user } = useAuthStore();
   const [applications, setApplications] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
@@ -357,12 +371,13 @@ const ApplicationManagement: React.FC = () => {
           <Select.Option value="rejected">已拒绝</Select.Option>
         </Select>
       </div>
-      <Table columns={columns} dataSource={applications} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
+      <Table columns={columns} dataSource={applications} rowKey="id" loading={loading} pagination={pagination} scroll={{ x: true }} />
     </div>
   );
 };
 
 const TeacherManagement: React.FC = () => {
+  const pagination = useTablePagination();
   const [teachers, setTeachers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('');
@@ -461,7 +476,7 @@ const TeacherManagement: React.FC = () => {
           <Button onClick={loadTeachers}>刷新</Button>
         </Space>
       </div>
-      <Table columns={columns} dataSource={teachers} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
+      <Table columns={columns} dataSource={teachers} rowKey="id" loading={loading} pagination={pagination} scroll={{ x: true }} />
 
       <Modal title="编辑教师" open={editModalVisible} onOk={handleUpdate} onCancel={() => setEditModalVisible(false)}>
         <Form form={form} layout="vertical">
@@ -481,6 +496,7 @@ const TeacherManagement: React.FC = () => {
 };
 
 const StudentManagement: React.FC = () => {
+  const pagination = useTablePagination();
   const isMobile = useMobile();
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'admin';
@@ -641,7 +657,7 @@ const StudentManagement: React.FC = () => {
           <Button onClick={loadStudents}>刷新</Button>
         </Space>
       </div>
-      <Table columns={columns} dataSource={students} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
+      <Table columns={columns} dataSource={students} rowKey="id" loading={loading} pagination={pagination} scroll={{ x: true }} />
 
       <Modal title="学生详情" open={detailModalVisible} onCancel={() => setDetailModalVisible(false)} footer={null} width={isMobile ? '95vw' : 800}>
         {studentDetail && (
@@ -718,6 +734,7 @@ const StudentManagement: React.FC = () => {
 };
 
 const ClassManagement: React.FC = () => {
+  const pagination = useTablePagination();
   const { user } = useAuthStore();
   const isMobile = useMobile();
   const [classes, setClasses] = useState<any[]>([]);
@@ -899,7 +916,7 @@ const ClassManagement: React.FC = () => {
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>创建班级</Button>
         </div>
       )}
-      <Table columns={columns} dataSource={classes} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
+      <Table columns={columns} dataSource={classes} rowKey="id" loading={loading} pagination={pagination} scroll={{ x: true }} />
 
       <Modal title="创建班级" open={modalVisible} onOk={handleCreate} onCancel={() => setModalVisible(false)}>
         <Form form={form} layout="vertical">
@@ -964,6 +981,7 @@ const ClassManagement: React.FC = () => {
 };
 
 const SchoolManagement: React.FC = () => {
+  const pagination = useTablePagination();
   const [schools, setSchools] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -1059,7 +1077,7 @@ const SchoolManagement: React.FC = () => {
       <div style={{ marginBottom: 16 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建学校</Button>
       </div>
-      <Table columns={columns} dataSource={schools} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
+      <Table columns={columns} dataSource={schools} rowKey="id" loading={loading} pagination={pagination} scroll={{ x: true }} />
 
       <Modal
         title={editingSchool ? '编辑学校' : '新建学校'}
@@ -1084,6 +1102,7 @@ const SchoolManagement: React.FC = () => {
 };
 
 const AnnouncementManagement: React.FC = () => {
+  const pagination = useTablePagination();
   const isMobile = useMobile();
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1187,7 +1206,7 @@ const AnnouncementManagement: React.FC = () => {
       <div style={{ marginBottom: 16 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>发布公告</Button>
       </div>
-      <Table columns={columns} dataSource={announcements} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
+      <Table columns={columns} dataSource={announcements} rowKey="id" loading={loading} pagination={pagination} scroll={{ x: true }} />
 
       <Modal title="发布公告" open={modalVisible} onOk={handleCreate} onCancel={() => setModalVisible(false)} width={isMobile ? '95vw' : 600}>
         <Form form={form} layout="vertical" initialValues={{ priority: 0 }}>
@@ -1474,11 +1493,18 @@ const AISettings: React.FC = () => {
 
 const DataView: React.FC = () => {
   const { user } = useAuthStore();
+  const battlePagination = useTablePagination();
+  const assignmentPagination = useTablePagination();
+  const shopPagination = useTablePagination();
   const [battles, setBattles] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
   const [shopRecords, setShopRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('assignments');
+  const [questionModalVisible, setQuestionModalVisible] = useState(false);
+  const [selectedAssignment, setSelectedAssignment] = useState<any>(null);
+  const [assignmentQuestions, setAssignmentQuestions] = useState<any[]>([]);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
 
   const isAdmin = user?.role === 'admin';
   const isHeadTeacher = user?.role === 'teacher' && (user as any).teacher_classes?.some(
@@ -1531,6 +1557,42 @@ const DataView: React.FC = () => {
     }
   };
 
+  const handleViewQuestions = async (record: any) => {
+    setSelectedAssignment(record);
+    setQuestionModalVisible(true);
+    setQuestionsLoading(true);
+    try {
+      const res = await assignmentAPI.getAssignment(record.id);
+      setAssignmentQuestions(res.data.assignment?.questions || []);
+    } catch (e: any) {
+      message.error('加载题目失败');
+    } finally {
+      setQuestionsLoading(false);
+    }
+  };
+
+  const handleDeleteAssignment = async (id: number) => {
+    try {
+      await adminAPI.deleteAssignment(id);
+      message.success('作业及相关数据已彻底删除');
+      loadData();
+    } catch (e: any) {
+      message.error(e.response?.data?.error || '删除失败');
+    }
+  };
+
+  const handleDeleteQuestion = async (questionId: number) => {
+    if (!selectedAssignment) return;
+    try {
+      await adminAPI.deleteAssignmentQuestion(selectedAssignment.id, questionId);
+      message.success('题目及相关记录已删除');
+      handleViewQuestions(selectedAssignment);
+      loadData();
+    } catch (e: any) {
+      message.error(e.response?.data?.error || '删除题目失败');
+    }
+  };
+
   const battleColumns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     { title: '挑战者', dataIndex: 'challenger_name', key: 'challenger_name' },
@@ -1545,9 +1607,41 @@ const DataView: React.FC = () => {
     { title: '标题', dataIndex: 'title', key: 'title' },
     { title: '创建人', dataIndex: 'creator_name', key: 'creator_name' },
     { title: '班级', dataIndex: 'class_name', key: 'class_name', render: (v: string) => v || '-' },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 100,
+      render: (status: string) => {
+        if (status === 'cancelled') return <Tag color="default">已取消</Tag>;
+        return <Tag color="green">进行中</Tag>;
+      }
+    },
     { title: '经验奖励', dataIndex: 'max_exp', key: 'max_exp' },
     { title: '截止日期', dataIndex: 'due_date', key: 'due_date', render: (v: string) => v ? new Date(v).toLocaleDateString() : '-' },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => new Date(v).toLocaleString() },
+    {
+      title: '操作',
+      key: 'action',
+      width: 180,
+      render: (_: any, record: any) => (
+        <Space size="small">
+          <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewQuestions(record)}>查看题目</Button>
+          {record.status === 'cancelled' && isAdmin && (
+            <Popconfirm
+              title="确认彻底删除此作业？"
+              description="将删除作业、题目、提交记录、错题本等所有相关数据，不可恢复"
+              onConfirm={() => handleDeleteAssignment(record.id)}
+              okText="确认删除"
+              cancelText="取消"
+              okButtonProps={{ danger: true }}
+            >
+              <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+            </Popconfirm>
+          )}
+        </Space>
+      ),
+    },
   ];
 
   const shopColumns = [
@@ -1563,14 +1657,66 @@ const DataView: React.FC = () => {
   ];
 
   const dataViewTabItems = [
-    ...(canViewBattles ? [{ key: 'battles', label: '战斗记录', children: <Table dataSource={battles} columns={battleColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" scroll={{ x: true }} /> }] : []),
-    { key: 'assignments', label: '作业记录', children: <Table dataSource={assignments} columns={assignmentColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" scroll={{ x: true }} /> },
-    ...(canViewShop ? [{ key: 'shop', label: '购买记录', children: <Table dataSource={shopRecords} columns={shopColumns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} size="small" scroll={{ x: true }} /> }] : []),
+    ...(canViewBattles ? [{ key: 'battles', label: '战斗记录', children: <Table dataSource={battles} columns={battleColumns} rowKey="id" loading={loading} pagination={battlePagination} size="small" scroll={{ x: true }} /> }] : []),
+    { key: 'assignments', label: '作业记录', children: <Table dataSource={assignments} columns={assignmentColumns} rowKey="id" loading={loading} pagination={assignmentPagination} size="small" scroll={{ x: true }} /> },
+    ...(canViewShop ? [{ key: 'shop', label: '购买记录', children: <Table dataSource={shopRecords} columns={shopColumns} rowKey="id" loading={loading} pagination={shopPagination} size="small" scroll={{ x: true }} /> }] : []),
   ];
 
   return (
     <div>
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={dataViewTabItems} />
+
+      <Modal
+        title={`题目详情 - ${selectedAssignment?.title || ''}`}
+        open={questionModalVisible}
+        onCancel={() => { setQuestionModalVisible(false); setSelectedAssignment(null); setAssignmentQuestions([]); }}
+        width={700}
+        footer={<Button onClick={() => setQuestionModalVisible(false)}>关闭</Button>}
+      >
+        {selectedAssignment?.status === 'cancelled' && isAdmin && (
+          <Alert
+            type="warning"
+            showIcon
+            message="此作业已取消，管理员可以删除其中的题目（将同时删除相关错题本、答题记录等）"
+            style={{ marginBottom: 16 }}
+          />
+        )}
+        <Table
+          dataSource={assignmentQuestions}
+          rowKey="id"
+          loading={questionsLoading}
+          pagination={false}
+          size="small"
+          columns={[
+            { title: '#', render: (_: any, __: any, i: number) => i + 1, width: 40 },
+            { title: '题型', dataIndex: 'type', key: 'type', width: 80, render: (t: string) => {
+              const map: Record<string, string> = { choice_single: '单选', choice_multi: '多选', judgment: '判断', essay: '主观', fill_blank: '填空' };
+              return <Tag>{map[t] || t}</Tag>;
+            }},
+            { title: '题目内容', dataIndex: 'content', key: 'content', render: (c: string) => (
+              <div style={{ maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c}</div>
+            )},
+            { title: '知识点', dataIndex: 'knowledge_point', key: 'knowledge_point', width: 140, render: (kp: string) => kp ? <Tag color="blue">{kp}</Tag> : '-' },
+            ...(selectedAssignment?.status === 'cancelled' && isAdmin ? [{
+              title: '操作',
+              key: 'action',
+              width: 80,
+              render: (_: any, record: any) => (
+                <Popconfirm
+                  title="确认删除此题目？"
+                  description="将同时删除相关答题记录、错题本记录等"
+                  onConfirm={() => handleDeleteQuestion(record.id)}
+                  okText="删除"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true }}
+                >
+                  <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                </Popconfirm>
+              ),
+            }] : []),
+          ]}
+        />
+      </Modal>
     </div>
   );
 };

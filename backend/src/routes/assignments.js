@@ -91,10 +91,12 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
 {"questions": [{"content": "题目内容", "options": ["选项A内容", "选项B内容", "选项C内容", "选项D内容"], "answer": "A", "explanation": "详细解析", "analysis": "解题步骤/思路", "knowledge_point": "细粒度知识点"}]}
 
 要求：
-1. ${actualCount}道题中，每3道为一组变体，考查相同知识点但数字/表述略有不同；同一组变体的knowledge_point必须相同
-2. 确保所有答案都在options范围内
-3. knowledge_point必须具体细致，不要写大类（例如不要只写"数学"、"代数"，而要写"一元一次方程解法"）
-4. 只返回JSON，不要任何其他内容`;
+1. ${actualCount}道题中，每3道为一组变体（共${count}组），同一组变体考查相同知识点但数字/表述略有不同；同一组变体的knowledge_point必须相同
+2. 不同组之间必须考查明显不同的知识点方向！严禁不同组考查相同或高度相似的知识点。例如第1组考查"一元二次方程求根公式"，第2组应考查"一元二次方程判别式"，第3组考查"一元二次方程根与系数关系"，而不是三组都考查求根公式
+3. 确保所有答案都在options范围内
+4. knowledge_point必须具体细致，不要写大类（例如不要只写"数学"、"代数"，而要写"一元一次方程解法"）
+5. 同一组变体内部，题目之间必须有明显的数字、数值或具体情境差异，不能只是简单换几个字
+6. 只返回JSON，不要任何其他内容`;
     } else if (question_type === 'choice_multi') {
       prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
 
@@ -105,10 +107,12 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
 {"questions": [{"content": "题目内容", "options": ["A","B","C","D"], "answer": ["A","C"], "explanation": "详细解析", "analysis": "解题步骤", "knowledge_point": "细粒度知识点"}]}
 
 要求：
-1. 每3道题为同一知识点的变体；同一组变体的knowledge_point必须相同
-2. answer字段必须是数组格式
-3. knowledge_point必须是8-20字的具体知识点，不要只写科目或大类
-4. 只返回JSON，不要任何其他内容`;
+1. 每3道题为同一知识点的变体（共${count}组）；同一组变体的knowledge_point必须相同
+2. 不同组之间必须考查明显不同的知识点方向！严禁不同组考查相同或高度相似的知识点
+3. answer字段必须是数组格式
+4. knowledge_point必须是8-20字的具体知识点，不要只写科目或大类
+5. 同一组变体内部，题目之间必须有明显的数字、数值或具体情境差异
+6. 只返回JSON，不要任何其他内容`;
     } else if (question_type === 'judgment') {
       prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
 
@@ -119,10 +123,12 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
 {"questions": [{"content": "判断题陈述内容", "answer": true, "explanation": "为什么对或错的解析", "analysis": "判断依据", "knowledge_point": "细粒度知识点"}]}
 
 要求：
-1. 每3道题为同一知识点的变体；同一组变体的knowledge_point必须相同
-2. answer字段必须是布尔值true或false
-3. knowledge_point必须是8-20字的具体知识点，不要只写科目或大类
-4. 只返回JSON，不要任何其他内容`;
+1. 每3道题为同一知识点的变体（共${count}组）；同一组变体的knowledge_point必须相同
+2. 不同组之间必须考查明显不同的知识点方向！严禁不同组考查相同或高度相似的知识点
+3. answer字段必须是布尔值true或false
+4. knowledge_point必须是8-20字的具体知识点，不要只写科目或大类
+5. 同一组变体内部，题目之间必须有明显的数字、数值或具体情境差异
+6. 只返回JSON，不要任何其他内容`;
     } else if (question_type === 'essay') {
       prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
 
@@ -434,7 +440,7 @@ router.get('/', authenticateToken, (req, res) => {
         FROM assignments a
         JOIN users u ON a.teacher_id = u.id
         LEFT JOIN classes c ON a.class_id = c.id
-        WHERE a.class_id IN (${placeholders})
+        WHERE a.class_id IN (${placeholders}) AND a.status != 'cancelled'
         ORDER BY a.created_at DESC
       `).all(...classIds);
     } else {
@@ -451,7 +457,7 @@ router.get('/', authenticateToken, (req, res) => {
         FROM assignments a
         JOIN users u ON a.teacher_id = u.id
         LEFT JOIN classes c ON a.class_id = c.id
-        WHERE a.class_id = ?
+        WHERE a.class_id = ? AND a.status != 'cancelled'
         ORDER BY a.created_at DESC
       `).all(req.user.userId, req.user.userId, req.user.userId, req.user.userId, student.class_id);
     }
@@ -523,6 +529,7 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
 
     const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
     if (!assignment) return res.status(404).json({ error: '作业不存在' });
+    if (assignment.status === 'cancelled') return res.status(400).json({ error: '该作业已被取消，无法提交' });
 
     const student = db.prepare('SELECT class_id FROM users WHERE id = ?').get(req.user.userId);
     if (!student || student.class_id !== assignment.class_id) {
@@ -1027,7 +1034,7 @@ router.get('/:id/statistics', authenticateToken, authorizeRole('teacher', 'admin
     });
 
     const studentResults = db.prepare(`
-      s.id as submission_id, u.id as user_id, u.username, s.total_score, s.gold_reward, s.submitted_at, s.review_status
+      SELECT s.id as submission_id, u.id as user_id, u.username, s.total_score, s.gold_reward, s.submitted_at, s.review_status
       FROM submissions s
       JOIN users u ON s.user_id = u.id
       WHERE s.assignment_id = ?
@@ -1136,6 +1143,26 @@ router.post('/upload/image', authenticateToken, upload.single('file'), (req, res
   } catch (error) {
     console.error('上传错误:', error);
     res.status(500).json({ error: '上传失败: ' + error.message });
+  }
+});
+
+router.patch('/:id/cancel', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  try {
+    const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
+    if (!assignment) return res.status(404).json({ error: '作业不存在' });
+    if (assignment.status === 'cancelled') return res.status(400).json({ error: '作业已取消' });
+
+    if (req.user.role === 'teacher') {
+      const belongs = db.prepare('SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?').get(req.user.userId, assignment.class_id);
+      if (!belongs) return res.status(403).json({ error: '无权取消此作业' });
+    }
+
+    db.prepare("UPDATE assignments SET status = 'cancelled' WHERE id = ?").run(req.params.id);
+
+    res.json({ message: '作业已取消，已提交的成绩保留，未提交的学生将无法继续作答' });
+  } catch (error) {
+    console.error('取消作业错误:', error);
+    res.status(500).json({ error: '取消作业失败' });
   }
 });
 

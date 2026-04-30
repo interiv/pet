@@ -131,6 +131,9 @@ export const assignmentAPI = {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
   },
+
+  cancelAssignment: (id: number) =>
+    api.patch(`/assignments/${id}/cancel`),
 };
 
 // 知识点相关 API
@@ -300,6 +303,11 @@ export const adminAPI = {
 
   // 作业记录
   getAssignments: (params?: { class_id?: number }) => api.get('/admin/assignments', { params }),
+
+  deleteAssignment: (id: number) => api.delete(`/admin/assignments/${id}`),
+
+  deleteAssignmentQuestion: (assignmentId: number, questionId: number) =>
+    api.delete(`/admin/assignments/${assignmentId}/questions/${questionId}`),
 
   // 商店购买记录
   getShopRecords: (params?: { class_id?: number }) => api.get('/admin/shop-records', { params }),

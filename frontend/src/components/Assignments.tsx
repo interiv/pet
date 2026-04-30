@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space, Radio, Checkbox, Progress, Card, Alert, Upload, Image, Divider, Empty, Statistic, Row, Col, Tabs, Badge } from 'antd';
+import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space, Radio, Checkbox, Progress, Card, Alert, Upload, Image, Divider, Empty, Statistic, Row, Col, Tabs, Badge, Popconfirm } from 'antd';
 import { assignmentAPI, adminAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
-import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined } from '@ant-design/icons';
+import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined } from '@ant-design/icons';
 import CelebrationAnimation from './CelebrationAnimation';
 
 const { Option } = Select;
@@ -78,6 +78,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [submitResult, setSubmitResult] = useState<any>(null);
   const [statsData, setStatsData] = useState<any>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [assignmentTablePage, setAssignmentTablePage] = useState(1);
+  const [assignmentTablePageSize, setAssignmentTablePageSize] = useState(10);
   
   const [form] = Form.useForm();
   const [submitForm] = Form.useForm();
@@ -204,6 +206,12 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         message.error('请选择至少一个班级');
         return;
       }
+      const questionIds = (generatedData?.questions || []).map(q => {
+        if (q.hasVariants && q.variantIds && q.variantIds.length > 0) {
+          return q.variantIds[0];
+        }
+        return q.tempId || q.id;
+      }).filter(Boolean) as number[];
       const basePayload = {
         title: values.title,
         description: values.description,
@@ -211,7 +219,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         question_type: values.question_type,
         max_exp: values.max_exp,
         due_date: values.due_date.toISOString(),
-        question_ids: generatedData?.allQuestionIds || [],
+        question_ids: questionIds,
         ai_config: { auto_grade: true, question_type: values.question_type }
       };
       let successCount = 0;
@@ -576,6 +584,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const isOverdue = (date: string) => dayjs(date).isBefore(dayjs());
 
   const getStatusTag = (record: any) => {
+    if (record.status === 'cancelled') return <Tag color="default" icon={<StopOutlined />}>已取消</Tag>;
     if (!record.my_submission_id) {
       if (isOverdue(record.due_date)) return <Tag color="error" icon={<CloseCircleOutlined />}>已过期</Tag>;
       return <Tag color="processing">待完成</Tag>;
@@ -644,6 +653,26 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             <>
               <Button size="small" icon={<EyeOutlined />} onClick={() => handleStartDoing(record)}>预览</Button>
               <Button size="small" icon={<BarChartOutlined />} onClick={() => handleViewStatistics(record)}>统计</Button>
+              {record.status !== 'cancelled' && (
+                <Popconfirm
+                  title="确认取消此作业？"
+                  description="已提交的成绩会保留，未提交的学生将无法继续作答"
+                  onConfirm={async () => {
+                    try {
+                      await assignmentAPI.cancelAssignment(record.id);
+                      message.success('作业已取消');
+                      loadAssignments();
+                    } catch (e: any) {
+                      message.error(e.response?.data?.error || '取消失败');
+                    }
+                  }}
+                  okText="确认取消"
+                  cancelText="再想想"
+                  okButtonProps={{ danger: true }}
+                >
+                  <Button size="small" danger icon={<StopOutlined />}>取消</Button>
+                </Popconfirm>
+              )}
             </>
           )}
         </Space>
@@ -688,7 +717,14 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         </Space>
       </div>
 
-      <Table columns={columns} dataSource={assignments} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: true }} />
+      <Table columns={columns} dataSource={assignments} rowKey="id" loading={loading} pagination={{
+        current: assignmentTablePage,
+        pageSize: assignmentTablePageSize,
+        onChange: (page, size) => { setAssignmentTablePage(page); setAssignmentTablePageSize(size); },
+        showSizeChanger: true,
+        pageSizeOptions: ['10', '20', '50'],
+        showTotal: (total) => `共 ${total} 条`
+      }} scroll={{ x: true }} />
 
       {/* 教师发布作业弹窗 */}
       <Modal
@@ -831,11 +867,27 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         onCancel={() => setIsDoModalVisible(false)}
         width={isMobile ? '95vw' : 700}
         destroyOnHidden
-        okText={submitting ? "提交中..." : "提交答案"}
-        cancelText="取消"
-        onOk={handleSubmitAnswers}
         confirmLoading={submitting}
         styles={{ body: { maxHeight: '70vh', overflowY: 'auto', padding: '16px 24px' } }}
+        footer={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <Progress 
+                percent={Math.round(((currentAssignment?.questions || []).filter((q: Question) => {
+                  const a = studentAnswers[q.id!];
+                  return a !== undefined && a !== null && a !== '';
+                }).length / (currentAssignment?.questions?.length || 1)) * 100)} 
+                status="active"
+                size="small"
+                format={(_p) => `已完成 ${(currentAssignment?.questions || []).filter((q: Question) => studentAnswers[q.id!] !== undefined && studentAnswers[q.id!] !== null && studentAnswers[q.id!] !== '').length}/${currentAssignment?.questions?.length || 0} 题`}
+              />
+            </div>
+            <Button onClick={() => setIsDoModalVisible(false)}>取消</Button>
+            <Button type="primary" loading={submitting} onClick={handleSubmitAnswers}>
+              {submitting ? "提交中..." : "提交答案"}
+            </Button>
+          </div>
+        }
       >
         {currentAssignment && (
           <div>
@@ -851,17 +903,6 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             />
             
             {currentAssignment.questions?.map((q: Question, i: number) => renderQuestionForStudent(q, i))}
-
-            <div style={{ padding: '12px 0', borderTop: '1px dashed #eee', marginTop: 8 }}>
-              <Progress 
-                percent={Math.round(((currentAssignment.questions || []).filter((q: Question) => {
-                  const a = studentAnswers[q.id!];
-                  return a !== undefined && a !== null && a !== '';
-                }).length / (currentAssignment.questions?.length || 1)) * 100)} 
-                status="active"
-                format={(_p) => `已完成 ${(currentAssignment.questions || []).filter((q: Question) => studentAnswers[q.id!] !== undefined && studentAnswers[q.id!] !== null && studentAnswers[q.id!] !== '').length}/${currentAssignment.questions?.length || 0} 题`}
-              />
-            </div>
           </div>
         )}
       </Modal>
@@ -988,6 +1029,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           </div>
         ) : statsData ? (
           <div>
+            {statsData.submitted_count === 0 ? (
+              <Empty description="暂无学生提交，无法生成统计" style={{ padding: 40 }} />
+            ) : (
+            <>
             <Row gutter={16} style={{ marginBottom: 20 }}>
               <Col xs={12} sm={8} md={6}><Card size="small"><Statistic title="全班人数" value={statsData.total_students} /></Card></Col>
               <Col xs={12} sm={8} md={6}><Card size="small"><Statistic title="已提交" value={statsData.submitted_count} /></Card></Col>
@@ -1036,6 +1081,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 )
               }
             ]} />
+            </>
+            )}
           </div>
         ) : null}
       </Modal>

@@ -300,6 +300,14 @@ const Home: React.FC = () => {
   };
 
   const [petsView, setPetsView] = useState<'card' | 'list'>('card');
+  const [petsTablePage, setPetsTablePage] = useState(1);
+  const [petsTablePageSize, setPetsTablePageSize] = useState(10);
+  const [lbTablePage, setLbTablePage] = useState(1);
+  const [lbTablePageSize, setLbTablePageSize] = useState(10);
+  const [classLbTablePage, setClassLbTablePage] = useState(1);
+  const [classLbTablePageSize, setClassLbTablePageSize] = useState(10);
+  const [globalLbTablePage, setGlobalLbTablePage] = useState(1);
+  const [globalLbTablePageSize, setGlobalLbTablePageSize] = useState(10);
 
   const getPetsTitle = () => {
     if (user?.role === 'admin') return '全校宠物';
@@ -375,7 +383,14 @@ const Home: React.FC = () => {
           dataSource={allPets}
           columns={petsColumns}
           rowKey="id"
-          pagination={{ pageSize: 10 }}
+          pagination={{
+            current: petsTablePage,
+            pageSize: petsTablePageSize,
+            onChange: (page, size) => { setPetsTablePage(page); setPetsTablePageSize(size); },
+            showSizeChanger: true,
+            pageSizeOptions: ['10', '20', '50'],
+            showTotal: (total) => `共 ${total} 条`
+          }}
           size="small"
         />
       )}
@@ -458,7 +473,14 @@ const Home: React.FC = () => {
           dataSource={leaderboard}
           columns={leaderboardColumns}
           rowKey="id"
-          pagination={{ pageSize: 10 }}
+          pagination={{
+            current: lbTablePage,
+            pageSize: lbTablePageSize,
+            onChange: (page, size) => { setLbTablePage(page); setLbTablePageSize(size); },
+            showSizeChanger: true,
+            pageSizeOptions: ['10', '20', '50'],
+            showTotal: (total) => `共 ${total} 条`
+          }}
           size="small"
         />
       )}
@@ -515,7 +537,14 @@ const Home: React.FC = () => {
           {leaderboard.length === 0 && <div style={{ textAlign: 'center', width: '100%', padding: '20px', color: '#999' }}>该班级暂无宠物</div>}
         </Row>
       ) : (
-        <Table dataSource={leaderboard} columns={leaderboardColumns} rowKey="id" pagination={{ pageSize: 10 }} size="small" />
+        <Table dataSource={leaderboard} columns={leaderboardColumns} rowKey="id" pagination={{
+          current: classLbTablePage,
+          pageSize: classLbTablePageSize,
+          onChange: (page, size) => { setClassLbTablePage(page); setClassLbTablePageSize(size); },
+          showSizeChanger: true,
+          pageSizeOptions: ['10', '20', '50'],
+          showTotal: (total) => `共 ${total} 条`
+        }} size="small" />
       )}
     </div>
   );
@@ -548,7 +577,14 @@ const Home: React.FC = () => {
             </Row>
           );
         }
-        return <Table dataSource={sorted} columns={leaderboardColumns} rowKey="id" pagination={{ pageSize: 10 }} size="small" />;
+        return <Table dataSource={sorted} columns={leaderboardColumns} rowKey="id" pagination={{
+          current: globalLbTablePage,
+          pageSize: globalLbTablePageSize,
+          onChange: (page, size) => { setGlobalLbTablePage(page); setGlobalLbTablePageSize(size); },
+          showSizeChanger: true,
+          pageSizeOptions: ['10', '20', '50'],
+          showTotal: (total) => `共 ${total} 条`
+        }} size="small" />;
       })()}
     </div>
   );

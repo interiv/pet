@@ -56,6 +56,8 @@ const LearningDashboard: React.FC = () => {
   const [trendData, setTrendData] = useState<any[]>([]);
   const [learningTime, setLearningTime] = useState<any>(null);
   const [learningTimeLoading, setLearningTimeLoading] = useState(false);
+  const [kpTablePage, setKpTablePage] = useState(1);
+  const [kpTablePageSize, setKpTablePageSize] = useState(10);
 
   useEffect(() => {
     loadData();
@@ -431,7 +433,17 @@ const LearningDashboard: React.FC = () => {
               dataSource={kpData.stats}
               columns={columns}
               rowKey="knowledge_point"
-              pagination={{ pageSize: 10 }}
+              pagination={{
+                current: kpTablePage,
+                pageSize: kpTablePageSize,
+                onChange: (page, size) => {
+                  setKpTablePage(page);
+                  setKpTablePageSize(size);
+                },
+                showSizeChanger: true,
+                pageSizeOptions: ['10', '20', '50'],
+                showTotal: (total) => `共 ${total} 条`
+              }}
               size="small"
             />
           </Card>
