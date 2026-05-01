@@ -30,8 +30,7 @@ router.get('/available', authenticateToken, (req, res) => {
       
       // 检查解锁条件
       const canUnlock = !isLearned && 
-        pet.level >= skill.required_level &&
-        (!skill.required_knowledge_point || checkKnowledgePointRequirement(req.user.userId, skill));
+        pet.level >= skill.required_level;
 
       return {
         ...skill,
@@ -84,11 +83,6 @@ router.post('/learn', authenticateToken, (req, res) => {
       return res.status(400).json({ error: `宠物等级不足，需要等级 ${skill.required_level}` });
     }
 
-    if (skill.required_knowledge_point && !checkKnowledgePointRequirement(req.user.userId, skill)) {
-      return res.status(400).json({ error: `知识点掌握度不足，需要掌握: ${skill.required_knowledge_point}` });
-    }
-
-    // 学习技能
     db.prepare(`
       INSERT INTO pet_skills (pet_id, skill_id, level, mastery)
       VALUES (?, ?, 1, 0)
@@ -216,22 +210,5 @@ router.post('/use', authenticateToken, (req, res) => {
     res.status(500).json({ error: '使用技能失败' });
   }
 });
-
-// 辅助函数：检查知识点掌握度
-function checkKnowledgePointRequirement(userId, skill) {
-  if (!skill.required_knowledge_point) return true;
-  
-  const stats = db.prepare(`
-    SELECT accuracy
-    FROM knowledge_point_stats
-    WHERE user_id = ? AND knowledge_point = ?
-    ORDER BY date DESC
-    LIMIT 1
-  `).get(userId, skill.required_knowledge_point);
-
-  if (!stats) return false;
-  
-  return stats.accuracy >= skill.required_accuracy;
-}
 
 module.exports = router;

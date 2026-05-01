@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Progress, Button, message, Input, Modal, Form, Select, Tag, Badge, Divider, Alert } from 'antd';
+import { Card, Row, Col, Progress, Button, message, Input, Modal, Form, Select, Tag, Badge, Alert } from 'antd';
 import {
   ThunderboltOutlined,
   RocketOutlined,
@@ -17,16 +17,6 @@ import { petAPI, equipmentAPI, petExtendedAPI, itemAPI } from '../utils/api';
 import { usePetStore, useAuthStore } from '../store/authStore';
 import { EquipmentPanel } from './EquipmentPanel';
 
-const useMobile = () => {
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, []);
-  return isMobile;
-};
-
 const { Meta } = Card;
 
 interface PetDisplayProps {
@@ -37,15 +27,11 @@ interface PetDisplayProps {
 const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
   const { setPet } = usePetStore();
   const { checkAuth } = useAuthStore();
-  const isMobile = useMobile();
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState(pet?.name || '');
   const [equippedItems, setEquippedItems] = useState<any[]>([]);
   const [reviveModalVisible, setReviveModalVisible] = useState(false);
   const [rebirthModalVisible, setRebirthModalVisible] = useState(false);
-  const [skillModalVisible, setSkillModalVisible] = useState(false);
-  const [mySkills, setMySkills] = useState<any[]>([]);
-  const [allSkills, setAllSkills] = useState<any[]>([]);
   const [myItems, setMyItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm();
@@ -160,44 +146,17 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
     }
   };
 
-  const handleOpenSkillModal = async () => {
+  const handleFeedClick = async () => {
     try {
-      setLoading(true);
-      const [skillsRes, allSkillsRes] = await Promise.all([
-        petExtendedAPI.getMySkills(),
-        petExtendedAPI.getAllSkills()
-      ]);
-      setMySkills(skillsRes.data.skills || []);
-      setAllSkills(allSkillsRes.data.skills || []);
-      setSkillModalVisible(true);
-    } catch (error: any) {
-      message.error(error.response?.data?.error || '加载技能失败');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLearnSkill = async (skillId: number) => {
-    try {
-      await petExtendedAPI.learnSkill({ skill_id: skillId });
-      message.success('学习技能成功！');
-      handleOpenSkillModal();
-      const response = await petAPI.getMyPet();
-      setPet(response.data.pet);
-    } catch (error: any) {
-      message.error(error.response?.data?.error || '学习技能失败');
-    }
-  };
-
-  const handleForgetSkill = async (skillId: number) => {
-    try {
-      await petExtendedAPI.forgetSkill({ skill_id: skillId });
-      message.success('遗忘技能成功！');
-      handleOpenSkillModal();
-      const response = await petAPI.getMyPet();
-      setPet(response.data.pet);
-    } catch (error: any) {
-      message.error(error.response?.data?.error || '遗忘技能失败');
+      const res = await itemAPI.getMyItems();
+      const items = res.data.items || [];
+      if (items.length > 0) {
+        onNavigate?.('backpack');
+      } else {
+        onNavigate?.('shop');
+      }
+    } catch (error) {
+      onNavigate?.('shop');
     }
   };
 
@@ -284,8 +243,8 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
                 <Button key="revive" type="primary" danger icon={<MedicineBoxOutlined />} onClick={handleOpenReviveModal}>复活宠物</Button>
               ) : (
                 <>
-                  <Button key="feed" type="primary" onClick={() => onNavigate?.('shop')}>喂食</Button>
-                  <Button key="skill" icon={<StarOutlined />} onClick={handleOpenSkillModal}>技能</Button>
+                  <Button key="feed" type="primary" onClick={handleFeedClick}>喂食</Button>
+                  <Button key="skill" icon={<StarOutlined />} onClick={() => onNavigate?.('skills')}>技能</Button>
                   <Button key="rebirth" icon={<RetweetOutlined />} onClick={handleOpenRebirthModal}>转生</Button>
                 </>
               )
@@ -526,46 +485,6 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
         </Form>
       </Modal>
 
-      <Modal
-        title="宠物技能"
-        open={skillModalVisible}
-        onCancel={() => setSkillModalVisible(false)}
-        footer={null}
-        width={isMobile ? '95vw' : 700}
-      >
-        <Divider>已学会的技能</Divider>
-        {mySkills.length > 0 ? (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 24 }}>
-            {mySkills.map(skill => (
-              <Tag
-                key={skill.id}
-                color="blue"
-                closable
-                onClose={() => handleForgetSkill(skill.id)}
-                style={{ padding: '4px 12px', fontSize: 14 }}
-              >
-                {skill.name} ({skill.element_type})
-              </Tag>
-            ))}
-          </div>
-        ) : (
-          <p style={{ color: '#999', marginBottom: 24 }}>还没有学会任何技能</p>
-        )}
-
-        <Divider>可学习的技能</Divider>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          {allSkills.filter(s => !mySkills.find(ms => ms.id === s.id)).map(skill => (
-            <Tag
-              key={skill.id}
-              color="green"
-              style={{ padding: '4px 12px', fontSize: 14, cursor: 'pointer' }}
-              onClick={() => handleLearnSkill(skill.id)}
-            >
-              + {skill.name} ({skill.element_type})
-            </Tag>
-          ))}
-        </div>
-      </Modal>
     </div>
   );
 };

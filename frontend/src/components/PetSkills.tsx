@@ -229,7 +229,7 @@ const PetSkills: React.FC = () => {
     if (available.length === 0) {
       return (
         <Card style={{ textAlign: 'center', padding: 40, background: '#fafafa' }}>
-          <div style={{ color: '#999' }}>暂时没有可学习的技能，提升等级或掌握更多知识点吧！</div>
+          <div style={{ color: '#999' }}>暂时没有可学习的技能，提升等级吧！</div>
         </Card>
       );
     }
@@ -264,9 +264,6 @@ const PetSkills: React.FC = () => {
               <div style={{ marginBottom: 16, padding: 8, background: '#f0f5ff', borderRadius: 4, fontSize: 12 }}>
                 <div>📌 解锁条件:</div>
                 <div>• 等级: {pet?.level}/{skill.required_level}</div>
-                {skill.required_knowledge_point && (
-                  <div>• 知识点: {skill.required_knowledge_point} (≥{skill.required_accuracy}%)</div>
-                )}
               </div>
 
               <Button
@@ -310,9 +307,6 @@ const PetSkills: React.FC = () => {
               <div style={{ marginBottom: 16, padding: 8, background: '#fff', borderRadius: 4, fontSize: 12 }}>
                 <div>🔒 解锁条件:</div>
                 <div>• 等级: {pet?.level}/{skill.required_level}</div>
-                {skill.required_knowledge_point && (
-                  <div>• 知识点: {skill.required_knowledge_point}</div>
-                )}
               </div>
 
               <Button block disabled>
@@ -374,7 +368,7 @@ const PetSkills: React.FC = () => {
           宠物技能
         </h2>
         <p style={{ color: '#666', margin: '8px 0 0' }}>
-          学习并提升技能，在战斗中获得优势！技能解锁需要满足等级和知识点要求。
+          学习并提升技能，在战斗中获得优势！技能解锁需要满足等级要求。
         </p>
         {pet && (
           <div style={{ marginTop: 12 }}>
