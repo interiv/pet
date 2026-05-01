@@ -1095,13 +1095,14 @@ router.get('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
 // 保存大模型设置
 router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
   try {
-    const { ai_model, ai_api_key, ai_base_url } = req.body;
+    const { ai_model, ai_api_key, ai_base_url, ai_report_interval_days } = req.body;
     
     const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {
       if (ai_model !== undefined) stmt.run('ai_model', ai_model);
       if (ai_api_key !== undefined) stmt.run('ai_api_key', ai_api_key);
       if (ai_base_url !== undefined) stmt.run('ai_base_url', ai_base_url);
+      if (ai_report_interval_days !== undefined) stmt.run('ai_report_interval_days', String(ai_report_interval_days));
     })();
 
     res.json({ message: '设置保存成功' });
@@ -1362,6 +1363,7 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
       'site_announcement', 'registration_enabled', 'battle_enabled',
       'shop_enabled', 'max_pets_per_user', 'daily_login_gold',
       'battle_stamina_cost', 'ai_model', 'ai_api_key', 'ai_base_url',
+      'ai_report_interval_days',
       'perm_battle_records', 'perm_homework_records', 'perm_purchase_records',
     ];
     const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);

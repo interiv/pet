@@ -268,6 +268,7 @@ router.post('/feed', authenticateToken, (req, res) => {
 
     let updateQuery = '';
     let updateValues = [];
+    let specialEffect = null;
 
     if (userItem.effect_type === 'exp') {
       updateQuery = 'exp = exp + ?, total_exp_earned = total_exp_earned + ?';
@@ -281,6 +282,9 @@ router.post('/feed', authenticateToken, (req, res) => {
     } else if (userItem.effect_type === 'health') {
       updateQuery = 'health = MIN(100, health + ?)';
       updateValues = [userItem.effect_value];
+    } else if (userItem.effect_type === 'stamina') {
+      updateQuery = 'stamina = MIN(100, stamina + ?)';
+      updateValues = [userItem.effect_value];
     } else if (userItem.effect_type === 'attack') {
       updateQuery = 'attack = attack + ?';
       updateValues = [userItem.effect_value];
@@ -290,6 +294,24 @@ router.post('/feed', authenticateToken, (req, res) => {
     } else if (userItem.effect_type === 'speed') {
       updateQuery = 'speed = speed + ?';
       updateValues = [userItem.effect_value];
+    } else if (userItem.effect_type === 'rename') {
+      specialEffect = 'rename';
+    } else if (userItem.effect_type === 'reincarnate') {
+      specialEffect = 'reincarnate';
+    } else if (userItem.effect_type === 'double_exp') {
+      specialEffect = 'double_exp';
+    } else if (userItem.effect_type === 'luck') {
+      specialEffect = 'luck';
+    } else if (userItem.effect_type === 'shield') {
+      specialEffect = 'shield';
+    } else if (userItem.effect_type.startsWith('buff_')) {
+      specialEffect = userItem.effect_type;
+    } else {
+      return res.status(400).json({ error: '该物品无法投喂' });
+    }
+
+    if (specialEffect) {
+      return res.status(400).json({ error: '该物品需要在对应功能中使用，无法直接投喂' });
     }
 
     if (updateQuery) {
@@ -298,9 +320,9 @@ router.post('/feed', authenticateToken, (req, res) => {
       let finalValues = [...updateValues];
 
       if (userItem.effect_type === 'hunger') {
-        fullQuery += ', mood = mood + 5';
+        fullQuery += ', mood = MIN(100, mood + 5)';
       } else if (userItem.effect_type === 'stamina') {
-        fullQuery += ', mood = mood + 3';
+        fullQuery += ', mood = MIN(100, mood + 3)';
       }
 
       fullQuery += ', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?';
@@ -317,6 +339,7 @@ router.post('/feed', authenticateToken, (req, res) => {
     }
 
     const updatedPet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(req.user.userId);
+    checkPetStatus(updatedPet);
     const levelUp = checkLevelUp(updatedPet);
 
     try {

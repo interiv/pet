@@ -682,6 +682,67 @@ router.get('/:id', authenticateToken, (req, res) => {
   }
 });
 
+router.get('/:id/retry-questions', authenticateToken, (req, res) => {
+  try {
+    const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
+    if (!assignment) return res.status(404).json({ error: '作业不存在' });
+
+    const submission = db.prepare('SELECT id, status, attempt_count FROM submissions WHERE assignment_id = ? AND user_id = ?')
+      .get(req.params.id, req.user.userId);
+    if (!submission || submission.status !== 'retry_available') {
+      return res.status(400).json({ error: '当前无法重做错题' });
+    }
+
+    const wrongAnswers = db.prepare(`
+      SELECT qa.question_bank_id, qb.variant_group_id
+      FROM question_answers qa
+      JOIN question_bank qb ON qa.question_bank_id = qb.id
+      WHERE qa.submission_id = ? AND qa.is_correct = 0
+      GROUP BY qa.question_bank_id
+    `).all(submission.id);
+
+    const retryQuestions = [];
+    for (const wa of wrongAnswers) {
+      if (wa.variant_group_id) {
+        const variants = db.prepare(`
+          SELECT id, type, content, options, answer, explanation, analysis, variant_index, difficulty, knowledge_point, subject, topic
+          FROM question_bank WHERE variant_group_id = ? ORDER BY variant_index
+        `).all(wa.variant_group_id);
+
+        const nextVariantIndex = (submission.attempt_count || 0) % 3;
+        const retryQuestion = variants[nextVariantIndex] && variants[nextVariantIndex].id !== wa.question_bank_id
+          ? variants[nextVariantIndex]
+          : variants[(nextVariantIndex + 1) % 3];
+
+        if (retryQuestion) {
+          if (retryQuestion.options) {
+            try { retryQuestion.options = JSON.parse(retryQuestion.options); } catch(e) {}
+          }
+          retryQuestion.original_question_id = wa.question_bank_id;
+          retryQuestions.push(retryQuestion);
+        }
+      } else {
+        const q = db.prepare(`
+          SELECT id, type, content, options, answer, explanation, analysis, difficulty, knowledge_point, subject, topic
+          FROM question_bank WHERE id = ?
+        `).get(wa.question_bank_id);
+        if (q) {
+          if (q.options) {
+            try { q.options = JSON.parse(q.options); } catch(e) {}
+          }
+          q.original_question_id = wa.question_bank_id;
+          retryQuestions.push(q);
+        }
+      }
+    }
+
+    res.json({ retry_questions: retryQuestions, assignment_id: parseInt(req.params.id) });
+  } catch (error) {
+    console.error('获取重做错题错误:', error);
+    res.status(500).json({ error: '获取重做错题失败' });
+  }
+});
+
 router.post('/:id/submit', authenticateToken, async (req, res) => {
   try {
     const { answers } = req.body;
@@ -704,7 +765,7 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
     }
 
     const questions = db.prepare(`
-      SELECT qb.id, qb.type, qb.content, qb.options, qb.answer, qb.explanation, qb.analysis, qb.variant_group_id
+      SELECT qb.id, qb.type, qb.content, qb.options, qb.answer, qb.explanation, qb.analysis, qb.variant_group_id, qb.knowledge_point
       FROM assignment_questions aq
       JOIN question_bank qb ON aq.question_bank_id = qb.id
       WHERE aq.assignment_id = ?
@@ -751,7 +812,7 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
 
         if (!isCorrect && q.variant_group_id) {
           const variants = db.prepare(`
-            SELECT id, content, options, answer, explanation, analysis, variant_index
+            SELECT id, type, content, options, answer, explanation, analysis, variant_index
             FROM question_bank WHERE variant_group_id = ? ORDER BY variant_index
           `).all(q.variant_group_id);
 

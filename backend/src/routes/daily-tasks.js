@@ -106,10 +106,49 @@ router.get('/', authenticateToken, (req, res) => {
 function updateTaskProgress(userId, taskType, progress) {
   try {
     const today = new Date().toISOString().split('T')[0];
-    
-    const taskLog = db.prepare(`
+
+    let dailyTask = db.prepare(`
+      SELECT * FROM daily_tasks WHERE user_id = ? AND date = ?
+    `).get(userId, today);
+
+    if (!dailyTask) {
+      const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+      const yesterdayTask = db.prepare(`
+        SELECT * FROM daily_tasks WHERE user_id = ? AND date = ?
+      `).get(userId, yesterday);
+      let streakDays = 0;
+      if (yesterdayTask && yesterdayTask.tasks_completed >= yesterdayTask.total_tasks) {
+        streakDays = yesterdayTask.streak_days + 1;
+      }
+      db.prepare(`
+        INSERT INTO daily_tasks (user_id, date, tasks_completed, total_tasks, streak_days)
+        VALUES (?, ?, 0, 5, ?)
+      `).run(userId, today, streakDays);
+      dailyTask = db.prepare(`
+        SELECT * FROM daily_tasks WHERE user_id = ? AND date = ?
+      `).get(userId, today);
+    }
+
+    let taskLog = db.prepare(`
       SELECT * FROM daily_task_logs WHERE user_id = ? AND date = ? AND task_type = ?
     `).get(userId, today, taskType);
+
+    if (!taskLog) {
+      const defaultTargets = {
+        login: 1,
+        complete_assignment: 1,
+        feed_pet: 1,
+        correct_rate: 80,
+        review_weak_point: 3
+      };
+      db.prepare(`
+        INSERT INTO daily_task_logs (user_id, date, task_type, task_target, task_progress, is_completed)
+        VALUES (?, ?, ?, ?, 0, 0)
+      `).run(userId, today, taskType, defaultTargets[taskType] || 1);
+      taskLog = db.prepare(`
+        SELECT * FROM daily_task_logs WHERE user_id = ? AND date = ? AND task_type = ?
+      `).get(userId, today, taskType);
+    }
 
     if (!taskLog) return;
 

@@ -125,11 +125,14 @@ router.post('/login', async (req, res) => {
     try {
       const loginCount = db.prepare("SELECT COUNT(*) as c FROM users WHERE id = ? AND last_login IS NOT NULL").get(user.id)?.c || 0;
       checkAndAwardAchievement(user.id, 'login', loginCount > 0 ? loginCount : 1);
-      // 连续登录成就：从 daily_tasks 取 streak_days
       const today = new Date().toISOString().split('T')[0];
       const dailyTask = db.prepare('SELECT streak_days FROM daily_tasks WHERE user_id = ? AND date = ?').get(user.id, today);
       if (dailyTask && dailyTask.streak_days > 0) {
         checkAndAwardAchievement(user.id, 'continuous_login', dailyTask.streak_days);
+      }
+      const petCount = db.prepare('SELECT COUNT(*) as c FROM pets WHERE user_id = ?').get(user.id)?.c || 0;
+      if (petCount > 0) {
+        checkAndAwardAchievement(user.id, 'create_pet', petCount);
       }
     } catch (e) { console.error('成就检查失败:', e); }
 
@@ -145,27 +148,21 @@ router.post('/login', async (req, res) => {
 
       if (hoursSinceLastLogin > 0) {
         let newStamina = Math.min(100, myPet.stamina + hoursSinceLastLogin * 10);
-        let newHunger = Math.max(0, myPet.hunger - hoursSinceLastLogin * 5);
+        let newHunger = Math.max(0, myPet.hunger - hoursSinceLastLogin * 2);
         let newMood = myPet.mood;
         let newHealth = myPet.health;
 
-        // 每日衰减机制：如果超过1天未登录
         if (daysSinceLastLogin > 0) {
-          // 每天额外衰减
-          newHunger = Math.max(0, newHunger - daysSinceLastLogin * 10);
-          newMood = Math.max(0, newMood - daysSinceLastLogin * 10);
-          
-          console.log(`宠物状态每日衰减：${daysSinceLastLogin} 天未登录`);
+          newHunger = Math.max(0, newHunger - daysSinceLastLogin * 5);
+          newMood = Math.max(0, newMood - daysSinceLastLogin * 5);
         }
 
-        // 饱腹度低于30时，心情下降
         if (newHunger < 30) {
-          newMood = Math.max(0, newMood - hoursSinceLastLogin * 3);
+          newMood = Math.max(0, newMood - hoursSinceLastLogin * 1);
         }
 
-        // 饱腹度为0或心情为0持续时，健康值下降
         if (newHunger === 0 || newMood === 0) {
-          newHealth = Math.max(0, newHealth - hoursSinceLastLogin * 10);
+          newHealth = Math.max(0, newHealth - hoursSinceLastLogin * 2);
         }
 
         // 状态异常标记
@@ -181,9 +178,10 @@ router.post('/login', async (req, res) => {
             hunger = ?,
             mood = ?,
             health = ?,
+            status = ?,
             updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
-        `).run(newStamina, newHunger, newMood, newHealth, myPet.id);
+        `).run(newStamina, newHunger, newMood, newHealth, (newHunger <= 0 || newHealth <= 0) ? 'unconscious' : myPet.status, myPet.id);
         
         // 返回状态衰减信息给前端
         myPet.status_debuff = statusDebuff;
@@ -236,6 +234,7 @@ router.get('/me', authenticateToken, (req, res) => {
   try {
     const user = db.prepare(`
       SELECT u.id, u.username, u.email, u.role, u.class_id, u.avatar, u.created_at, u.last_login,
+             u.gold, u.total_gold_earned,
              c.slug AS class_slug, c.name AS class_name, c.school_id,
              s.name AS school_name, s.theme_color AS school_theme
       FROM users u

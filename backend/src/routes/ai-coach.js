@@ -119,6 +119,27 @@ router.get('/learning-plan', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const days = parseInt(req.query.days) || 14;
+    const force = req.query.force === '1';
+
+    const intervalSetting = db.prepare("SELECT value FROM settings WHERE key = 'ai_report_interval_days'").get();
+    const intervalDays = parseInt(intervalSetting?.value) || 3;
+
+    const cached = db.prepare('SELECT * FROM ai_reports WHERE user_id = ? AND report_type = ?').get(userId, 'learning_plan');
+    if (cached && !force) {
+      const generatedAt = new Date(cached.generated_at);
+      const now = new Date();
+      const daysSinceGenerated = (now - generatedAt) / (1000 * 60 * 60 * 24);
+      if (daysSinceGenerated < intervalDays) {
+        return res.json({
+          plan: JSON.parse(cached.content),
+          empty: false,
+          context: cached.context ? JSON.parse(cached.context) : {},
+          generated_at: cached.generated_at,
+          can_regenerate_at: new Date(generatedAt.getTime() + intervalDays * 24 * 60 * 60 * 1000).toISOString(),
+          interval_days: intervalDays
+        });
+      }
+    }
 
     const ctx = collectUserContext(userId, days);
 
@@ -177,16 +198,29 @@ ${wrongSummary}
     const aiText = await callAI(prompt);
     const parsed = parseJSON(aiText);
 
+    const contextData = {
+      days,
+      total_answered: ctx.totalAnswered.cnt,
+      weak_point_count: ctx.weakPoints.length,
+      unreviewed_wrong_count: ctx.unreviewedWrong.length
+    };
+
+    db.prepare(`
+      INSERT INTO ai_reports (user_id, report_type, content, context, generated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id, report_type) DO UPDATE SET
+        content = excluded.content,
+        context = excluded.context,
+        generated_at = CURRENT_TIMESTAMP
+    `).run(userId, 'learning_plan', JSON.stringify(parsed), JSON.stringify(contextData));
+
     res.json({
       plan: parsed,
       empty: false,
-      context: {
-        days,
-        total_answered: ctx.totalAnswered.cnt,
-        weak_point_count: ctx.weakPoints.length,
-        unreviewed_wrong_count: ctx.unreviewedWrong.length
-      },
-      generated_at: new Date().toISOString()
+      context: contextData,
+      generated_at: new Date().toISOString(),
+      can_regenerate_at: new Date(Date.now() + intervalDays * 24 * 60 * 60 * 1000).toISOString(),
+      interval_days: intervalDays
     });
   } catch (error) {
     console.error('生成学习规划失败:', error.message);
@@ -202,6 +236,27 @@ router.get('/diagnosis', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const days = parseInt(req.query.days) || 30;
+    const force = req.query.force === '1';
+
+    const intervalSetting = db.prepare("SELECT value FROM settings WHERE key = 'ai_report_interval_days'").get();
+    const intervalDays = parseInt(intervalSetting?.value) || 3;
+
+    const cached = db.prepare('SELECT * FROM ai_reports WHERE user_id = ? AND report_type = ?').get(userId, 'diagnosis');
+    if (cached && !force) {
+      const generatedAt = new Date(cached.generated_at);
+      const now = new Date();
+      const daysSinceGenerated = (now - generatedAt) / (1000 * 60 * 60 * 24);
+      if (daysSinceGenerated < intervalDays) {
+        return res.json({
+          report: JSON.parse(cached.content),
+          empty: false,
+          context: cached.context ? JSON.parse(cached.context) : {},
+          generated_at: cached.generated_at,
+          can_regenerate_at: new Date(generatedAt.getTime() + intervalDays * 24 * 60 * 60 * 1000).toISOString(),
+          interval_days: intervalDays
+        });
+      }
+    }
 
     const ctx = collectUserContext(userId, days);
 
@@ -259,20 +314,33 @@ router.get('/diagnosis', authenticateToken, async (req, res) => {
     const aiText = await callAI(prompt);
     const parsed = parseJSON(aiText);
 
+    const contextData = {
+      days,
+      total_answered: ctx.totalAnswered.cnt,
+      overall_accuracy,
+      weak_point_count: ctx.weakPoints.length,
+      mastered_count: ctx.masteredPoints.length,
+      wrong_question_count: ctx.wrongQuestions.length,
+      unreviewed_wrong_count: ctx.unreviewedWrong.length,
+      subject_distribution: ctx.subjectDist
+    };
+
+    db.prepare(`
+      INSERT INTO ai_reports (user_id, report_type, content, context, generated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(user_id, report_type) DO UPDATE SET
+        content = excluded.content,
+        context = excluded.context,
+        generated_at = CURRENT_TIMESTAMP
+    `).run(userId, 'diagnosis', JSON.stringify(parsed), JSON.stringify(contextData));
+
     res.json({
       report: parsed,
       empty: false,
-      context: {
-        days,
-        total_answered: ctx.totalAnswered.cnt,
-        overall_accuracy,
-        weak_point_count: ctx.weakPoints.length,
-        mastered_count: ctx.masteredPoints.length,
-        wrong_question_count: ctx.wrongQuestions.length,
-        unreviewed_wrong_count: ctx.unreviewedWrong.length,
-        subject_distribution: ctx.subjectDist
-      },
-      generated_at: new Date().toISOString()
+      context: contextData,
+      generated_at: new Date().toISOString(),
+      can_regenerate_at: new Date(Date.now() + intervalDays * 24 * 60 * 60 * 1000).toISOString(),
+      interval_days: intervalDays
     });
   } catch (error) {
     console.error('生成诊断报告失败:', error.message);

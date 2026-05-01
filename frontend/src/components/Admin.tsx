@@ -1446,6 +1446,7 @@ const AISettings: React.FC = () => {
         ai_model: data.ai_model || 'gpt-3.5-turbo',
         ai_base_url: data.ai_base_url || 'https://api.openai.com/v1',
         ai_api_key: data.ai_api_key || '',
+        ai_report_interval_days: data.ai_report_interval_days || '3',
       });
     } catch (error) {
       message.error('加载设置失败');
@@ -1482,6 +1483,9 @@ const AISettings: React.FC = () => {
         </Form.Item>
         <Form.Item name="ai_api_key" label="API Key" rules={[{ required: true, message: '请输入API Key' }]}>
           <Input.Password placeholder="输入 API 密钥" />
+        </Form.Item>
+        <Form.Item name="ai_report_interval_days" label="AI报告重新生成间隔（天）" rules={[{ required: true, message: '请输入间隔天数' }]} extra="学生生成学习规划或诊断报告后，需间隔多少天才可重新生成。默认3天。">
+          <Input type="number" min={1} max={30} placeholder="3" />
         </Form.Item>
         <Form.Item>
           <Button type="primary" htmlType="submit" loading={loading}>保存设置</Button>

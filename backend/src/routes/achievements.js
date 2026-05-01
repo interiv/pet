@@ -33,6 +33,12 @@ function checkAndAwardAchievement(userId, achievementType, currentValue) {
         'INSERT INTO user_achievements (user_id, achievement_id, completed_at) VALUES (?, ?, CURRENT_TIMESTAMP)'
       ).run(userId, ach.id);
 
+      try {
+        db.prepare(
+          "INSERT INTO notifications (user_id, type, title, content, source_type, source_id) VALUES (?, 'achievement', ?, ?, 'achievement', ?)"
+        ).run(userId, '🎉 成就解锁！', `恭喜解锁成就「${ach.name}」！${ach.description}`, ach.id);
+      } catch (notifErr) { console.error('成就通知创建失败:', notifErr); }
+
       if (ach.reward_type === 'gold') {
         db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(ach.reward_value, ach.reward_value, userId);
       } else if (ach.reward_type === 'exp') {
@@ -113,14 +119,88 @@ router.get('/status', authenticateToken, (req, res) => {
   try {
     const allAchievements = db.prepare('SELECT * FROM achievements ORDER BY sort_order, id').all();
     const completedAchievements = db.prepare(
-      'SELECT achievement_id FROM user_achievements WHERE user_id = ?'
+      'SELECT achievement_id, completed_at FROM user_achievements WHERE user_id = ?'
     ).all(req.user.userId);
-    const completedIds = completedAchievements.map(a => a.achievement_id);
+    const completedMap = {};
+    completedAchievements.forEach(a => { completedMap[a.achievement_id] = a.completed_at; });
 
-    const status = allAchievements.map(a => ({
-      ...a,
-      completed: completedIds.includes(a.id)
-    }));
+    const status = allAchievements.map(a => {
+      const completed = !!completedMap[a.id];
+      let progress = 0;
+      try {
+        const cond = JSON.parse(a.condition);
+        const thresholdKey = Object.keys(cond).find(k => k !== 'type');
+        const threshold = cond[thresholdKey] || 1;
+        let currentValue = 0;
+        switch (cond.type) {
+          case 'submit_assignment':
+            currentValue = db.prepare('SELECT COUNT(*) as c FROM submissions WHERE user_id = ?').get(req.user.userId)?.c || 0;
+            break;
+          case 'review_wrong':
+            currentValue = db.prepare('SELECT COUNT(*) as c FROM wrong_questions WHERE user_id = ? AND reviewed = 1').get(req.user.userId)?.c || 0;
+            break;
+          case 'total_gold':
+            currentValue = db.prepare('SELECT total_gold_earned FROM users WHERE id = ?').get(req.user.userId)?.total_gold_earned || 0;
+            break;
+          case 'login':
+            currentValue = db.prepare('SELECT COUNT(DISTINCT date) as c FROM daily_tasks WHERE user_id = ?').get(req.user.userId)?.c || 0;
+            break;
+          case 'complete_daily_task':
+            currentValue = db.prepare("SELECT COUNT(*) as c FROM daily_task_logs WHERE user_id = ? AND is_completed = 1").get(req.user.userId)?.c || 0;
+            break;
+          case 'add_friends':
+            currentValue = db.prepare('SELECT COUNT(*) as c FROM friendships WHERE user_id = ? OR friend_id = ?').get(req.user.userId, req.user.userId)?.c || 0;
+            break;
+          case 'create_pet':
+            currentValue = db.prepare('SELECT COUNT(*) as c FROM pets WHERE user_id = ?').get(req.user.userId)?.c || 0;
+            break;
+          case 'feed_pet':
+            currentValue = db.prepare("SELECT COUNT(*) as c FROM gold_transactions WHERE user_id = ? AND reason LIKE '%投喂%'").get(req.user.userId)?.c || 0;
+            break;
+          case 'win_battle':
+            currentValue = db.prepare("SELECT COUNT(*) as c FROM battle_results WHERE winner_id = ?").get(req.user.userId)?.c || 0;
+            break;
+          case 'lose_battle':
+            currentValue = db.prepare("SELECT COUNT(*) as c FROM battle_results WHERE loser_id = ?").get(req.user.userId)?.c || 0;
+            break;
+          case 'perfect_score':
+            currentValue = db.prepare("SELECT COUNT(*) as c FROM submissions WHERE user_id = ? AND total_score = total_max_score").get(req.user.userId)?.c || 0;
+            break;
+          case 'high_score':
+            const minScore = cond.score || 90;
+            currentValue = db.prepare("SELECT COUNT(*) as c FROM submissions WHERE user_id = ? AND total_score >= ?").get(req.user.userId, minScore)?.c || 0;
+            break;
+          case 'pet_level':
+            currentValue = db.prepare('SELECT MAX(level) as lv FROM pets WHERE user_id = ?').get(req.user.userId)?.lv || 0;
+            break;
+          case 'total_exp':
+            currentValue = db.prepare('SELECT COALESCE(SUM(total_exp_earned),0) as v FROM pets WHERE user_id = ?').get(req.user.userId)?.v || 0;
+            break;
+          case 'continuous_login':
+            currentValue = db.prepare("SELECT MAX(streak_days) as d FROM daily_tasks WHERE user_id = ?").get(req.user.userId)?.d || 0;
+            break;
+          case 'collect_equipment':
+            currentValue = db.prepare("SELECT COUNT(DISTINCT item_id) as c FROM user_items WHERE user_id = ?").get(req.user.userId)?.c || 0;
+            break;
+          case 'send_message':
+            currentValue = db.prepare("SELECT COUNT(*) as c FROM chat_messages WHERE sender_id = ?").get(req.user.userId)?.c || 0;
+            break;
+          case 'post_count':
+          case 'forum_post':
+            currentValue = db.prepare("SELECT COUNT(*) as c FROM posts WHERE user_id = ?").get(req.user.userId)?.c || 0;
+            break;
+          default:
+            break;
+        }
+        progress = Math.min(Math.round((currentValue / threshold) * 100), completed ? 100 : 100);
+      } catch (e) { /* ignore */ }
+      return {
+        ...a,
+        completed,
+        completed_at: completedMap[a.id] || null,
+        progress: completed ? 100 : progress
+      };
+    });
 
     res.json({ achievements: status });
   } catch (error) {

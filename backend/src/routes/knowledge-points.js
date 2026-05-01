@@ -486,7 +486,7 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
         FROM question_answers qa
         JOIN question_bank qb ON qa.question_bank_id = qb.id
         JOIN submissions s ON qa.submission_id = s.id
-        WHERE s.user_id IN (${placeholders}) AND DATE(qa.answered_at) >= ?
+        WHERE s.user_id IN (${placeholders}) AND DATE(qa.answered_at, '+8 hours') >= ?
         GROUP BY qb.subject
         ORDER BY total DESC
       `).all(...studentIds, startDateStr);
@@ -501,7 +501,7 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
         FROM question_answers qa
         JOIN question_bank qb ON qa.question_bank_id = qb.id
         JOIN submissions s ON qa.submission_id = s.id
-        WHERE s.user_id IN (${placeholders}) AND DATE(qa.answered_at) >= ? AND qb.subject IN (${subjectPlaceholders})
+        WHERE s.user_id IN (${placeholders}) AND DATE(qa.answered_at, '+8 hours') >= ? AND qb.subject IN (${subjectPlaceholders})
         GROUP BY qb.subject
         ORDER BY total DESC
       `).all(...studentIds, startDateStr, ...teacherSubjects);
@@ -690,7 +690,7 @@ router.get('/class/:classId/student/:studentId', authenticateToken, (req, res) =
         FROM question_answers qa
         JOIN question_bank qb ON qa.question_bank_id = qb.id
         JOIN submissions s ON qa.submission_id = s.id
-        WHERE s.user_id = ? AND DATE(qa.answered_at) >= ?
+        WHERE s.user_id = ? AND DATE(qa.answered_at, '+8 hours') >= ?
         GROUP BY qb.subject
         ORDER BY total DESC
       `).all(studentId, startDateStr);
@@ -705,7 +705,7 @@ router.get('/class/:classId/student/:studentId', authenticateToken, (req, res) =
         FROM question_answers qa
         JOIN question_bank qb ON qa.question_bank_id = qb.id
         JOIN submissions s ON qa.submission_id = s.id
-        WHERE s.user_id = ? AND DATE(qa.answered_at) >= ? AND qb.subject IN (${subjectPlaceholders})
+        WHERE s.user_id = ? AND DATE(qa.answered_at, '+8 hours') >= ? AND qb.subject IN (${subjectPlaceholders})
         GROUP BY qb.subject
         ORDER BY total DESC
       `).all(studentId, startDateStr, ...teacherSubjects);
@@ -743,23 +743,23 @@ router.get('/learning-time', authenticateToken, (req, res) => {
 
     // 每日答题数
     const daily = db.prepare(`
-      SELECT DATE(qa.answered_at) AS date,
+      SELECT DATE(qa.answered_at, '+8 hours') AS date,
              COUNT(qa.id) AS answers,
              SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS correct
       FROM question_answers qa
       JOIN submissions s ON qa.submission_id = s.id
-      WHERE s.user_id = ? AND DATE(qa.answered_at) >= ?
-      GROUP BY DATE(qa.answered_at)
+      WHERE s.user_id = ? AND DATE(qa.answered_at, '+8 hours') >= ?
+      GROUP BY DATE(qa.answered_at, '+8 hours')
       ORDER BY date ASC
     `).all(userId, startDateStr);
 
     // 周天分布（SQLite：strftime('%w') 返回 0=周日 ... 6=周六）
     const weekdayRows = db.prepare(`
-      SELECT CAST(strftime('%w', qa.answered_at) AS INTEGER) AS weekday_idx,
+      SELECT CAST(strftime('%w', qa.answered_at, '+8 hours') AS INTEGER) AS weekday_idx,
              COUNT(qa.id) AS answers
       FROM question_answers qa
       JOIN submissions s ON qa.submission_id = s.id
-      WHERE s.user_id = ? AND DATE(qa.answered_at) >= ?
+      WHERE s.user_id = ? AND DATE(qa.answered_at, '+8 hours') >= ?
       GROUP BY weekday_idx
     `).all(userId, startDateStr);
     const weekdayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
@@ -774,11 +774,11 @@ router.get('/learning-time', authenticateToken, (req, res) => {
 
     // 小时分布
     const hourRows = db.prepare(`
-      SELECT CAST(strftime('%H', qa.answered_at) AS INTEGER) AS hour,
+      SELECT CAST(strftime('%H', qa.answered_at, '+8 hours') AS INTEGER) AS hour,
              COUNT(qa.id) AS answers
       FROM question_answers qa
       JOIN submissions s ON qa.submission_id = s.id
-      WHERE s.user_id = ? AND DATE(qa.answered_at) >= ?
+      WHERE s.user_id = ? AND DATE(qa.answered_at, '+8 hours') >= ?
       GROUP BY hour
       ORDER BY hour ASC
     `).all(userId, startDateStr);
@@ -797,7 +797,7 @@ router.get('/learning-time', authenticateToken, (req, res) => {
       FROM question_answers qa
       JOIN submissions s ON qa.submission_id = s.id
       JOIN question_bank qb ON qa.question_bank_id = qb.id
-      WHERE s.user_id = ? AND DATE(qa.answered_at) >= ?
+      WHERE s.user_id = ? AND DATE(qa.answered_at, '+8 hours') >= ?
       GROUP BY qb.subject
       ORDER BY answers DESC
     `).all(userId, startDateStr);

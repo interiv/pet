@@ -48,6 +48,7 @@ const Home: React.FC = () => {
 
   const [siteSettings, setSiteSettings] = useState<any>({});
   const [activeMenu, setActiveMenu] = useState('home');
+  const [studyDefaultTab, setStudyDefaultTab] = useState<'assignments' | 'wrong' | 'daily' | 'dashboard'>('assignments');
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [allPets, setAllPets] = useState<any[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
@@ -599,7 +600,14 @@ const Home: React.FC = () => {
   ];
 
   const renderContent = () => {
-    if (activeMenu === 'study') return <StudyCenter onNavigate={setActiveMenu} />;
+    if (activeMenu === 'study') return <StudyCenter key={studyDefaultTab} defaultTab={studyDefaultTab} onNavigate={(menu: string) => {
+      if (menu === 'wrong_questions') {
+        setStudyDefaultTab('wrong');
+        setActiveMenu('study');
+      } else {
+        setActiveMenu(menu);
+      }
+    }} />;
     if (activeMenu === 'pet') return <PetCenter onNavigate={setActiveMenu} />;
     if (activeMenu === 'arena') return <Arena />;
     if (activeMenu === 'achievement') return <AchievementCenter />;
@@ -736,6 +744,7 @@ const Home: React.FC = () => {
                 items={menuItems}
                 onClick={({ key }) => {
                   if (key === 'profile') return;
+                  if (key === 'study') setStudyDefaultTab('assignments');
                   setActiveMenu(key);
                   setMobileMenuOpen(false);
                 }}
@@ -768,6 +777,7 @@ const Home: React.FC = () => {
                 items={menuItems}
                 onClick={({ key}) => {
                   if (key === 'profile') return;
+                  if (key === 'study') setStudyDefaultTab('assignments');
                   setActiveMenu(key);
                 }}
               />

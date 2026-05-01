@@ -100,7 +100,7 @@ const WrongQuestions: React.FC = () => {
       const info = map[t] || { label: t, color: 'default' };
       return <Tag color={info.color}>{info.label}</Tag>;
     }},
-    { title: '你的答案', dataIndex: 'user_answer', width: 100, render: (a: any) => <span style={{ color: '#ff4d4f' }}>{String(a)}</span> },
+    { title: '你的答案', dataIndex: 'wrong_answer', width: 100, render: (a: any) => <span style={{ color: '#ff4d4f' }}>{String(a)}</span> },
     { title: '正确答案', dataIndex: 'correct_answer', width: 100, render: (a: any) => <span style={{ color: '#52c41a', fontWeight: 500 }}>{String(a)}</span> },
     {
       title: '状态',
@@ -251,7 +251,7 @@ const WrongQuestions: React.FC = () => {
             <Card size="small" title="答题分析">
               <Row gutter={[16, 8]}>
                 <Col span={12}>
-                  <strong style={{ color: '#ff4d4f' }}>你的答案：</strong>{String(currentDetail.user_answer)}
+                  <strong style={{ color: '#ff4d4f' }}>你的答案：</strong>{String(currentDetail.wrong_answer)}
                 </Col>
                 <Col span={12}>
                   <strong style={{ color: '#52c41a' }}>正确答案：</strong>{String(currentDetail.correct_answer)}

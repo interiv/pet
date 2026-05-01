@@ -134,6 +134,9 @@ export const assignmentAPI = {
 
   cancelAssignment: (id: number) =>
     api.patch(`/assignments/${id}/cancel`),
+
+  getRetryQuestions: (id: number) =>
+    api.get(`/assignments/${id}/retry-questions`),
 };
 
 // 知识点相关 API
@@ -156,8 +159,8 @@ export const knowledgePointAPI = {
 
 // AI学习教练 API
 export const aiCoachAPI = {
-  getLearningPlan: (params?: { days?: number }) => api.get('/ai-coach/learning-plan', { params }),
-  getDiagnosis: (params?: { days?: number }) => api.get('/ai-coach/diagnosis', { params }),
+  getLearningPlan: (params?: { days?: number; force?: string }) => api.get('/ai-coach/learning-plan', { params }),
+  getDiagnosis: (params?: { days?: number; force?: string }) => api.get('/ai-coach/diagnosis', { params }),
 };
 
 // 战斗相关 API

@@ -14,7 +14,7 @@ import {
   WarningOutlined,
 } from '@ant-design/icons';
 import { petAPI, equipmentAPI, petExtendedAPI, itemAPI } from '../utils/api';
-import { usePetStore } from '../store/authStore';
+import { usePetStore, useAuthStore } from '../store/authStore';
 import { EquipmentPanel } from './EquipmentPanel';
 
 const useMobile = () => {
@@ -36,6 +36,7 @@ interface PetDisplayProps {
 
 const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
   const { setPet } = usePetStore();
+  const { checkAuth } = useAuthStore();
   const isMobile = useMobile();
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState(pet?.name || '');
@@ -101,6 +102,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
       const response = await petAPI.getMyPet();
       setPet(response.data.pet);
       loadEquipments();
+      checkAuth();
     } catch (error) {
       console.error(error);
     }

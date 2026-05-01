@@ -67,16 +67,18 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
     }
   };
 
-  const renderStats = (statsJson: string) => {
+  const renderStats = (statsJson: string, level: number = 1) => {
     try {
       const stats = JSON.parse(statsJson);
+      const multiplier = 1 + (level - 1) * 0.2;
       return Object.keys(stats).map(key => {
         let name = key;
         if (key === 'attack') name = '攻击力';
         if (key === 'defense') name = '防御力';
         if (key === 'speed') name = '速度';
         if (key === 'crit_rate') name = '暴击率';
-        return <Tag color="orange" key={key}>{name} +{stats[key]}</Tag>;
+        const actualValue = Math.floor(stats[key] * multiplier);
+        return <Tag color="orange" key={key}>{name} +{actualValue}{level > 1 ? <span style={{color:'#52c41a',fontSize:10}}> (Lv{level})</span> : ''}</Tag>;
       });
     } catch {
       return null;
@@ -129,7 +131,7 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
                       {equipped.set_name && <Tag color="purple" style={{ marginLeft: 4 }}>{equipped.set_name}</Tag>}
                     </div>
                     <div style={{ marginBottom: 12, minHeight: 48, display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 4 }}>
-                      {renderStats(equipped.stats_bonus)}
+                      {renderStats(equipped.stats_bonus, equipped.level)}
                     </div>
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
                       <Button
@@ -146,8 +148,9 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
                         icon={<ArrowUpOutlined />} 
                         onClick={() => handleUpgrade(equipped.user_equip_id)}
                         style={{ background: '#52c41a', borderColor: '#52c41a' }}
+                        disabled={equipped.level >= 10}
                       >
-                        升级
+                        升级 {equipped.level < 10 ? `(${equipped.level * 100}💰)` : '(满级)'}
                       </Button>
                     </div>
                   </div>
@@ -237,7 +240,7 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
                   </div>
                   <Tag color={slotColors[item.slot]} style={{ marginTop: 4, marginBottom: 8 }}>{slotNames[item.slot]}</Tag>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 12 }}>
-                    {renderStats(item.stats_bonus)}
+                    {renderStats(item.stats_bonus, item.level)}
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <Button size="small" type="primary" onClick={() => handleEquip(item.user_equip_id)} style={{ flex: 1 }}>

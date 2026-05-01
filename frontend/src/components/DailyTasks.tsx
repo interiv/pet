@@ -14,6 +14,8 @@ import {
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
+import { useAuthStore } from '../store/authStore';
+
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
 
 interface DailyTask {
@@ -40,6 +42,7 @@ interface DailyTaskData {
 
 const DailyTasks: React.FC = () => {
   const navigate = useNavigate();
+  const { checkAuth } = useAuthStore();
   const [loading, setLoading] = useState(false);
   const [taskData, setTaskData] = useState<DailyTaskData | null>(null);
   const [claiming, setClaiming] = useState<number | null>(null);
@@ -87,6 +90,7 @@ const DailyTasks: React.FC = () => {
       );
 
       message.success(response.data.message);
+      checkAuth();
       
       if (response.data.all_completed) {
         message.success(`🎉 恭喜！今日所有任务完成！连续${response.data.streak_days}天！`);

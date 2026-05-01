@@ -13,15 +13,9 @@ interface Achievement {
   condition?: string;
   reward_type?: string;
   reward_value?: number;
-}
-
-interface UserAchievement {
-  id: number;
-  achievement_id: number;
-  completed: boolean;
+  completed?: boolean;
   progress?: number;
   completed_at?: string;
-  achievement?: Achievement;
 }
 
 const categoryNames: Record<string, string> = {
@@ -45,7 +39,6 @@ const categoryColors: Record<string, string> = {
 const Achievements: React.FC = () => {
   const { isAuthenticated } = useAuthStore();
   const [achievements, setAchievements] = useState<Achievement[]>([]);
-  const [myAchievements, setMyAchievements] = useState<UserAchievement[]>([]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -56,28 +49,16 @@ const Achievements: React.FC = () => {
   const loadAchievements = async () => {
     if (!isAuthenticated) return;
     try {
-      const [allRes, myRes] = await Promise.all([
-        achievementAPI.getAchievements(),
-        achievementAPI.getAchievementStatus()
-      ]);
-      setAchievements(allRes.data.achievements || []);
-      setMyAchievements(myRes.data.achievements || []);
+      const res = await achievementAPI.getAchievementStatus();
+      setAchievements(res.data.achievements || []);
     } catch (error) {
       console.error('加载成就失败:', error);
       message.error('加载成就失败');
     }
   };
 
-  const isCompleted = (achievementId: number) => {
-    return myAchievements.find(ma => ma.achievement_id === achievementId && ma.completed);
-  };
-
-  const getUserAchievement = (achievementId: number) => {
-    return myAchievements.find(ma => ma.achievement_id === achievementId);
-  };
-
   const getCompletedCount = () => {
-    return myAchievements.filter(ma => ma.completed).length;
+    return achievements.filter(a => a.completed).length;
   };
 
   const getTotalCount = () => {
@@ -87,18 +68,16 @@ const Achievements: React.FC = () => {
   const getProgressByCategory = (category: string) => {
     const categoryAchievements = achievements.filter(a => (a.category || 'special') === category);
     if (categoryAchievements.length === 0) return 0;
-    const completed = categoryAchievements.filter(a => isCompleted(a.id));
+    const completed = categoryAchievements.filter(a => a.completed);
     return Math.round((completed.length / categoryAchievements.length) * 100);
   };
 
   const renderAchievementCard = (achievement: Achievement) => {
-    const completed = isCompleted(achievement.id);
-    const userAch = getUserAchievement(achievement.id);
+    const completed = !!achievement.completed;
     const category = achievement.category || 'special';
-    const completedAt = userAch?.completed_at;
 
     return (
-      <Tooltip title={completed && completedAt ? `完成时间: ${new Date(completedAt).toLocaleString('zh-CN')}` : ''}>
+      <Tooltip title={completed && achievement.completed_at ? `完成时间: ${new Date(achievement.completed_at).toLocaleString('zh-CN')}` : ''}>
         <Badge.Ribbon
           text={completed ? <><CheckCircleOutlined /> 已解锁</> : <><LockOutlined /> 未解锁</>}
           color={completed ? 'green' : 'default'}
@@ -126,14 +105,21 @@ const Achievements: React.FC = () => {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                background: completed ? '#fff' : '#f5f5f5',
+                background: completed ? 'linear-gradient(135deg, #fff7e6 0%, #ffe58f 100%)' : '#e8e8e8',
                 borderRadius: 12,
-                filter: completed ? 'none' : 'grayscale(100%)',
-                opacity: completed ? 1 : 0.5,
-                boxShadow: completed ? '0 4px 12px rgba(82, 196, 26, 0.3)' : 'none',
-                transition: 'all 0.3s ease'
+                opacity: completed ? 1 : 0.35,
+                boxShadow: completed ? '0 4px 12px rgba(250, 173, 20, 0.4)' : 'none',
+                transition: 'all 0.3s ease',
+                position: 'relative'
               }}>
                 {achievement.icon || '🏆'}
+                {completed && <div style={{
+                  position: 'absolute', top: -4, right: -4,
+                  width: 18, height: 18, borderRadius: '50%',
+                  background: '#52c41a', display: 'flex',
+                  alignItems: 'center', justifyContent: 'center',
+                  fontSize: 10, color: '#fff'
+                }}><CheckCircleOutlined /></div>}
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
@@ -155,12 +141,12 @@ const Achievements: React.FC = () => {
                     </Tag>
                   )}
                 </div>
-                {userAch?.progress !== undefined && !completed && (
+                {achievement.progress !== undefined && (
                   <Progress
-                    percent={userAch.progress}
+                    percent={achievement.progress}
                     size="small"
                     style={{ marginTop: 8, marginBottom: 0 }}
-                    strokeColor="#52c41a"
+                    strokeColor={completed ? '#52c41a' : '#1677ff'}
                     format={(percent) => `${percent}%`}
                   />
                 )}

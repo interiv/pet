@@ -67,7 +67,7 @@ interface AssignmentsProps {
 }
 
 const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
-  const { user } = useAuthStore();
+  const { user, checkAuth } = useAuthStore();
   const [assignments, setAssignments] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [selectedClass, setSelectedClass] = useState<number | null>(null);
@@ -379,6 +379,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       
       if (res.data.success && !res.data.message?.includes('等待')) {
         message.success(`提交成功！得分：${res.data.total_score}分，获得 ${res.data.gold_reward} 金币`);
+        checkAuth();
         
         setCelebrationData({
           expReward: res.data.exp_reward || 0,
@@ -594,6 +595,52 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     setIsDoModalVisible(true);
     setSubmitResult(null);
     message.info(`请重新作答 ${retryQuestions.length} 道错题`);
+  };
+
+  const handleRetryWrongFromList = async (record: any) => {
+    try {
+      const res = await assignmentAPI.getRetryQuestions(record.id);
+      const retryQuestions = res.data.retry_questions || [];
+      if (retryQuestions.length === 0) {
+        message.info('没有需要重做的错题');
+        return;
+      }
+
+      const qOrder = retryQuestions.map((_: any, i: number) => i);
+      for (let i = qOrder.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [qOrder[i], qOrder[j]] = [qOrder[j], qOrder[i]];
+      }
+      setShuffledQuestionOrder(qOrder);
+
+      const optMap: Record<number, number[]> = {};
+      for (const q of retryQuestions) {
+        if (q.options && q.options.length > 0) {
+          const indices = q.options.map((_: any, i: number) => i);
+          for (let i = indices.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [indices[i], indices[j]] = [indices[j], indices[i]];
+          }
+          optMap[q.id] = indices;
+        }
+      }
+      setShuffledOptionMap(optMap);
+
+      setCurrentAssignment({
+        id: record.id,
+        title: record.title,
+        questions: retryQuestions,
+        isRetryMode: true
+      });
+      setStudentAnswers({});
+      setUploadedImages({});
+      submitForm.resetFields();
+      setProgressMilestones(new Set());
+      setIsDoModalVisible(true);
+      message.info(`请重新作答 ${retryQuestions.length} 道错题`);
+    } catch (e: any) {
+      message.error(e.response?.data?.error || '获取重做错题失败');
+    }
   };
 
   const handleViewStatistics = async (record: any) => {
@@ -870,7 +917,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           </div>
           <div style={{ color: '#666', marginBottom: 6, lineHeight: 1.6 }}>{r.question_content}</div>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            <span>你的答案：<span style={{ color: r.is_correct ? '#52c41a' : '#ff4d4f', fontWeight: 600, fontSize: 14 }}>{String(r.user_answer || '(未作答)')}</span></span>
+            <span>你的答案：<span style={{ color: r.is_correct ? '#52c41a' : '#ff4d4f', fontWeight: 600, fontSize: 14 }}>{String(r.student_answer || '(未作答)')}</span></span>
             {!r.is_correct && r.correct_answer && (
               <span>正确答案：<span style={{ color: '#52c41a', fontWeight: 600, fontSize: 14 }}>{String(r.correct_answer)}</span></span>
             )}
@@ -952,7 +999,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             <Button type="primary" size="small" danger onClick={() => handleStartDoing(record)}>补交</Button>
           )}
           {!isTeacher && record.my_submission_id && record.my_submission_status === 'retry_available' && (
-            <Button type="primary" size="small" style={{ background: '#faad14', borderColor: '#faad14' }} onClick={() => handleStartDoing(record)}>重做错题</Button>
+            <Button type="primary" size="small" style={{ background: '#faad14', borderColor: '#faad14' }} onClick={() => handleRetryWrongFromList(record)}>重做错题</Button>
           )}
           {!isTeacher && record.my_submission_id && (
             <Button size="small" icon={<EyeOutlined />} onClick={async () => {

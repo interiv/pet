@@ -46,10 +46,14 @@ const LearningDashboard: React.FC = () => {
   const [aiPlan, setAiPlan] = useState<any>(null);
   const [aiPlanLoading, setAiPlanLoading] = useState(false);
   const [aiPlanGeneratedAt, setAiPlanGeneratedAt] = useState<string | null>(null);
+  const [aiPlanCanRegenerateAt, setAiPlanCanRegenerateAt] = useState<string | null>(null);
+  const [aiPlanIntervalDays, setAiPlanIntervalDays] = useState<number>(3);
   const [diagnosis, setDiagnosis] = useState<any>(null);
   const [diagnosisContext, setDiagnosisContext] = useState<any>(null);
   const [diagnosisLoading, setDiagnosisLoading] = useState(false);
   const [diagnosisGeneratedAt, setDiagnosisGeneratedAt] = useState<string | null>(null);
+  const [diagnosisCanRegenerateAt, setDiagnosisCanRegenerateAt] = useState<string | null>(null);
+  const [diagnosisIntervalDays, setDiagnosisIntervalDays] = useState<number>(3);
   const [reviewEffect, setReviewEffect] = useState<any>(null);
   const [reviewEffectLoading, setReviewEffectLoading] = useState(false);
   const [heatmapData, setHeatmapData] = useState<any[]>([]);
@@ -70,6 +74,11 @@ const LearningDashboard: React.FC = () => {
   useEffect(() => {
     loadLearningTime();
   }, [days]);
+
+  useEffect(() => {
+    loadAIPlan();
+    loadDiagnosis();
+  }, []);
 
   const loadLearningTime = async () => {
     try {
@@ -156,17 +165,23 @@ const LearningDashboard: React.FC = () => {
     return '#f5222d';
   };
 
-  const loadAIPlan = async () => {
+  const loadAIPlan = async (force = false) => {
     try {
       setAiPlanLoading(true);
-      const res = await aiCoachAPI.getLearningPlan({ days: 14 });
+      const res = await aiCoachAPI.getLearningPlan({ days: 14, force: force ? '1' : undefined });
       if (res.data.empty) {
-        message.info(res.data.message || '暂无数据生成规划');
         setAiPlan(null);
+        if (force) message.info(res.data.message || '暂无数据生成规划');
       } else {
         setAiPlan(res.data.plan);
         setAiPlanGeneratedAt(res.data.generated_at);
-        message.success('AI学习规划已生成');
+        setAiPlanCanRegenerateAt(res.data.can_regenerate_at || null);
+        setAiPlanIntervalDays(res.data.interval_days || 3);
+        if (!force || !res.data.can_regenerate_at) {
+          // from cache or first generation
+        } else {
+          message.success('AI学习规划已重新生成');
+        }
       }
     } catch (e: any) {
       message.error(e.response?.data?.error || '生成学习规划失败');
@@ -175,18 +190,24 @@ const LearningDashboard: React.FC = () => {
     }
   };
 
-  const loadDiagnosis = async () => {
+  const loadDiagnosis = async (force = false) => {
     try {
       setDiagnosisLoading(true);
-      const res = await aiCoachAPI.getDiagnosis({ days: 30 });
+      const res = await aiCoachAPI.getDiagnosis({ days: 30, force: force ? '1' : undefined });
       if (res.data.empty) {
-        message.info(res.data.message || '暂无数据生成诊断报告');
         setDiagnosis(null);
+        if (force) message.info(res.data.message || '暂无数据生成诊断报告');
       } else {
         setDiagnosis(res.data.report);
         setDiagnosisContext(res.data.context);
         setDiagnosisGeneratedAt(res.data.generated_at);
-        message.success('AI诊断报告已生成');
+        setDiagnosisCanRegenerateAt(res.data.can_regenerate_at || null);
+        setDiagnosisIntervalDays(res.data.interval_days || 3);
+        if (!force || !res.data.can_regenerate_at) {
+          // from cache or first generation
+        } else {
+          message.success('AI诊断报告已重新生成');
+        }
       }
     } catch (e: any) {
       message.error(e.response?.data?.error || '生成诊断报告失败');
@@ -459,7 +480,8 @@ const LearningDashboard: React.FC = () => {
                 size="small"
                 loading={aiPlanLoading}
                 icon={aiPlan ? <ReloadOutlined /> : <ScheduleOutlined />}
-                onClick={loadAIPlan}
+                onClick={() => loadAIPlan(!!aiPlan)}
+                disabled={aiPlan && aiPlanCanRegenerateAt && new Date(aiPlanCanRegenerateAt) > new Date()}
               >
                 {aiPlan ? '重新生成' : '生成为我定制的规划'}
               </Button>
@@ -474,6 +496,11 @@ const LearningDashboard: React.FC = () => {
                 {aiPlanGeneratedAt && (
                   <div style={{ color: '#999', fontSize: 12, marginBottom: 8 }}>
                     生成时间: {new Date(aiPlanGeneratedAt).toLocaleString()}
+                    {aiPlanCanRegenerateAt && new Date(aiPlanCanRegenerateAt) > new Date() && (
+                      <span style={{ color: '#faad14', marginLeft: 8 }}>
+                        （{aiPlanIntervalDays}天后可重新生成）
+                      </span>
+                    )}
                   </div>
                 )}
                 {aiPlan.overview && (
@@ -627,7 +654,8 @@ const LearningDashboard: React.FC = () => {
                 size="small"
                 loading={diagnosisLoading}
                 icon={<RobotOutlined />}
-                onClick={loadDiagnosis}
+                onClick={() => loadDiagnosis(!!diagnosis)}
+                disabled={diagnosis && diagnosisCanRegenerateAt && new Date(diagnosisCanRegenerateAt) > new Date()}
               >
                 {diagnosis ? '重新诊断' : '生成诊断报告'}
               </Button>
@@ -642,6 +670,11 @@ const LearningDashboard: React.FC = () => {
                 {diagnosisGeneratedAt && (
                   <div style={{ color: '#999', fontSize: 12, marginBottom: 8 }}>
                     生成时间: {new Date(diagnosisGeneratedAt).toLocaleString()}
+                    {diagnosisCanRegenerateAt && new Date(diagnosisCanRegenerateAt) > new Date() && (
+                      <span style={{ color: '#faad14', marginLeft: 8 }}>
+                        （{diagnosisIntervalDays}天后可重新生成）
+                      </span>
+                    )}
                   </div>
                 )}
                 <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
