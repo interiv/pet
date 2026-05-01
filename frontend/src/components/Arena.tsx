@@ -1,15 +1,21 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Tabs } from 'antd';
 import { TrophyOutlined, FireOutlined } from '@ant-design/icons';
+import { useSearchParams } from 'react-router-dom';
 import Battle from './Battle';
 import BossBattle from './BossBattle';
 
-interface ArenaProps {
-  defaultTab?: 'pvp' | 'boss';
-}
+const Arena: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') || 'pvp';
 
-const Arena: React.FC<ArenaProps> = ({ defaultTab = 'pvp' }) => {
-  const [activeTab, setActiveTab] = useState(defaultTab);
+  const handleTabChange = (key: string) => {
+    setSearchParams(prev => {
+      prev.set('tab', key);
+      prev.delete('sub');
+      return prev;
+    }, { replace: true });
+  };
 
   const items = [
     {
@@ -29,7 +35,7 @@ const Arena: React.FC<ArenaProps> = ({ defaultTab = 'pvp' }) => {
   return (
     <Tabs
       activeKey={activeTab}
-      onChange={(key) => setActiveTab(key as 'pvp' | 'boss')}
+      onChange={handleTabChange}
       items={items}
       destroyInactiveTabPane
     />

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Tabs } from 'antd';
 import { BookOutlined, ExclamationCircleOutlined, FireOutlined, BarChartOutlined, EyeOutlined } from '@ant-design/icons';
+import { useSearchParams } from 'react-router-dom';
 import Assignments from './Assignments';
 import WrongQuestions from './WrongQuestions';
 import DailyTasks from './DailyTasks';
@@ -9,14 +10,22 @@ import { ClassTeachingOverview } from './Admin';
 import { useAuthStore } from '../store/authStore';
 
 interface StudyCenterProps {
-  defaultTab?: 'assignments' | 'wrong' | 'daily' | 'dashboard';
   onNavigate?: (menu: string) => void;
 }
 
-const StudyCenter: React.FC<StudyCenterProps> = ({ defaultTab = 'assignments', onNavigate }) => {
+const StudyCenter: React.FC<StudyCenterProps> = ({ onNavigate }) => {
   const { user } = useAuthStore();
   const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
-  const [activeTab, setActiveTab] = useState(defaultTab);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') || (isTeacher ? 'assignments' : 'assignments');
+
+  const handleTabChange = (key: string) => {
+    setSearchParams(prev => {
+      prev.set('tab', key);
+      prev.delete('sub');
+      return prev;
+    }, { replace: true });
+  };
 
   const studentItems = [
     {
@@ -65,7 +74,7 @@ const StudyCenter: React.FC<StudyCenterProps> = ({ defaultTab = 'assignments', o
   return (
     <Tabs
       activeKey={activeTab}
-      onChange={(key) => setActiveTab(key as any)}
+      onChange={handleTabChange}
       items={isTeacher ? teacherItems : studentItems}
     />
   );

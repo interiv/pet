@@ -1,17 +1,23 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Tabs } from 'antd';
 import { MessageOutlined, NotificationOutlined, CommentOutlined, HeartOutlined } from '@ant-design/icons';
+import { useSearchParams } from 'react-router-dom';
 import ChatRoom from './ChatRoom';
 import Posts from './Posts';
 import Forum from './Forum';
 import Friends from './Friends';
 
-interface SocialHubProps {
-  defaultTab?: 'chat' | 'posts' | 'forum' | 'friends';
-}
+const SocialHub: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') || 'chat';
 
-const SocialHub: React.FC<SocialHubProps> = ({ defaultTab = 'chat' }) => {
-  const [activeTab, setActiveTab] = useState(defaultTab);
+  const handleTabChange = (key: string) => {
+    setSearchParams(prev => {
+      prev.set('tab', key);
+      prev.delete('sub');
+      return prev;
+    }, { replace: true });
+  };
 
   const items = [
     {
@@ -43,7 +49,7 @@ const SocialHub: React.FC<SocialHubProps> = ({ defaultTab = 'chat' }) => {
   return (
     <Tabs
       activeKey={activeTab}
-      onChange={(key) => setActiveTab(key as 'chat' | 'posts' | 'forum' | 'friends')}
+      onChange={handleTabChange}
       items={items}
     />
   );

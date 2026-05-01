@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, TabsProps, Modal, Spin, Table, Segmented, Drawer, Button, Steps, message, Alert } from 'antd';
 import {
   HomeOutlined,
@@ -42,14 +42,24 @@ const useMobile = () => {
 
 const Home: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, logout, isAuthenticated } = useAuthStore();
   const { pet, setPet } = usePetStore();
   const isMobile = useMobile();
 
   const [siteSettings, setSiteSettings] = useState<any>({});
-  const [activeMenu, setActiveMenu] = useState('home');
-  const [studyDefaultTab, setStudyDefaultTab] = useState<'assignments' | 'wrong' | 'daily' | 'dashboard'>('assignments');
+  const [activeMenu, setActiveMenu] = useState(searchParams.get('menu') || 'home');
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
+
+  const handleMenuChange = (key: string) => {
+    setActiveMenu(key);
+    setSearchParams(prev => {
+      prev.set('menu', key);
+      prev.delete('tab');
+      prev.delete('sub');
+      return prev;
+    }, { replace: true });
+  };
   const [allPets, setAllPets] = useState<any[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedPet, setSelectedPet] = useState<any>(null);
@@ -285,7 +295,7 @@ const Home: React.FC = () => {
         icon: <UserOutlined />,
         label: '个人中心',
         onClick: () => {
-          setActiveMenu('profile');
+          handleMenuChange('profile');
         },
       },
       {
@@ -600,15 +610,20 @@ const Home: React.FC = () => {
   ];
 
   const renderContent = () => {
-    if (activeMenu === 'study') return <StudyCenter key={studyDefaultTab} defaultTab={studyDefaultTab} onNavigate={(menu: string) => {
+    if (activeMenu === 'study') return <StudyCenter onNavigate={(menu: string) => {
       if (menu === 'wrong_questions') {
-        setStudyDefaultTab('wrong');
+        setSearchParams(prev => {
+          prev.set('menu', 'study');
+          prev.set('tab', 'wrong');
+          prev.delete('sub');
+          return prev;
+        }, { replace: true });
         setActiveMenu('study');
       } else {
-        setActiveMenu(menu);
+        handleMenuChange(menu);
       }
     }} />;
-    if (activeMenu === 'pet') return <PetCenter onNavigate={setActiveMenu} />;
+    if (activeMenu === 'pet') return <PetCenter onNavigate={handleMenuChange} />;
     if (activeMenu === 'arena') return <Arena />;
     if (activeMenu === 'achievement') return <AchievementCenter />;
     if (activeMenu === 'social') return <SocialHub />;
@@ -625,7 +640,7 @@ const Home: React.FC = () => {
       return (
         <Tabs
           activeKey={activeMenu === 'home' ? 'class_leaderboard' : activeMenu}
-          onChange={(key) => setActiveMenu(key)}
+          onChange={(key) => handleMenuChange(key)}
           items={teacherTabItems}
           size={isMobile ? 'small' : 'middle'}
           centered={isMobile}
@@ -647,7 +662,7 @@ const Home: React.FC = () => {
     return (
       <Tabs
         activeKey={['all_pets', 'leaderboard'].includes(activeMenu) ? activeMenu : 'all_pets'}
-        onChange={(key) => setActiveMenu(key)}
+        onChange={(key) => handleMenuChange(key)}
         items={[{ key: 'all_pets', label: '全校宠物', children: allPetsChildren }, { key: 'leaderboard', label: '排行榜', children: leaderboardChildren }]}
         size={isMobile ? 'small' : 'middle'}
         centered={isMobile}
@@ -748,8 +763,7 @@ const Home: React.FC = () => {
                 items={menuItems}
                 onClick={({ key }) => {
                   if (key === 'profile') return;
-                  if (key === 'study') setStudyDefaultTab('assignments');
-                  setActiveMenu(key);
+                  handleMenuChange(key);
                   setMobileMenuOpen(false);
                 }}
               />
@@ -781,8 +795,7 @@ const Home: React.FC = () => {
                 items={menuItems}
                 onClick={({ key}) => {
                   if (key === 'profile') return;
-                  if (key === 'study') setStudyDefaultTab('assignments');
-                  setActiveMenu(key);
+                  handleMenuChange(key);
                 }}
               />
             </Sider>

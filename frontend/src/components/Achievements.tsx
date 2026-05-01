@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Row, Col, Progress, Tag, message, Tabs, TabsProps, Badge, Tooltip } from 'antd';
 import { TrophyOutlined, CheckCircleOutlined, StarOutlined, LockOutlined, CrownOutlined } from '@ant-design/icons';
+import { useSearchParams } from 'react-router-dom';
 import { achievementAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
@@ -38,6 +39,7 @@ const categoryColors: Record<string, string> = {
 
 const Achievements: React.FC = () => {
   const { isAuthenticated } = useAuthStore();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [achievements, setAchievements] = useState<Achievement[]>([]);
 
   useEffect(() => {
@@ -241,7 +243,16 @@ const Achievements: React.FC = () => {
         <h2 style={{ margin: 0 }}>成就中心</h2>
       </div>
 
-      <Tabs defaultActiveKey="all" items={tabItems} />
+      <Tabs
+        activeKey={searchParams.get('sub') || 'all'}
+        onChange={(key) => {
+          setSearchParams(prev => {
+            prev.set('sub', key);
+            return prev;
+          }, { replace: true });
+        }}
+        items={tabItems}
+      />
       
       {/* CSS动画 */}
       <style>{`

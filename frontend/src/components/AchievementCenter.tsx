@@ -1,15 +1,21 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Tabs } from 'antd';
 import { TrophyOutlined, BarChartOutlined } from '@ant-design/icons';
+import { useSearchParams } from 'react-router-dom';
 import Achievements from './Achievements';
 import LearningDashboard from './LearningDashboard';
 
-interface AchievementCenterProps {
-  defaultTab?: 'achievements' | 'learning';
-}
+const AchievementCenter: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') || 'achievements';
 
-const AchievementCenter: React.FC<AchievementCenterProps> = ({ defaultTab = 'achievements' }) => {
-  const [activeTab, setActiveTab] = useState(defaultTab);
+  const handleTabChange = (key: string) => {
+    setSearchParams(prev => {
+      prev.set('tab', key);
+      prev.delete('sub');
+      return prev;
+    }, { replace: true });
+  };
 
   const items = [
     {
@@ -29,7 +35,7 @@ const AchievementCenter: React.FC<AchievementCenterProps> = ({ defaultTab = 'ach
   return (
     <Tabs
       activeKey={activeTab}
-      onChange={(key) => setActiveTab(key as 'achievements' | 'learning')}
+      onChange={handleTabChange}
       items={items}
     />
   );

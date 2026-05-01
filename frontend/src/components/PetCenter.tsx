@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback } from 'react';
 import { Tabs } from 'antd';
 import { HomeOutlined, ThunderboltOutlined, ShoppingOutlined, GiftOutlined } from '@ant-design/icons';
+import { useSearchParams } from 'react-router-dom';
 import { usePetStore } from '../store/authStore';
 import { petAPI } from '../utils/api';
 import PetDisplay from './PetDisplay';
@@ -9,13 +10,13 @@ import PetSkills from './PetSkills';
 import ShopAndBackpack from './ShopAndBackpack';
 
 interface PetCenterProps {
-  defaultTab?: 'pet' | 'backpack' | 'skills' | 'shop';
   onNavigate?: (menu: string) => void;
 }
 
-const PetCenter: React.FC<PetCenterProps> = ({ defaultTab = 'pet', onNavigate: _onNavigate }) => {
+const PetCenter: React.FC<PetCenterProps> = ({ onNavigate: _onNavigate }) => {
   const { pet, setPet, hasPet } = usePetStore();
-  const [activeTab, setActiveTab] = useState(defaultTab);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') || 'pet';
 
   const loadPetData = useCallback(async () => {
     try {
@@ -33,7 +34,11 @@ const PetCenter: React.FC<PetCenterProps> = ({ defaultTab = 'pet', onNavigate: _
   }, [hasPet, loadPetData]);
 
   const handleTabChange = (key: string) => {
-    setActiveTab(key as 'pet' | 'backpack' | 'skills' | 'shop');
+    setSearchParams(prev => {
+      prev.set('tab', key);
+      prev.delete('sub');
+      return prev;
+    }, { replace: true });
   };
 
   const items = [
