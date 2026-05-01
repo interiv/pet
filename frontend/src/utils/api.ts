@@ -328,6 +328,10 @@ export const adminAPI = {
 
   // 公开统计（无需认证）
   getPublicStatistics: () => api.get('/admin/statistics/public'),
+
+  // 运营看板
+  getOperationalStats: () => api.get('/admin/operational-stats'),
+  getClassTeacherActivity: (classId: number) => api.get(`/admin/classes/${classId}/teacher-activity`),
 };
 
 // 装备部件相关 API

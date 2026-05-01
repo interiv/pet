@@ -15,6 +15,9 @@ import {
 import { notificationAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
+const adminVisibleTypes = ['system', 'forum_reply', 'forum_like', 'forum_quote', 'answer_changed'];
+const teacherVisibleTypes = ['system', 'forum_reply', 'forum_like', 'forum_quote', 'answer_changed', 'friend_request', 'friend_accepted', 'post_like', 'post_comment'];
+
 const useMobile = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   useEffect(() => {
@@ -53,7 +56,9 @@ interface NotificationItem {
 }
 
 const Notifications: React.FC = () => {
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, user } = useAuthStore();
+  const isAdmin = user?.role === 'admin';
+  const isTeacher = user?.role === 'teacher';
   const isMobile = useMobile();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -71,8 +76,15 @@ const Notifications: React.FC = () => {
   const loadUnreadCount = async () => {
     try {
       const res = await notificationAPI.getUnreadCount();
-      setUnreadCount(res.data.total);
-      setUnreadByType(res.data.by_type || {});
+      const byType = res.data.by_type || {};
+      setUnreadByType(byType);
+      if (isAdmin) {
+        setUnreadCount(adminVisibleTypes.reduce((sum, t) => sum + (byType[t] || 0), 0));
+      } else if (isTeacher) {
+        setUnreadCount(teacherVisibleTypes.reduce((sum, t) => sum + (byType[t] || 0), 0));
+      } else {
+        setUnreadCount(res.data.total);
+      }
     } catch (e) {
       console.error('获取未读数失败:', e);
     }
@@ -82,10 +94,22 @@ const Notifications: React.FC = () => {
     setLoading(true);
     try {
       const params: any = {};
-      if (activeTab !== 'all') params.type = activeTab;
+      if (activeTab !== 'all') {
+        params.type = activeTab;
+      } else if (isAdmin) {
+        params.types = adminVisibleTypes.join(',');
+      } else if (isTeacher) {
+        params.types = teacherVisibleTypes.join(',');
+      }
 
       const res = await notificationAPI.getNotifications(params);
-      setNotifications(res.data.notifications || []);
+      let items = res.data.notifications || [];
+      if (isAdmin && activeTab === 'all') {
+        items = items.filter((n: NotificationItem) => adminVisibleTypes.includes(n.type));
+      } else if (isTeacher && activeTab === 'all') {
+        items = items.filter((n: NotificationItem) => teacherVisibleTypes.includes(n.type));
+      }
+      setNotifications(items);
     } catch (e) {
       console.error('加载通知失败:', e);
     } finally {
@@ -161,14 +185,29 @@ const Notifications: React.FC = () => {
     );
   }
 
-  const tabItems = [
-    { key: 'all', label: `全部 ${unreadCount > 0 ? `(${unreadCount})` : ''}` },
-    { key: 'friend_request', label: `好友 ${unreadByType.friend_request || ''}`.trim() || '好友' },
-    { key: 'gift_received', label: `礼物 ${unreadByType.gift_received || ''}`.trim() || '礼物' },
-    { key: 'achievement', label: `成就 ${unreadByType.achievement || ''}`.trim() || '成就' },
-    { key: 'post_like', label: `赞 ${unreadByType.post_like || ''}`.trim() || '赞' },
-    { key: 'forum_reply', label: `论坛 ${unreadByType.forum_reply || ''}`.trim() || '论坛' },
-  ];
+  const tabItems = isAdmin
+    ? [
+        { key: 'all', label: `全部 ${unreadCount > 0 ? `(${unreadCount})` : ''}` },
+        { key: 'system', label: `系统 ${unreadByType.system || ''}`.trim() || '系统' },
+        { key: 'forum_reply', label: `论坛 ${unreadByType.forum_reply || ''}`.trim() || '论坛' },
+        { key: 'answer_changed', label: `答案更正 ${unreadByType.answer_changed || ''}`.trim() || '答案更正' },
+      ]
+    : isTeacher
+    ? [
+        { key: 'all', label: `全部 ${unreadCount > 0 ? `(${unreadCount})` : ''}` },
+        { key: 'system', label: `系统 ${unreadByType.system || ''}`.trim() || '系统' },
+        { key: 'friend_request', label: `好友 ${unreadByType.friend_request || ''}`.trim() || '好友' },
+        { key: 'forum_reply', label: `论坛 ${unreadByType.forum_reply || ''}`.trim() || '论坛' },
+        { key: 'answer_changed', label: `答案更正 ${unreadByType.answer_changed || ''}`.trim() || '答案更正' },
+      ]
+    : [
+        { key: 'all', label: `全部 ${unreadCount > 0 ? `(${unreadCount})` : ''}` },
+        { key: 'friend_request', label: `好友 ${unreadByType.friend_request || ''}`.trim() || '好友' },
+        { key: 'gift_received', label: `礼物 ${unreadByType.gift_received || ''}`.trim() || '礼物' },
+        { key: 'achievement', label: `成就 ${unreadByType.achievement || ''}`.trim() || '成就' },
+        { key: 'post_like', label: `赞 ${unreadByType.post_like || ''}`.trim() || '赞' },
+        { key: 'forum_reply', label: `论坛 ${unreadByType.forum_reply || ''}`.trim() || '论坛' },
+      ];
 
   return (
     <div>

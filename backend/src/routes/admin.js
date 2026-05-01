@@ -1064,6 +1064,270 @@ router.get('/statistics', authenticateToken, (req, res) => {
   }
 });
 
+// ==================== 运营看板 ====================
+
+// 管理员运营看板数据
+router.get('/operational-stats', authenticateToken, (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: '权限不足' });
+    }
+
+    // 待处理事项
+    const pendingTeachers = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'teacher' AND status = 'pending_approval'`).get().count;
+    const pendingApplications = db.prepare(`SELECT COUNT(*) as count FROM class_applications WHERE status = 'pending'`).get().count;
+
+    // 近7天每日活跃用户趋势
+    const hasUserActivities = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='user_activities'`).get();
+    let dauTrend = [];
+    if (hasUserActivities) {
+      dauTrend = db.prepare(`
+        SELECT DATE(created_at) as date, COUNT(DISTINCT user_id) as count
+        FROM user_activities
+        WHERE created_at >= DATE('now', '-7 days', 'localtime')
+        GROUP BY DATE(created_at)
+        ORDER BY date
+      `).all();
+    }
+
+    // 近7天每日作业提交趋势
+    let submissionTrend = [];
+    try {
+      submissionTrend = db.prepare(`
+        SELECT DATE(submitted_at) as date, COUNT(*) as count
+        FROM submissions
+        WHERE submitted_at >= DATE('now', '-7 days', 'localtime')
+        GROUP BY DATE(submitted_at)
+        ORDER BY date
+      `).all();
+    } catch (e) { /* submissions table may not exist */ }
+
+    // 近7天每日新作业趋势
+    let assignmentTrend = [];
+    try {
+      assignmentTrend = db.prepare(`
+        SELECT DATE(created_at) as date, COUNT(*) as count
+        FROM assignments
+        WHERE created_at >= DATE('now', '-7 days', 'localtime')
+        GROUP BY DATE(created_at)
+        ORDER BY date
+      `).all();
+    } catch (e) { /* assignments table may not exist */ }
+
+    // 教师活跃度排行（近30天布置作业数、收到提交数、未批改数）
+    let teacherActivity = [];
+    try {
+      teacherActivity = db.prepare(`
+        SELECT
+          u.id as teacher_id,
+          u.username,
+          u.avatar,
+          COUNT(DISTINCT a.id) as assignment_count,
+          (SELECT COUNT(*) FROM submissions s JOIN assignments a2 ON s.assignment_id = a2.id WHERE a2.teacher_id = u.id AND s.submitted_at >= DATE('now', '-30 days', 'localtime')) as submission_count,
+          (SELECT COUNT(*) FROM submissions s JOIN assignments a2 ON s.assignment_id = a2.id WHERE a2.teacher_id = u.id AND s.status = 'submitted' AND (s.teacher_score IS NULL OR s.review_status = 'pending')) as ungraded_count
+        FROM users u
+        LEFT JOIN assignments a ON a.teacher_id = u.id AND a.created_at >= DATE('now', '-30 days', 'localtime')
+        WHERE u.role = 'teacher' AND u.status = 'active'
+        GROUP BY u.id
+        ORDER BY assignment_count DESC
+        LIMIT 10
+      `).all();
+    } catch (e) { /* assignments/submissions table may not exist */ }
+
+    // 最近系统事件（最近注册、最近作业发布、最近公告）
+    const recentEvents = [];
+
+    const recentRegs = db.prepare(`SELECT id, username, role, created_at as time, 'register' as event_type FROM users ORDER BY created_at DESC LIMIT 5`).all();
+    recentRegs.forEach(r => recentEvents.push({
+      type: 'register',
+      time: r.time,
+      message: `新${r.role === 'teacher' ? '教师' : '学生'}注册：${r.username}`
+    }));
+
+    try {
+      const recentAssign = db.prepare(`
+        SELECT a.id, a.title, u.username, a.created_at as time
+        FROM assignments a JOIN users u ON a.teacher_id = u.id
+        ORDER BY a.created_at DESC LIMIT 5
+      `).all();
+      recentAssign.forEach(a => recentEvents.push({
+        type: 'assignment',
+        time: a.time,
+        message: `${a.username} 发布了作业「${a.title}」`
+      }));
+    } catch (e) { /* assignments table may not exist */ }
+
+    try {
+      const recentAnnounce = db.prepare(`SELECT id, title, created_at as time FROM announcements ORDER BY created_at DESC LIMIT 3`).all();
+      recentAnnounce.forEach(a => recentEvents.push({
+        type: 'announcement',
+        time: a.time,
+        message: `新公告发布：${a.title}`
+      }));
+    } catch (e) { /* announcements table may not exist */ }
+
+    // 按时间排序
+    recentEvents.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+
+    res.json({
+      pending: {
+        teachers: pendingTeachers,
+        applications: pendingApplications
+      },
+      trends: {
+        dau: dauTrend,
+        submissions: submissionTrend,
+        assignments: assignmentTrend
+      },
+      teacher_activity: teacherActivity,
+      recent_events: recentEvents.slice(0, 10)
+    });
+  } catch (error) {
+    console.error('获取运营统计失败:', error);
+    res.status(500).json({ error: '获取运营统计失败' });
+  }
+});
+
+// 班主任查看班级各任课老师情况
+router.get('/classes/:id/teacher-activity', authenticateToken, (req, res) => {
+  try {
+    const classId = parseInt(req.params.id, 10);
+    if (!classId) return res.status(400).json({ error: '班级 ID 无效' });
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    // 权限检查：班主任或管理员
+    if (userRole === 'teacher') {
+      const isHeadTeacher = db.prepare(`
+        SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'
+      `).get(userId, classId);
+      if (!isHeadTeacher) {
+        return res.status(403).json({ error: '需要班主任权限' });
+      }
+    } else if (userRole !== 'admin') {
+      return res.status(403).json({ error: '权限不足' });
+    }
+
+    // 班级基本信息
+    const classInfo = db.prepare(`SELECT id, name, grade, student_count FROM classes WHERE id = ?`).get(classId);
+    if (!classInfo) {
+      return res.status(404).json({ error: '班级不存在' });
+    }
+
+    // 任课老师列表及其教学数据
+    let teachers = [];
+    try {
+      teachers = db.prepare(`
+        SELECT
+          u.id as teacher_id,
+          u.username,
+          u.avatar,
+          ct.role as class_role,
+          COUNT(DISTINCT a.id) as total_assignments,
+          COUNT(DISTINCT CASE WHEN a.created_at >= DATE('now', '-30 days', 'localtime') THEN a.id END) as recent_assignments,
+          (SELECT COUNT(*) FROM submissions s WHERE s.assignment_id IN (SELECT id FROM assignments WHERE teacher_id = u.id AND class_id = ?)) as total_submissions,
+          (SELECT COUNT(*) FROM submissions s WHERE s.assignment_id IN (SELECT id FROM assignments WHERE teacher_id = u.id AND class_id = ?) AND s.status = 'submitted' AND (s.teacher_score IS NULL OR s.review_status = 'pending')) as ungraded_count,
+          (SELECT COUNT(*) FROM submissions s WHERE s.assignment_id IN (SELECT id FROM assignments WHERE teacher_id = u.id AND class_id = ?) AND s.submitted_at >= DATE('now', '-7 days', 'localtime')) as recent_submissions
+        FROM class_teachers ct
+        JOIN users u ON ct.teacher_id = u.id
+        LEFT JOIN assignments a ON a.teacher_id = u.id AND a.class_id = ?
+        WHERE ct.class_id = ? AND u.status = 'active'
+        GROUP BY u.id
+        ORDER BY total_assignments DESC
+      `).all(classId, classId, classId, classId, classId);
+    } catch (e) {
+      console.error('获取任课老师数据失败:', e);
+    }
+
+    // 各科成绩对比
+    let subjectStats = [];
+    try {
+      subjectStats = db.prepare(`
+        SELECT
+          a.subject,
+          COUNT(DISTINCT a.id) as assignment_count,
+          COUNT(DISTINCT s.user_id) as active_students,
+          ROUND(AVG(CASE WHEN s.total_score IS NOT NULL AND s.total_max_score > 0 THEN s.total_score * 100.0 / s.total_max_score END), 1) as avg_accuracy,
+          ROUND(AVG(CASE WHEN s.total_score IS NOT NULL THEN s.total_score END), 1) as avg_score
+        FROM assignments a
+        LEFT JOIN submissions s ON s.assignment_id = a.id
+        WHERE a.class_id = ? AND a.subject IS NOT NULL AND a.subject != ''
+        GROUP BY a.subject
+        ORDER BY assignment_count DESC
+      `).all(classId);
+    } catch (e) { /* assignments/submissions may not exist */ }
+
+    // 学生薄弱情况（正确率低于60%的知识点数）
+    let strugglingStudents = [];
+    try {
+      strugglingStudents = db.prepare(`
+        SELECT
+          u.id as user_id,
+          u.username,
+          u.avatar,
+          COUNT(DISTINCT CASE WHEN kps.accuracy < 60 THEN kps.knowledge_point END) as weak_kp_count,
+          COUNT(DISTINCT kps.knowledge_point) as total_kp_count,
+          ROUND(AVG(kps.accuracy), 1) as avg_accuracy
+        FROM users u
+        LEFT JOIN knowledge_point_stats kps ON kps.user_id = u.id AND kps.date >= DATE('now', '-30 days', 'localtime')
+        WHERE u.role = 'student' AND u.class_id = ?
+        GROUP BY u.id
+        HAVING weak_kp_count > 0 OR total_kp_count = 0
+        ORDER BY weak_kp_count DESC
+        LIMIT 10
+      `).all(classId);
+    } catch (e) { /* knowledge_point_stats may not exist */ }
+
+    // 不活跃学生（7天内无活动）
+    let inactiveStudents = [];
+    try {
+      inactiveStudents = db.prepare(`
+        SELECT u.id, u.username, u.avatar, u.last_login
+        FROM users u
+        WHERE u.role = 'student' AND u.class_id = ?
+          AND (u.last_login IS NULL OR u.last_login < DATE('now', '-7 days', 'localtime'))
+        ORDER BY u.last_login ASC
+        LIMIT 10
+      `).all(classId);
+    } catch (e) { /* users may not have last_login */ }
+
+    // 待处理入学申请
+    let pendingApps = 0;
+    try {
+      pendingApps = db.prepare(`SELECT COUNT(*) as count FROM class_applications WHERE class_id = ? AND status = 'pending'`).get(classId).count;
+    } catch (e) { /* class_applications may not exist */ }
+
+    // 最近提交的作业（实时动态）
+    let recentSubmissions = [];
+    try {
+      recentSubmissions = db.prepare(`
+        SELECT s.id, s.total_score, s.total_max_score, s.submitted_at,
+               u.username as student_name,
+               a.title as assignment_title, a.subject
+        FROM submissions s
+        JOIN users u ON s.user_id = u.id
+        JOIN assignments a ON s.assignment_id = a.id
+        WHERE a.class_id = ?
+        ORDER BY s.submitted_at DESC
+        LIMIT 10
+      `).all(classId);
+    } catch (e) { /* submissions may not exist */ }
+
+    res.json({
+      class_info: classInfo,
+      teachers,
+      subject_stats: subjectStats,
+      struggling_students: strugglingStudents,
+      inactive_students: inactiveStudents,
+      pending_applications: pendingApps,
+      recent_submissions: recentSubmissions
+    });
+  } catch (error) {
+    console.error('获取班级教学数据失败:', error);
+    res.status(500).json({ error: '获取班级教学数据失败' });
+  }
+});
+
 // ==================== AI设置 ====================
 
 // 获取大模型设置

@@ -87,6 +87,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [assignmentTablePageSize, setAssignmentTablePageSize] = useState(10);
   const [createModalTab, setCreateModalTab] = useState('generate');
   const [showVariantQuestions, setShowVariantQuestions] = useState<Record<number, boolean>>({});
+  const [filterSubject, setFilterSubject] = useState<string | undefined>(undefined);
+  const [filterDateRange, setFilterDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
   
   const [form] = Form.useForm();
   const [submitForm] = Form.useForm();
@@ -158,7 +160,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
   useEffect(() => {
     if (user) loadAssignments();
-  }, [selectedClass]);
+  }, [selectedClass, filterSubject, filterDateRange]);
 
   const loadClasses = async () => {
     try {
@@ -173,7 +175,11 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     if (!user) return;
     try {
       setLoading(true);
-      const params = selectedClass ? { class_id: selectedClass } : {};
+      const params: any = {};
+      if (selectedClass) params.class_id = selectedClass;
+      if (filterSubject) params.subject = filterSubject;
+      if (filterDateRange && filterDateRange[0]) params.date_from = filterDateRange[0].format('YYYY-MM-DD');
+      if (filterDateRange && filterDateRange[1]) params.date_to = filterDateRange[1].format('YYYY-MM-DD');
       const res = await assignmentAPI.getAssignments(params);
       setAssignments(res.data.assignments || []);
     } catch (e) {
@@ -1012,9 +1018,11 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           )}
           {isTeacher && (
             <>
-              <Button size="small" icon={<EditOutlined />} onClick={() => handleStartDoing(record)}>编辑</Button>
+              {record.teacher_id === user?.id && (
+                <Button size="small" icon={<EditOutlined />} onClick={() => handleStartDoing(record)}>编辑</Button>
+              )}
               <Button size="small" icon={<BarChartOutlined />} onClick={() => handleViewStatistics(record)}>统计</Button>
-              {record.status !== 'cancelled' && (
+              {record.status !== 'cancelled' && record.teacher_id === user?.id && (
                 <Popconfirm
                   title="确认取消此作业？"
                   description="已提交的成绩会保留，未提交的学生将无法继续作答"
@@ -1052,13 +1060,26 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
           <h2 style={{ margin: 0 }}>📝 班级作业</h2>
-          {isAdmin && (
-            <Select placeholder="筛选班级" allowClear style={{ width: 200 }} onChange={(v) => setSelectedClass(v)} value={selectedClass}>
+          {isTeacher && classes.length > 1 && (
+            <Select placeholder="筛选班级" allowClear style={{ width: 160 }} onChange={(v) => setSelectedClass(v)} value={selectedClass}>
               {classes.map(c => <Option key={c.id} value={c.id}>{c.name}</Option>)}
             </Select>
+          )}
+          {isTeacher && (
+            <Select placeholder="筛选科目" allowClear style={{ width: 120 }} onChange={(v) => setFilterSubject(v)} value={filterSubject}>
+              {subjectOptions.map(s => <Option key={s} value={s}>{s}</Option>)}
+            </Select>
+          )}
+          {isTeacher && (
+            <DatePicker.RangePicker
+              style={{ width: 240 }}
+              onChange={(dates) => setFilterDateRange(dates as any)}
+              value={filterDateRange as any}
+              placeholder={['开始日期', '结束日期']}
+            />
           )}
         </div>
         <Space>

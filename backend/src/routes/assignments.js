@@ -354,6 +354,13 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
     const existing = db.prepare('SELECT id, variant_group_id, type, answer as old_answer FROM question_bank WHERE id = ?').get(qid);
     if (!existing) return res.status(404).json({ error: '题目不存在' });
 
+    if (req.user.role === 'teacher') {
+      const assignmentQ = db.prepare('SELECT a.teacher_id FROM assignment_questions aq JOIN assignments a ON aq.assignment_id = a.id WHERE aq.question_bank_id = ?').get(qid);
+      if (assignmentQ && assignmentQ.teacher_id !== req.user.userId) {
+        return res.status(403).json({ error: '只能编辑自己发布的作业题目' });
+      }
+    }
+
     const { content, options, answer, explanation, analysis, knowledge_point, difficulty, hint, sync_group } = req.body;
     const fields = [];
     const values = [];
@@ -546,44 +553,59 @@ router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res
 router.get('/', authenticateToken, (req, res) => {
   try {
     let assignments;
-    const { class_id } = req.query;
+    const { class_id, subject, date_from, date_to } = req.query;
 
     if (req.user.role === 'admin') {
-      if (class_id) {
-        assignments = db.prepare(`
-          SELECT a.*, u.username as teacher_name, c.name as class_name,
-            (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count
-          FROM assignments a
-          JOIN users u ON a.teacher_id = u.id
-          LEFT JOIN classes c ON a.class_id = c.id
-          WHERE a.class_id = ?
-          ORDER BY a.created_at DESC
-        `).all(class_id);
-      } else {
-        assignments = db.prepare(`
-          SELECT a.*, u.username as teacher_name, c.name as class_name,
-            (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count
-          FROM assignments a
-          JOIN users u ON a.teacher_id = u.id
-          LEFT JOIN classes c ON a.class_id = c.id
-          ORDER BY a.created_at DESC
-        `).all();
-      }
-    } else if (req.user.role === 'teacher') {
-      const teacherClasses = db.prepare(`SELECT class_id FROM class_teachers WHERE teacher_id = ?`).all(req.user.userId);
-      const classIds = teacherClasses.map(tc => tc.class_id);
-      if (classIds.length === 0) return res.json({ assignments: [] });
-
-      const placeholders = classIds.map(() => '?').join(',');
-      assignments = db.prepare(`
+      let sql = `
         SELECT a.*, u.username as teacher_name, c.name as class_name,
           (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count
         FROM assignments a
         JOIN users u ON a.teacher_id = u.id
         LEFT JOIN classes c ON a.class_id = c.id
-        WHERE a.class_id IN (${placeholders}) AND a.status != 'cancelled'
-        ORDER BY a.created_at DESC
-      `).all(...classIds);
+        WHERE 1=1
+      `;
+      const params = [];
+      if (class_id) { sql += ` AND a.class_id = ?`; params.push(class_id); }
+      if (subject) { sql += ` AND a.subject = ?`; params.push(subject); }
+      if (date_from) { sql += ` AND a.created_at >= ?`; params.push(date_from); }
+      if (date_to) { sql += ` AND a.created_at <= ?`; params.push(date_to + ' 23:59:59'); }
+      sql += ` ORDER BY a.created_at DESC`;
+      assignments = db.prepare(sql).all(...params);
+    } else if (req.user.role === 'teacher') {
+      const teacherClasses = db.prepare(`SELECT class_id, role FROM class_teachers WHERE teacher_id = ?`).all(req.user.userId);
+      const headTeacherClassIds = teacherClasses.filter(tc => tc.role === 'head_teacher').map(tc => tc.class_id);
+      const allClassIds = teacherClasses.map(tc => tc.class_id);
+      if (allClassIds.length === 0) return res.json({ assignments: [] });
+
+      let sql = `
+        SELECT a.*, u.username as teacher_name, c.name as class_name,
+          (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count
+        FROM assignments a
+        JOIN users u ON a.teacher_id = u.id
+        LEFT JOIN classes c ON a.class_id = c.id
+        WHERE a.status != 'cancelled'
+      `;
+      const params = [];
+
+      if (class_id) {
+        sql += ` AND a.class_id = ?`;
+        params.push(class_id);
+        if (!headTeacherClassIds.includes(parseInt(class_id))) {
+          sql += ` AND a.teacher_id = ?`;
+          params.push(req.user.userId);
+        }
+      } else {
+        const headPlaceholders = headTeacherClassIds.map(() => '?').join(',');
+        const allPlaceholders = allClassIds.map(() => '?').join(',');
+        sql += ` AND ((a.class_id IN (${headPlaceholders})) OR (a.class_id IN (${allPlaceholders}) AND a.teacher_id = ?))`;
+        params.push(...headTeacherClassIds, ...allClassIds, req.user.userId);
+      }
+
+      if (subject) { sql += ` AND a.subject = ?`; params.push(subject); }
+      if (date_from) { sql += ` AND a.created_at >= ?`; params.push(date_from); }
+      if (date_to) { sql += ` AND a.created_at <= ?`; params.push(date_to + ' 23:59:59'); }
+      sql += ` ORDER BY a.created_at DESC`;
+      assignments = db.prepare(sql).all(...params);
     } else {
       const student = db.prepare('SELECT class_id FROM users WHERE id = ?').get(req.user.userId);
       if (!student || !student.class_id) return res.json({ assignments: [] });
@@ -1376,9 +1398,8 @@ router.patch('/:id/cancel', authenticateToken, authorizeRole('teacher', 'admin')
     if (!assignment) return res.status(404).json({ error: '作业不存在' });
     if (assignment.status === 'cancelled') return res.status(400).json({ error: '作业已取消' });
 
-    if (req.user.role === 'teacher') {
-      const belongs = db.prepare('SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?').get(req.user.userId, assignment.class_id);
-      if (!belongs) return res.status(403).json({ error: '无权取消此作业' });
+    if (req.user.role === 'teacher' && assignment.teacher_id !== req.user.userId) {
+      return res.status(403).json({ error: '只能取消自己发布的作业' });
     }
 
     db.prepare("UPDATE assignments SET status = 'cancelled' WHERE id = ?").run(req.params.id);

@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { Tabs } from 'antd';
-import { BookOutlined, ExclamationCircleOutlined, FireOutlined, BarChartOutlined } from '@ant-design/icons';
+import { BookOutlined, ExclamationCircleOutlined, FireOutlined, BarChartOutlined, EyeOutlined } from '@ant-design/icons';
 import Assignments from './Assignments';
 import WrongQuestions from './WrongQuestions';
 import DailyTasks from './DailyTasks';
 import ClassDashboard from './ClassDashboard';
+import { ClassTeachingOverview } from './Admin';
 import { useAuthStore } from '../store/authStore';
 
 interface StudyCenterProps {
@@ -38,6 +39,8 @@ const StudyCenter: React.FC<StudyCenterProps> = ({ defaultTab = 'assignments', o
     },
   ];
 
+  const isHeadTeacher = isTeacher && (user as any).teacher_classes?.some((c: any) => c.class_role === 'head_teacher');
+
   const teacherItems = [
     {
       key: 'assignments',
@@ -45,6 +48,12 @@ const StudyCenter: React.FC<StudyCenterProps> = ({ defaultTab = 'assignments', o
       icon: <BookOutlined />,
       children: <Assignments onNavigate={onNavigate} />,
     },
+    ...(isHeadTeacher ? [{
+      key: 'class-overview',
+      label: '教学总览',
+      icon: <EyeOutlined />,
+      children: <ClassTeachingOverview />,
+    }] : []),
     {
       key: 'dashboard',
       label: '学情看板',

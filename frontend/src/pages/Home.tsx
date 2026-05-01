@@ -617,6 +617,10 @@ const Home: React.FC = () => {
     if (activeMenu === 'admin') return <Admin />;
     if (activeMenu === 'profile') return <Profile />;
 
+    if (isAuthenticated && user?.role === 'admin') {
+      return <Admin defaultTab="dashboard" />;
+    }
+
     if (isAuthenticated && isTeacher) {
       return (
         <Tabs

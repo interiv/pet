@@ -13,6 +13,9 @@ const requireAdmin = (req, res, next) => {
 
 // 检查并发放成就
 function checkAndAwardAchievement(userId, achievementType, currentValue) {
+  const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId);
+  if (user && (user.role === 'teacher' || user.role === 'admin')) return [];
+
   const allAchievements = db.prepare(
     "SELECT * FROM achievements WHERE json_extract(condition, '$.type') = ?"
   ).all(achievementType);
