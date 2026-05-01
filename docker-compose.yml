@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: class-pet-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - JWT_SECRET=${JWT_SECRET:-class-pet-game-secret-key-2024}
+      - JWT_EXPIRES_IN=7d
+      - FRONTEND_URL=http://localhost:80
+      - AI_API_KEY=${AI_API_KEY}
+      - AI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+      - AI_MODEL=doubao-seed-2-0-pro-260215
+    volumes:
+      - ./backend/data:/app/data
+    networks:
+      - app-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: class-pet-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

@@ -109,6 +109,7 @@ const ShopAndBackpack: React.FC<Props> = ({ defaultTab = 'shop', viewMode = 'all
       case 'hunger': return '#faad14';
       case 'health': return '#f5222d';
       case 'mood': return '#eb2f96';
+      case 'stamina': return '#722ed1';
       case 'attack': return '#f5222d';
       case 'defense': return '#1890ff';
       case 'speed': return '#faad14';
@@ -119,9 +120,10 @@ const ShopAndBackpack: React.FC<Props> = ({ defaultTab = 'shop', viewMode = 'all
   const getEffectName = (type: string) => {
     switch(type) {
       case 'exp': return '经验';
-      case 'hunger': return '饱食度';
+      case 'hunger': return '饱腹度';
       case 'health': return '健康';
       case 'mood': return '心情';
+      case 'stamina': return '体力';
       case 'attack': return '攻击力';
       case 'defense': return '防御力';
       case 'speed': return '速度';

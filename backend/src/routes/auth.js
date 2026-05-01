@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { checkAndAwardAchievement } = require('./achievements');
+const { getChinaDate } = require('../config/timezone');
 
 // 用户注册
 router.post('/register', async (req, res) => {
@@ -125,7 +126,7 @@ router.post('/login', async (req, res) => {
     try {
       const loginCount = db.prepare("SELECT COUNT(*) as c FROM users WHERE id = ? AND last_login IS NOT NULL").get(user.id)?.c || 0;
       checkAndAwardAchievement(user.id, 'login', loginCount > 0 ? loginCount : 1);
-      const today = new Date().toISOString().split('T')[0];
+      const today = getChinaDate();
       const dailyTask = db.prepare('SELECT streak_days FROM daily_tasks WHERE user_id = ? AND date = ?').get(user.id, today);
       if (dailyTask && dailyTask.streak_days > 0) {
         checkAndAwardAchievement(user.id, 'continuous_login', dailyTask.streak_days);

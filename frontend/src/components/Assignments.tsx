@@ -923,7 +923,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           </div>
           <div style={{ color: '#666', marginBottom: 6, lineHeight: 1.6 }}>{r.question_content}</div>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            <span>你的答案：<span style={{ color: r.is_correct ? '#52c41a' : '#ff4d4f', fontWeight: 600, fontSize: 14 }}>{String(r.student_answer || '(未作答)')}</span></span>
+            <span>你的答案：<span style={{ color: r.is_correct ? '#52c41a' : '#ff4d4f', fontWeight: 600, fontSize: 14 }}>{String(r.user_answer ?? '(未作答)')}</span></span>
             {!r.is_correct && r.correct_answer && (
               <span>正确答案：<span style={{ color: '#52c41a', fontWeight: 600, fontSize: 14 }}>{String(r.correct_answer)}</span></span>
             )}

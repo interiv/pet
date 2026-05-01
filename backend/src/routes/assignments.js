@@ -5,6 +5,7 @@ const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { checkLevelUp } = require('./pets');
 const { updateTaskProgress } = require('./daily-tasks');
 const { checkAndAwardAchievement } = require('./achievements');
+const { getChinaDate } = require('../config/timezone');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
@@ -716,11 +717,11 @@ router.get('/:id/retry-questions', authenticateToken, (req, res) => {
     }
 
     const wrongAnswers = db.prepare(`
-      SELECT qa.question_bank_id, qb.variant_group_id
+      SELECT COALESCE(qb.variant_group_id, -qb.id) as group_key, qb.variant_group_id, MAX(qa.question_bank_id) as question_bank_id
       FROM question_answers qa
       JOIN question_bank qb ON qa.question_bank_id = qb.id
       WHERE qa.submission_id = ? AND qa.is_correct = 0
-      GROUP BY qa.question_bank_id
+      GROUP BY group_key
     `).all(submission.id);
 
     const retryQuestions = [];
@@ -731,10 +732,12 @@ router.get('/:id/retry-questions', authenticateToken, (req, res) => {
           FROM question_bank WHERE variant_group_id = ? ORDER BY variant_index
         `).all(wa.variant_group_id);
 
-        const nextVariantIndex = (submission.attempt_count || 0) % 3;
-        const retryQuestion = variants[nextVariantIndex] && variants[nextVariantIndex].id !== wa.question_bank_id
-          ? variants[nextVariantIndex]
-          : variants[(nextVariantIndex + 1) % 3];
+        const attemptedIds = db.prepare(`
+          SELECT DISTINCT question_bank_id FROM question_answers WHERE submission_id = ?
+        `).all(submission.id).map(r => r.question_bank_id);
+
+        const unusedVariants = variants.filter(v => !attemptedIds.includes(v.id));
+        const retryQuestion = unusedVariants.length > 0 ? unusedVariants[0] : variants[0];
 
         if (retryQuestion) {
           if (retryQuestion.options) {
@@ -796,11 +799,123 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
 
     const isObj = isObjectiveType(assignment.question_type);
     const submissionId = existingSubmission ? existingSubmission.id : null;
+    const isRetry = !!submissionId;
 
     if (isObj) {
       const results = [];
       let correctCount = 0;
       let wrongQuestions = [];
+
+      if (isRetry) {
+        const retryQuestionIds = answers.map(a => a.question_id).filter(id => Number.isInteger(id) && id > 0);
+        const retryQuestions = retryQuestionIds.length > 0
+          ? db.prepare(`
+              SELECT id, type, content, options, answer, explanation, analysis, variant_group_id, knowledge_point
+              FROM question_bank WHERE id IN (${retryQuestionIds.map(() => '?').join(',')})
+            `).all(...retryQuestionIds)
+          : [];
+
+        const retryQuestionMap = {};
+        for (const rq of retryQuestions) {
+          retryQuestionMap[rq.id] = rq;
+        }
+
+        const previousWrongQAs = db.prepare(`
+          SELECT qa.question_bank_id, qb.variant_group_id
+          FROM question_answers qa
+          JOIN question_bank qb ON qa.question_bank_id = qb.id
+          WHERE qa.submission_id = ? AND qa.is_correct = 0
+        `).all(submissionId);
+
+        for (const ans of answers) {
+          const q = retryQuestionMap[ans.question_id];
+          if (!q) continue;
+
+          const userAnswer = ans.answer;
+          let isCorrect = false;
+          if (q.type === 'choice_single' || q.type === 'fill_blank') {
+            isCorrect = String(userAnswer).trim().toLowerCase() === String(q.answer).trim().toLowerCase();
+          } else if (q.type === 'choice_multi') {
+            const correctSet = q.answer.split(',').map(s => s.trim().toLowerCase()).sort().join(',');
+            const userSet = (Array.isArray(userAnswer) ? userAnswer : [userAnswer]).map(s => String(s).trim().toLowerCase()).sort().join(',');
+            isCorrect = correctSet === userSet;
+          } else if (q.type === 'judgment') {
+            const ua = String(userAnswer).trim().toLowerCase();
+            const ca = String(q.answer).trim().toLowerCase();
+            isCorrect = ua === ca || (ua === 'true' && ca === 'true') || (ua === 'false' && ca === 'false');
+          }
+
+          if (isCorrect) correctCount++;
+
+          results.push({
+            question_id: q.id,
+            question_content: q.content,
+            user_answer: userAnswer,
+            correct_answer: q.answer,
+            is_correct: isCorrect,
+            score: isCorrect ? (100 / answers.length) : 0,
+            explanation: q.explanation,
+            analysis: q.analysis
+          });
+
+          if (!isCorrect && q.variant_group_id) {
+            const variants = db.prepare(`
+              SELECT id, type, content, options, answer, explanation, analysis, variant_index
+              FROM question_bank WHERE variant_group_id = ? ORDER BY variant_index
+            `).all(q.variant_group_id);
+
+            const attemptedIds = db.prepare(`
+              SELECT DISTINCT question_bank_id FROM question_answers WHERE submission_id = ?
+            `).all(submissionId).map(r => r.question_bank_id);
+            attemptedIds.push(q.id);
+
+            const unusedVariants = variants.filter(v => !attemptedIds.includes(v.id));
+            const retryQuestion = unusedVariants.length > 0 ? unusedVariants[0] : variants[0];
+
+            if (retryQuestion) {
+              if (retryQuestion.options) {
+                try { retryQuestion.options = JSON.parse(retryQuestion.options); } catch(e) {}
+              }
+              wrongQuestions.push({
+                original_question_id: q.id,
+                retry_question: retryQuestion
+              });
+            }
+          }
+
+          if (!isCorrect) {
+            let existingWQ = db.prepare('SELECT id, wrong_count FROM wrong_questions WHERE user_id = ? AND question_id = ?')
+              .get(req.user.userId, q.id);
+            if (!existingWQ && q.variant_group_id) {
+              const siblingIds = db.prepare('SELECT id FROM question_bank WHERE variant_group_id = ?').all(q.variant_group_id).map(r => r.id);
+              for (const sid of siblingIds) {
+                const sib = db.prepare('SELECT id, wrong_count FROM wrong_questions WHERE user_id = ? AND question_id = ?')
+                  .get(req.user.userId, sid);
+                if (sib) { existingWQ = sib; break; }
+              }
+            }
+            if (existingWQ) {
+              db.prepare('UPDATE wrong_questions SET wrong_count = wrong_count + 1, wrong_answer = ?, correct_answer = ?, reviewed = 0 WHERE id = ?')
+                .run(String(userAnswer), q.answer, existingWQ.id);
+            } else {
+              db.prepare(`
+                INSERT OR IGNORE INTO wrong_questions (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed, wrong_count)
+                VALUES (?, ?, ?, ?, ?, ?, 0, 1)
+              `).run(req.user.userId, req.params.id, q.id, String(userAnswer), q.answer, q.analysis);
+            }
+          } else {
+            const idsToDelete = [q.id];
+            if (q.variant_group_id) {
+              const siblingIds = db.prepare('SELECT id FROM question_bank WHERE variant_group_id = ?').all(q.variant_group_id).map(r => r.id);
+              idsToDelete.push(...siblingIds);
+            }
+            for (const did of idsToDelete) {
+              db.prepare('DELETE FROM wrong_questions WHERE user_id = ? AND question_id = ?')
+                .run(req.user.userId, did);
+            }
+          }
+        }
+      } else {
 
       for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
@@ -838,10 +953,8 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
             FROM question_bank WHERE variant_group_id = ? ORDER BY variant_index
           `).all(q.variant_group_id);
 
-          const nextVariantIndex = ((existingSubmission?.attempt_count || 0)) % 3;
-          const retryQuestion = variants[nextVariantIndex] && variants[nextVariantIndex].id !== q.id
-            ? variants[nextVariantIndex]
-            : variants[(nextVariantIndex + 1) % 3];
+          const unusedVariants = variants.filter(v => v.id !== q.id);
+          const retryQuestion = unusedVariants.length > 0 ? unusedVariants[0] : variants[0];
 
           if (retryQuestion) {
             if (retryQuestion.options) {
@@ -854,8 +967,10 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
           }
         }
       }
+      } // end of else (non-retry)
 
-      const totalScore = Math.round((correctCount / questions.length) * 100);
+      const totalQuestionCount = isRetry ? answers.length : questions.length;
+      const totalScore = Math.round((correctCount / totalQuestionCount) * 100);
       const baseGoldReward = Math.floor((totalScore / 100) * (assignment.max_exp || 30));
 
       // 计算本次提交内的最长连续答对（streak）以及 Combo 加成
@@ -899,7 +1014,7 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
           VALUES (?, ?, 1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         `);
         for (const r of results) {
-          insertQA.run(newSubId, r.question_id, r.user_answer, r.is_correct ? 1 : 0, r.score, 100 / questions.length);
+          insertQA.run(newSubId, r.question_id, r.user_answer, r.is_correct ? 1 : 0, r.score, 100 / totalQuestionCount);
         }
 
         for (const wq of wrongQuestions) {
@@ -908,10 +1023,11 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
           const existingWQ = db.prepare('SELECT id, wrong_count FROM wrong_questions WHERE user_id = ? AND question_id = ?')
             .get(req.user.userId, wq.original_question_id);
           if (existingWQ) {
-            db.prepare('UPDATE wrong_questions SET wrong_count = wrong_count + 1 WHERE id = ?').run(existingWQ.id);
+            db.prepare('UPDATE wrong_questions SET wrong_count = wrong_count + 1, wrong_answer = ?, correct_answer = ?, reviewed = 0 WHERE id = ?')
+              .run(r.user_answer || '', r.correct_answer, existingWQ.id);
           } else {
             db.prepare(`
-              INSERT INTO wrong_questions (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed, wrong_count)
+              INSERT OR IGNORE INTO wrong_questions (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed, wrong_count)
               VALUES (?, ?, ?, ?, ?, ?, 0, 1)
             `).run(req.user.userId, req.params.id, wq.original_question_id, r.user_answer, r.correct_answer, r.analysis);
           }
@@ -930,7 +1046,7 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
           VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         `);
         for (const r of results) {
-          insertQA.run(submissionId, r.question_id, (existingSubmission?.attempt_count || 0) + 1, r.user_answer, r.is_correct ? 1 : 0, r.score, 100 / questions.length);
+          insertQA.run(submissionId, r.question_id, (existingSubmission?.attempt_count || 0) + 1, r.user_answer, r.is_correct ? 1 : 0, r.score, 100 / totalQuestionCount);
         }
 
         // 只增加金币差额
@@ -954,7 +1070,7 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
 
       // 更新知识点统计
       try {
-        const today = new Date().toISOString().split('T')[0];
+        const today = getChinaDate();
         const insertKnowledgePoint = db.prepare(`
           INSERT OR IGNORE INTO knowledge_point_stats (user_id, knowledge_point, date, total_attempts, correct_attempts)
           VALUES (?, ?, ?, 1, ?)
@@ -997,8 +1113,8 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
         combo_label: comboLabel,
         perfect_bonus: perfectBonus,
         correct_count: correctCount,
-        total_count: questions.length,
-        wrong_count: questions.length - correctCount,
+        total_count: totalQuestionCount,
+        wrong_count: totalQuestionCount - correctCount,
         wrong_questions: wrongQuestions,
         can_retry: wrongQuestions.length > 0
       });
@@ -1348,7 +1464,7 @@ router.post('/wrong/:id/review', authenticateToken, (req, res) => {
     }
     // 累加今日复习错题任务进度
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getChinaDate();
       const taskLog = db.prepare(`
         SELECT task_progress, task_target FROM daily_task_logs
         WHERE user_id = ? AND date = ? AND task_type = 'review_weak_point'

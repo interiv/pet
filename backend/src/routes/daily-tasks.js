@@ -3,12 +3,13 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { checkAndAwardAchievement } = require('./achievements');
+const { getChinaDate, getChinaYesterday } = require('../config/timezone');
 
 // 获取今日任务
 router.get('/', authenticateToken, (req, res) => {
   try {
     const userId = req.user.userId;
-    const today = new Date().toISOString().split('T')[0];
+    const today = getChinaDate();
 
     // 获取或创建今日任务记录
     let dailyTask = db.prepare(`
@@ -16,8 +17,7 @@ router.get('/', authenticateToken, (req, res) => {
     `).get(userId, today);
 
     if (!dailyTask) {
-      // 检查昨天的连续天数
-      const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+      const yesterday = getChinaYesterday();
       const yesterdayTask = db.prepare(`
         SELECT * FROM daily_tasks WHERE user_id = ? AND date = ?
       `).get(userId, yesterday);
@@ -105,14 +105,14 @@ router.get('/', authenticateToken, (req, res) => {
 // 更新任务进度（内部函数，供其他API调用）
 function updateTaskProgress(userId, taskType, progress) {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getChinaDate();
 
     let dailyTask = db.prepare(`
       SELECT * FROM daily_tasks WHERE user_id = ? AND date = ?
     `).get(userId, today);
 
     if (!dailyTask) {
-      const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+      const yesterday = getChinaYesterday();
       const yesterdayTask = db.prepare(`
         SELECT * FROM daily_tasks WHERE user_id = ? AND date = ?
       `).get(userId, yesterday);
@@ -191,7 +191,7 @@ router.post('/claim', authenticateToken, (req, res) => {
   try {
     const userId = req.user.userId;
     const { task_type } = req.body;
-    const today = new Date().toISOString().split('T')[0];
+    const today = getChinaDate();
 
     const taskLog = db.prepare(`
       SELECT * FROM daily_task_logs WHERE user_id = ? AND date = ? AND task_type = ?
@@ -264,7 +264,7 @@ router.post('/claim', authenticateToken, (req, res) => {
     if (dailyTask.tasks_completed >= dailyTask.total_tasks) {
       allCompleted = true;
       // 检查昨天的连续天数，避免同一天重复累加
-      const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+      const yesterday = getChinaYesterday();
       const yesterdayTask = db.prepare(`
         SELECT streak_days FROM daily_tasks WHERE user_id = ? AND date = ?
       `).get(userId, yesterday);

@@ -3,9 +3,10 @@
  * init_db.js 和 seed_achievements.js 共用此文件，避免重复维护。
  *
  * 道具奖励说明：reward_type='item' 时 reward_value 为 items 表的 id
- *   1=普通粮食(10金) 2=高级零食(50金) 3=特殊料理(100金) 8=快乐糖果(50金)
- *   10=经验药水(200金) 14=大治疗药剂(100金) 16=大体力药剂(100金)
- *   24=转生丹(1000金) 28=经验加倍卡(300金)
+ *   1=普通粮食(hunger+20,10金) 2=高级零食(hunger+50,50金) 3=特殊料理(hunger+80,100金)
+ *   8=快乐糖果(mood+50,50金) 13=经验药水(exp+200,200金) 14=超级经验药水(exp+500,500金)
+ *   17=大治疗药剂(health+100,100金) 19=大体力药剂(stamina+100,100金)
+ *   27=转生丹(1000金) 28=经验加倍卡(300金) 30=营养套餐(hunger+60,80金)
  */
 module.exports = [
   // ===== 宠物 (19个) =====
@@ -35,10 +36,10 @@ module.exports = [
   { name: '身经百战', description: '累计胜利50场', condition: JSON.stringify({ type: 'win_battle', count: 50 }), reward_type: 'item', reward_value: 10, category: 'battle', icon: '🛡️', sort_order: 22 },
   { name: '百战不殆', description: '累计胜利100场', condition: JSON.stringify({ type: 'win_battle', count: 100 }), reward_type: 'gold', reward_value: 800, category: 'battle', icon: '🏅', sort_order: 23 },
   { name: '连胜新星', description: '获得3连胜', condition: JSON.stringify({ type: 'win_streak', count: 3 }), reward_type: 'gold', reward_value: 150, category: 'battle', icon: '🔥', sort_order: 24 },
-  { name: '连胜达人', description: '获得10连胜', condition: JSON.stringify({ type: 'win_streak', count: 10 }), reward_type: 'item', reward_value: 16, category: 'battle', icon: '💥', sort_order: 25 },
+  { name: '连胜达人', description: '获得10连胜', condition: JSON.stringify({ type: 'win_streak', count: 10 }), reward_type: 'item', reward_value: 17, category: 'battle', icon: '💥', sort_order: 25 },
   { name: '连胜王者', description: '获得25连胜', condition: JSON.stringify({ type: 'win_streak', count: 25 }), reward_type: 'gold', reward_value: 1000, category: 'battle', icon: '👹', sort_order: 26 },
   { name: '首战失利', description: '经历第一次战败', condition: JSON.stringify({ type: 'lose_battle', count: 1 }), reward_type: 'gold', reward_value: 50, category: 'battle', icon: '💪', sort_order: 27 },
-  { name: '越挫越勇', description: '累计失败10场', condition: JSON.stringify({ type: 'lose_battle', count: 10 }), reward_type: 'item', reward_value: 14, category: 'battle', icon: '🩹', sort_order: 28 },
+  { name: '越挫越勇', description: '累计失败10场', condition: JSON.stringify({ type: 'lose_battle', count: 10 }), reward_type: 'item', reward_value: 16, category: 'battle', icon: '🩹', sort_order: 28 },
   { name: 'BOSS猎手', description: '对BOSS累计造成500伤害', condition: JSON.stringify({ type: 'boss_damage', damage: 500 }), reward_type: 'gold', reward_value: 300, category: 'battle', icon: '🐉', sort_order: 29 },
   { name: 'BOSS终结者', description: '参与击杀3只BOSS', condition: JSON.stringify({ type: 'boss_kill', count: 3 }), reward_type: 'item', reward_value: 10, category: 'battle', icon: '☠️', sort_order: 30 },
   { name: '屠龙勇士', description: '参与击杀10只BOSS', condition: JSON.stringify({ type: 'boss_kill', count: 10 }), reward_type: 'gold', reward_value: 1000, category: 'battle', icon: '🐲', sort_order: 31 },

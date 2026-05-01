@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { getChinaDate } = require('../config/timezone');
 
 const requireAdmin = (req, res, next) => {
   if (req.user.role !== 'admin') {
@@ -959,7 +960,7 @@ router.get('/statistics', authenticateToken, (req, res) => {
     };
 
     if (userRole === 'admin') {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getChinaDate();
 
       const totalClasses = db.prepare(`SELECT COUNT(*) as count FROM classes`).get().count;
       const totalPets = db.prepare(`SELECT COUNT(*) as count FROM pets`).get().count;

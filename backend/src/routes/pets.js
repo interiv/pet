@@ -251,7 +251,7 @@ router.post('/feed', authenticateToken, (req, res) => {
     const { item_id } = req.body;
 
     const userItem = db.prepare(`
-      SELECT ui.*, i.effect_type, i.effect_value
+      SELECT ui.*, i.effect_type, i.effect_value, i.name as item_name
       FROM user_items ui
       JOIN items i ON ui.item_id = i.id
       WHERE ui.user_id = ? AND ui.item_id = ? AND ui.quantity > 0
@@ -323,6 +323,16 @@ router.post('/feed', authenticateToken, (req, res) => {
         fullQuery += ', mood = MIN(100, mood + 5)';
       } else if (userItem.effect_type === 'stamina') {
         fullQuery += ', mood = MIN(100, mood + 3)';
+      }
+
+      const bonusEffects = {
+        '万灵药': ', hunger = 100, mood = 100',
+        '营养套餐': ', mood = MIN(100, mood + 30)',
+        '满汉全席': ', mood = 100, stamina = 100',
+        '灵丹妙药': ', health = 100, mood = 100'
+      };
+      if (bonusEffects[userItem.item_name]) {
+        fullQuery += bonusEffects[userItem.item_name];
       }
 
       fullQuery += ', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?';
