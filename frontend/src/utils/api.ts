@@ -482,9 +482,14 @@ export const schoolAPI = {
 // BOSS战相关 API
 export const bossBattleAPI = {
   getCurrentBoss: (classId: number) => api.get(`/boss-battles/current/${classId}`),
+  listBosses: (classId: number) => api.get(`/boss-battles/list/${classId}`),
   getQuestion: (bossId: number) => api.get(`/boss-battles/${bossId}/question`),
   attack: (bossId: number, data: { question_id: number; answer: string }) =>
     api.post(`/boss-battles/${bossId}/attack`, data),
+  create: (data: { class_id: number; boss_name: string; boss_level: number; knowledge_point?: string; duration_hours?: number }) =>
+    api.post('/boss-battles/create', data),
+  autoGenerate: (data: { class_id: number }) =>
+    api.post('/boss-battles/auto-generate', data),
 };
 
 export default api;

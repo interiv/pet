@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge, Switch, Alert, Empty, Spin } from 'antd';
-import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined } from '@ant-design/icons';
-import { adminAPI, schoolAPI, assignmentAPI } from '../utils/api';
+import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined, FireOutlined } from '@ant-design/icons';
+import { adminAPI, schoolAPI, assignmentAPI, bossBattleAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import ClassInvitationManager from './ClassInvitationManager';
 import AchievementManagement from './admin/AchievementManagement';
@@ -75,7 +75,10 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
           { key: 'applications', label: <span><TeamOutlined /> 入学申请</span>, children: <ApplicationManagement /> },
         );
       }
-      items.push({ key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> });
+      items.push(
+        { key: 'boss', label: <span><FireOutlined /> BOSS管理</span>, children: <BossManagement /> },
+        { key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> },
+      );
       return items;
     }
     return [];
@@ -2008,6 +2011,280 @@ const DataView: React.FC = () => {
             }] : []),
           ]}
         />
+      </Modal>
+    </div>
+  );
+};
+
+const BossManagement: React.FC = () => {
+  const { user } = useAuthStore();
+  const isMobile = useMobile();
+  const [classes, setClasses] = useState<any[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
+  const [currentBoss, setCurrentBoss] = useState<any>(null);
+  const [bossList, setBossList] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [createForm] = Form.useForm();
+  const [creating, setCreating] = useState(false);
+  const [autoGenerating, setAutoGenerating] = useState(false);
+  const [autoPreviewVisible, setAutoPreviewVisible] = useState(false);
+  const [autoPreviewData, setAutoPreviewData] = useState<any>(null);
+
+  useEffect(() => {
+    const teacherClasses = (user as any)?.teacher_classes || [];
+    setClasses(teacherClasses);
+    if (teacherClasses.length > 0) {
+      setSelectedClassId(teacherClasses[0].id);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (selectedClassId) {
+      loadCurrentBoss();
+      loadBossList();
+    }
+  }, [selectedClassId]);
+
+  const loadCurrentBoss = async () => {
+    if (!selectedClassId) return;
+    try {
+      const res = await bossBattleAPI.getCurrentBoss(selectedClassId);
+      setCurrentBoss(res.data.boss);
+    } catch (error) {
+      console.error('加载BOSS失败:', error);
+    }
+  };
+
+  const loadBossList = async () => {
+    if (!selectedClassId) return;
+    setLoading(true);
+    try {
+      const res = await bossBattleAPI.listBosses(selectedClassId);
+      setBossList(res.data.bosses || []);
+    } catch (error) {
+      console.error('加载BOSS列表失败:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreate = async (values: any) => {
+    if (!selectedClassId) {
+      message.error('请先选择班级');
+      return;
+    }
+    setCreating(true);
+    try {
+      await bossBattleAPI.create({
+        class_id: selectedClassId,
+        boss_name: values.boss_name,
+        boss_level: values.boss_level,
+        knowledge_point: values.knowledge_point || undefined,
+        duration_hours: values.duration_hours || 24,
+      });
+      message.success('BOSS创建成功！');
+      setCreateModalVisible(false);
+      createForm.resetFields();
+      loadCurrentBoss();
+      loadBossList();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '创建失败');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleAutoGeneratePreview = async () => {
+    if (!selectedClassId) {
+      message.error('请先选择班级');
+      return;
+    }
+    setAutoGenerating(true);
+    try {
+      const res = await bossBattleAPI.autoGenerate({ class_id: selectedClassId });
+      setAutoPreviewData(res.data);
+      setAutoPreviewVisible(true);
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '分析失败');
+    } finally {
+      setAutoGenerating(false);
+    }
+  };
+
+  const handleConfirmAutoGenerate = () => {
+    setAutoPreviewVisible(false);
+    setAutoPreviewData(null);
+    message.success('BOSS已创建！');
+    loadCurrentBoss();
+    loadBossList();
+  };
+
+  const selectedClassName = classes.find(c => c.id === selectedClassId)?.name || '';
+
+  const statusConfig: Record<string, { color: string; label: string }> = {
+    active: { color: 'red', label: '进行中' },
+    defeated: { color: 'green', label: '已击败' },
+    expired: { color: 'default', label: '已过期' },
+  };
+
+  const bossColumns = [
+    { title: 'BOSS名称', dataIndex: 'boss_name', key: 'boss_name', render: (name: string, record: any) => (
+      <span>{record.boss_icon || '👹'} {name}</span>
+    )},
+    { title: '等级', dataIndex: 'boss_level', key: 'boss_level', render: (lv: number) => <Tag>Lv.{lv}</Tag> },
+    { title: '血量', dataIndex: 'boss_max_hp', key: 'boss_max_hp' },
+    { title: '知识点', dataIndex: 'knowledge_point', key: 'knowledge_point', render: (kp: string) => kp ? <Tag color="blue">{kp}</Tag> : '-' },
+    { title: '状态', dataIndex: 'status', key: 'status', render: (s: string) => {
+      const cfg = statusConfig[s] || { color: 'default', label: s };
+      return <Tag color={cfg.color}>{cfg.label}</Tag>;
+    }},
+    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', render: (t: string) => new Date(t).toLocaleString() },
+    { title: '过期时间', dataIndex: 'expires_at', key: 'expires_at', render: (t: string) => new Date(t).toLocaleString() },
+  ];
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <Space>
+          <span style={{ fontWeight: 'bold' }}>选择班级：</span>
+          <Select
+            value={selectedClassId}
+            onChange={setSelectedClassId}
+            style={{ width: 200 }}
+            options={classes.map((c: any) => ({ label: c.name, value: c.id }))}
+          />
+        </Space>
+        <Space>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setCreateModalVisible(true)}
+            disabled={!!currentBoss}
+          >
+            创建BOSS
+          </Button>
+          <Button
+            icon={<FireOutlined />}
+            onClick={handleAutoGeneratePreview}
+            loading={autoGenerating}
+            disabled={!!currentBoss}
+          >
+            从错题自动生成
+          </Button>
+        </Space>
+      </div>
+
+      {currentBoss && (
+        <Card
+          title={<span><FireOutlined style={{ color: '#f5222d' }} /> 当前活跃BOSS</span>}
+          style={{ borderRadius: 12, marginBottom: 24 }}
+        >
+          <Row gutter={[24, 16]}>
+            <Col xs={24} md={8} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 80 }}>{currentBoss.boss_icon || '👹'}</div>
+              <h3>{currentBoss.boss_name}</h3>
+              <Tag color="red">Lv.{currentBoss.boss_level}</Tag>
+              {currentBoss.knowledge_point && <Tag color="blue">{currentBoss.knowledge_point}</Tag>}
+            </Col>
+            <Col xs={24} md={16}>
+              <Descriptions column={isMobile ? 1 : 2} size="small">
+                <Descriptions.Item label="BOSS血量">{currentBoss.boss_max_hp}</Descriptions.Item>
+                <Descriptions.Item label="当前血量">{currentBoss.current_hp}</Descriptions.Item>
+                <Descriptions.Item label="击败进度">{currentBoss.progress}%</Descriptions.Item>
+                <Descriptions.Item label="参与人数">{currentBoss.participant_count}</Descriptions.Item>
+                <Descriptions.Item label="创建时间">{new Date(currentBoss.created_at).toLocaleString()}</Descriptions.Item>
+                <Descriptions.Item label="过期时间">{new Date(currentBoss.expires_at).toLocaleString()}</Descriptions.Item>
+              </Descriptions>
+            </Col>
+          </Row>
+        </Card>
+      )}
+
+      <Card title="BOSS 历史记录" size="small">
+        <Table
+          dataSource={bossList}
+          columns={bossColumns}
+          rowKey="id"
+          loading={loading}
+          pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
+          size="small"
+          locale={{ emptyText: <Empty description={`${selectedClassName}暂无BOSS记录`} /> }}
+        />
+      </Card>
+
+      <Modal
+        title="创建BOSS"
+        open={createModalVisible}
+        onCancel={() => { setCreateModalVisible(false); createForm.resetFields(); }}
+        onOk={() => createForm.submit()}
+        confirmLoading={creating}
+        destroyOnClose
+      >
+        <Form form={createForm} layout="vertical" onFinish={handleCreate}>
+          <Form.Item
+            name="boss_name"
+            label="BOSS名称"
+            rules={[{ required: true, message: '请输入BOSS名称' }]}
+          >
+            <Input placeholder="例如：错题之王" />
+          </Form.Item>
+          <Form.Item
+            name="boss_level"
+            label="BOSS等级"
+            rules={[{ required: true, message: '请输入BOSS等级' }]}
+            extra="血量 = 等级 × 1000"
+          >
+            <InputNumber min={1} max={50} style={{ width: '100%' }} placeholder="1-50" />
+          </Form.Item>
+          <Form.Item
+            name="knowledge_point"
+            label="关联知识点（可选）"
+            extra="BOSS战题目将优先从该知识点选取"
+          >
+            <Input placeholder="例如：二次函数" />
+          </Form.Item>
+          <Form.Item
+            name="duration_hours"
+            label="持续时间（小时）"
+            initialValue={24}
+          >
+            <InputNumber min={1} max={168} style={{ width: '100%' }} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="错题分析结果"
+        open={autoPreviewVisible}
+        onCancel={() => setAutoPreviewVisible(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setAutoPreviewVisible(false)}>取消</Button>,
+          <Button key="confirm" type="primary" onClick={handleConfirmAutoGenerate}>确认创建</Button>,
+        ]}
+      >
+        {autoPreviewData && (
+          <Descriptions column={1} bordered size="small">
+            <Descriptions.Item label="BOSS名称">
+              {autoPreviewData.boss_name || '错题之王'}
+            </Descriptions.Item>
+            <Descriptions.Item label="BOSS等级">
+              <Tag color="red">Lv.{autoPreviewData.boss_level}</Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="BOSS血量">
+              {autoPreviewData.boss_level * 1000}
+            </Descriptions.Item>
+            <Descriptions.Item label="关联知识点">
+              {autoPreviewData.knowledge_point || '通用'}
+            </Descriptions.Item>
+            <Descriptions.Item label="错题数量">
+              {autoPreviewData.error_count || 0} 道
+            </Descriptions.Item>
+            <Descriptions.Item label="生成依据">
+              基于班级错题数据分析，自动生成对应难度的BOSS
+            </Descriptions.Item>
+          </Descriptions>
+        )}
       </Modal>
     </div>
   );

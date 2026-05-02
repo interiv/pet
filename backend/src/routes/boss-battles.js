@@ -4,6 +4,21 @@ const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { checkAndAwardAchievement } = require('./achievements');
 
+// 获取班级BOSS列表
+router.get('/list/:classId', authenticateToken, (req, res) => {
+  try {
+    const bosses = db.prepare(`
+      SELECT * FROM boss_battles 
+      WHERE class_id = ?
+      ORDER BY created_at DESC
+    `).all(req.params.classId);
+    res.json({ bosses });
+  } catch (error) {
+    console.error('获取BOSS列表失败:', error);
+    res.status(500).json({ error: '获取BOSS列表失败' });
+  }
+});
+
 // 获取班级当前BOSS
 router.get('/current/:classId', authenticateToken, (req, res) => {
   try {

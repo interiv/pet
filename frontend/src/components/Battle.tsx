@@ -17,7 +17,7 @@ const useMobile = () => {
 };
 
 const Battle: React.FC = () => {
-  const { user } = useAuthStore();
+  const { user, currentClass } = useAuthStore();
   const { pet } = usePetStore();
   const isMobile = useMobile();
   const [opponents, setOpponents] = useState<any[]>([]);
@@ -46,12 +46,12 @@ const Battle: React.FC = () => {
     if (user) {
       loadHistory();
     }
-  }, [user]);
+  }, [user, currentClass]);
 
   const loadOpponents = async () => {
     try {
-      const response = await petAPI.getAllPets();
-      // 过滤掉自己的宠物
+      const classId = currentClass?.id || user?.class_id;
+      const response = await petAPI.getAllPets(classId ? { class_id: classId } : undefined);
       const others = (response.data.pets || []).filter((p: any) => p.user_id !== user?.id);
       setOpponents(others);
     } catch (error) {
