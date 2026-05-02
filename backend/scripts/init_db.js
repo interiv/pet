@@ -784,6 +784,25 @@ db.exec(`
     UNIQUE(boss_battle_id, user_id, reward_type)
   );
 
+  -- ==================== Boss战斗题目关联 ====================
+  CREATE TABLE IF NOT EXISTS boss_battle_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    boss_battle_id INTEGER NOT NULL,
+    question_id INTEGER NOT NULL,
+    UNIQUE(boss_battle_id, question_id),
+    FOREIGN KEY (boss_battle_id) REFERENCES boss_battles(id),
+    FOREIGN KEY (question_id) REFERENCES question_bank(id)
+  );
+
+  -- ==================== Boss战斗奖励配置 ====================
+  CREATE TABLE IF NOT EXISTS boss_battle_reward_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    boss_battle_id INTEGER NOT NULL,
+    reward_type TEXT NOT NULL,
+    reward_value INTEGER NOT NULL,
+    FOREIGN KEY (boss_battle_id) REFERENCES boss_battles(id)
+  );
+
   -- ==================== AI配置 ====================
   CREATE TABLE ai_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

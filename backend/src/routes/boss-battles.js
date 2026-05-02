@@ -4,13 +4,38 @@ const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { checkAndAwardAchievement } = require('./achievements');
 
-// 获取班级BOSS列表
+const BOSS_ICONS = ['👹', '👑', '🐉', '👿', '🦹', '💀', '🧌', '👹', '🔥', '⚡'];
+const BOSS_NAMES_PREFIX = ['暗影', '烈焰', '寒冰', '雷霆', '混沌', '深渊', '虚空', '毁灭', '末日', '永恒'];
+
+function checkHeadTeacher(userId, classId) {
+  const row = db.prepare(
+    `SELECT role FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
+  ).get(userId, classId);
+  return row && row.role === 'head_teacher';
+}
+
+function isAdmin(userId) {
+  const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId);
+  return user && user.role === 'admin';
+}
+
+function requireHeadTeacher(req, res, next) {
+  const { class_id } = req.body;
+  if (!class_id) return res.status(400).json({ error: '请提供班级ID' });
+  if (isAdmin(req.user.userId)) return next();
+  if (checkHeadTeacher(req.user.userId, class_id)) return next();
+  return res.status(403).json({ error: '只有班主任才能操作本班的BOSS战' });
+}
+
 router.get('/list/:classId', authenticateToken, (req, res) => {
   try {
     const bosses = db.prepare(`
-      SELECT * FROM boss_battles 
-      WHERE class_id = ?
-      ORDER BY created_at DESC
+      SELECT bb.*, 
+        (SELECT COUNT(*) FROM boss_battle_participants WHERE boss_battle_id = bb.id) as participant_count,
+        (SELECT COALESCE(SUM(damage_dealt), 0) FROM boss_battle_participants WHERE boss_battle_id = bb.id) as total_damage
+      FROM boss_battles bb
+      WHERE bb.class_id = ?
+      ORDER BY bb.created_at DESC
     `).all(req.params.classId);
     res.json({ bosses });
   } catch (error) {
@@ -19,7 +44,6 @@ router.get('/list/:classId', authenticateToken, (req, res) => {
   }
 });
 
-// 获取班级当前BOSS（含已击败但未领奖的）
 router.get('/current/:classId', authenticateToken, (req, res) => {
   try {
     let boss = db.prepare(`
@@ -29,7 +53,7 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
       LIMIT 1
     `).get(req.params.classId);
 
-    let myRewards: any[] = [];
+    let myRewards = [];
     let bossStatus = boss ? 'active' : null;
 
     if (!boss) {
@@ -46,7 +70,7 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
           WHERE boss_battle_id = ? AND user_id = ?
         `).all(boss.id, req.user.userId);
 
-        const allClaimed = myRewards.length > 0 && myRewards.every((r: any) => r.claimed);
+        const allClaimed = myRewards.length > 0 && myRewards.every((r) => r.claimed);
         if (allClaimed) {
           boss = null;
         } else {
@@ -73,7 +97,7 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
       ORDER BY bbp.damage_dealt DESC
     `).all(boss.id);
 
-    const totalDamage = participants.reduce((sum: number, p: any) => sum + p.damage_dealt, 0);
+    const totalDamage = participants.reduce((sum, p) => sum + p.damage_dealt, 0);
     const progress = Math.round((totalDamage / boss.boss_max_hp) * 100);
 
     res.json({
@@ -86,7 +110,7 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
       },
       participants,
       leaderboard: participants.slice(0, 10),
-      myRewards: myRewards.map((r: any) => ({
+      myRewards: myRewards.map((r) => ({
         id: r.id,
         type: r.reward_type,
         value: r.reward_value,
@@ -99,26 +123,60 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
   }
 });
 
-// 创建BOSS (教师)
+router.get('/wrong-questions/:classId', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  try {
+    const classId = req.params.classId;
+    if (!isAdmin(req.user.userId) && !checkHeadTeacher(req.user.userId, classId)) {
+      return res.status(403).json({ error: '只有班主任才能查看班级错题' });
+    }
+
+    const wrongQuestions = db.prepare(`
+      SELECT 
+        wq.id as wrong_id,
+        wq.question_id,
+        wq.wrong_count,
+        qb.subject,
+        qb.topic,
+        qb.difficulty,
+        qb.type,
+        qb.content,
+        qb.options,
+        qb.answer,
+        qb.knowledge_point,
+        COUNT(DISTINCT wq.user_id) as error_student_count
+      FROM wrong_questions wq
+      JOIN users u ON wq.user_id = u.id
+      JOIN question_bank qb ON wq.question_id = qb.id
+      WHERE u.class_id = ?
+      GROUP BY wq.question_id
+      ORDER BY error_student_count DESC, wq.wrong_count DESC
+    `).all(classId);
+
+    res.json({ wrongQuestions });
+  } catch (error) {
+    console.error('获取错题列表失败:', error);
+    res.status(500).json({ error: '获取错题列表失败' });
+  }
+});
+
 router.post('/create', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
   try {
-    const { class_id, boss_name, boss_level, knowledge_point, duration_hours = 24 } = req.body;
-    
+    const {
+      class_id, boss_name, boss_level, boss_icon, boss_description,
+      knowledge_point, duration_hours = 24,
+      boss_hp, reward_gold, reward_exp, reward_equipment_id,
+      question_source = 'knowledge',
+      question_ids,
+    } = req.body;
+
     if (!class_id || !boss_name || !boss_level) {
       return res.status(400).json({ error: '请提供完整信息' });
     }
 
-    // 权限：教师必须属于该班级（admin 直通）
-    if (req.user.role !== 'admin') {
-      const belongs = db.prepare(
-        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
-      ).get(req.user.userId, class_id);
-      if (!belongs) {
-        return res.status(403).json({ error: '无权为该班级创建 BOSS' });
-      }
+    if (!isAdmin(req.user.userId) && !checkHeadTeacher(req.user.userId, class_id)) {
+      return res.status(403).json({ error: '只有班主任才能为本班创建BOSS战' });
     }
 
-    // 检查是否有活跃的BOSS
     const existingBoss = db.prepare(`
       SELECT id FROM boss_battles WHERE class_id = ? AND status = 'active'
     `).get(class_id);
@@ -127,10 +185,10 @@ router.post('/create', authenticateToken, authorizeRole('teacher', 'admin'), (re
       return res.status(400).json({ error: '班级已有活跃的BOSS' });
     }
 
-    // 计算BOSS血量 (等级 * 1000)
-    const bossHp = boss_level * 1000;
+    const finalHp = boss_hp || boss_level * 1000;
+    const finalIcon = boss_icon || BOSS_ICONS[Math.floor(Math.random() * BOSS_ICONS.length)];
+    const finalDesc = boss_description || `来自${knowledge_point || '未知领域'}的强大BOSS`;
 
-    // 计算过期时间
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + duration_hours);
 
@@ -143,19 +201,47 @@ router.post('/create', authenticateToken, authorizeRole('teacher', 'admin'), (re
     `).run(
       class_id,
       boss_name,
-      `来自${knowledge_point || '未知'}的强大BOSS`,
-      '👹',
-      bossHp,
-      bossHp,
+      finalDesc,
+      finalIcon,
+      finalHp,
+      finalHp,
       boss_level,
       knowledge_point || null,
       req.user.userId,
       expiresAt.toISOString()
     );
 
+    const bossId = result.lastInsertRowid;
+
+    if (question_source === 'selected' && question_ids && question_ids.length > 0) {
+      for (const qId of question_ids) {
+        db.prepare(`
+          INSERT OR IGNORE INTO boss_battle_questions (boss_battle_id, question_id) VALUES (?, ?)
+        `).run(bossId, qId);
+      }
+    }
+
+    if (reward_gold || reward_exp || reward_equipment_id) {
+      if (reward_gold) {
+        db.prepare(`
+          INSERT INTO boss_battle_reward_config (boss_battle_id, reward_type, reward_value) VALUES (?, 'gold', ?)
+        `).run(bossId, reward_gold);
+      }
+      if (reward_exp) {
+        db.prepare(`
+          INSERT INTO boss_battle_reward_config (boss_battle_id, reward_type, reward_value) VALUES (?, 'exp', ?)
+        `).run(bossId, reward_exp);
+      }
+      if (reward_equipment_id) {
+        db.prepare(`
+          INSERT INTO boss_battle_reward_config (boss_battle_id, reward_type, reward_value) VALUES (?, 'equipment', ?)
+        `).run(bossId, reward_equipment_id);
+      }
+    }
+
     res.json({
       message: 'BOSS创建成功',
-      boss_id: result.lastInsertRowid
+      boss_id: bossId
     });
   } catch (error) {
     console.error('创建BOSS失败:', error);
@@ -163,52 +249,54 @@ router.post('/create', authenticateToken, authorizeRole('teacher', 'admin'), (re
   }
 });
 
-// 自动从错题生成BOSS
 router.post('/auto-generate', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
   try {
-    const { class_id } = req.body;
+    const { class_id, duration_hours = 48 } = req.body;
     if (!class_id) {
       return res.status(400).json({ error: '请提供班级ID' });
     }
 
-    // 权限：教师必须属于该班级（admin 直通）
-    if (req.user.role !== 'admin') {
-      const belongs = db.prepare(
-        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
-      ).get(req.user.userId, class_id);
-      if (!belongs) {
-        return res.status(403).json({ error: '无权为该班级生成 BOSS' });
-      }
+    if (!isAdmin(req.user.userId) && !checkHeadTeacher(req.user.userId, class_id)) {
+      return res.status(403).json({ error: '只有班主任才能为本班生成BOSS战' });
     }
 
-    // 查找班级错误率最高的知识点
-    const weakPoint = db.prepare(`
+    const existingBoss = db.prepare(`
+      SELECT id FROM boss_battles WHERE class_id = ? AND status = 'active'
+    `).get(class_id);
+    if (existingBoss) {
+      return res.status(400).json({ error: '班级已有活跃的BOSS' });
+    }
+
+    const weakPoints = db.prepare(`
       SELECT 
         wq.question_id,
-        COUNT(*) as error_count
+        qb.topic,
+        qb.knowledge_point,
+        COUNT(DISTINCT wq.user_id) as error_student_count,
+        SUM(wq.wrong_count) as total_wrong_count
       FROM wrong_questions wq
       JOIN users u ON wq.user_id = u.id
+      JOIN question_bank qb ON wq.question_id = qb.id
       WHERE u.class_id = ?
       GROUP BY wq.question_id
-      ORDER BY error_count DESC
-      LIMIT 1
-    `).get(class_id);
+      ORDER BY error_student_count DESC, total_wrong_count DESC
+      LIMIT 20
+    `).all(class_id);
 
-    if (!weakPoint) {
-      return res.status(404).json({ error: '暂无错题数据' });
+    if (!weakPoints || weakPoints.length === 0) {
+      return res.status(404).json({ error: '暂无错题数据，无法生成BOSS' });
     }
 
-    // 获取题目信息
-    const question = db.prepare('SELECT * FROM question_bank WHERE id = ?').get(weakPoint.question_id);
-    
-    // 计算BOSS等级 (基于错误率)
-    const totalStudents = db.prepare('SELECT COUNT(*) as count FROM users WHERE class_id = ?').get(class_id).count;
-    const bossLevel = Math.min(20, Math.max(5, Math.round(weakPoint.error_count / totalStudents * 10)));
-
-    // 创建BOSS
+    const topWeakPoint = weakPoints[0];
+    const totalStudents = db.prepare('SELECT COUNT(*) as count FROM users WHERE class_id = ? AND role = \'student\'').get(class_id).count || 1;
+    const bossLevel = Math.min(20, Math.max(3, Math.round(topWeakPoint.error_student_count / totalStudents * 15)));
     const bossHp = bossLevel * 1000;
+    const bossIcon = BOSS_ICONS[Math.floor(Math.random() * BOSS_ICONS.length)];
+    const bossNamePrefix = BOSS_NAMES_PREFIX[Math.floor(Math.random() * BOSS_NAMES_PREFIX.length)];
+    const knowledgePoint = topWeakPoint.knowledge_point || topWeakPoint.topic || '综合';
+
     const expiresAt = new Date();
-    expiresAt.setHours(expiresAt.getHours() + 48); // 48小时
+    expiresAt.setHours(expiresAt.getHours() + duration_hours);
 
     const result = db.prepare(`
       INSERT INTO boss_battles (
@@ -218,23 +306,35 @@ router.post('/auto-generate', authenticateToken, authorizeRole('teacher', 'admin
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       class_id,
-      `${question.topic || '错题'}之王`,
-      `由${weakPoint.error_count}道错题凝聚而成的强大BOSS`,
-      '👑',
+      `${bossNamePrefix}${knowledgePoint}之王`,
+      `由${topWeakPoint.error_student_count}位同学的${weakPoints.length}道错题凝聚而成的强大BOSS`,
+      bossIcon,
       bossHp,
       bossHp,
       bossLevel,
-      question.topic || null,
-      question.id,
+      knowledgePoint,
+      topWeakPoint.question_id,
       req.user.userId,
       expiresAt.toISOString()
     );
 
+    const bossId = result.lastInsertRowid;
+
+    for (const wp of weakPoints) {
+      db.prepare(`
+        INSERT OR IGNORE INTO boss_battle_questions (boss_battle_id, question_id) VALUES (?, ?)
+      `).run(bossId, wp.question_id);
+    }
+
     res.json({
       message: 'BOSS自动生成成功',
-      boss_id: result.lastInsertRowid,
+      boss_id: bossId,
+      boss_name: `${bossNamePrefix}${knowledgePoint}之王`,
       boss_level: bossLevel,
-      error_count: weakPoint.error_count
+      boss_hp: bossHp,
+      error_count: weakPoints.length,
+      error_student_count: topWeakPoint.error_student_count,
+      knowledge_point: knowledgePoint,
     });
   } catch (error) {
     console.error('自动生成BOSS失败:', error);
@@ -242,7 +342,112 @@ router.post('/auto-generate', authenticateToken, authorizeRole('teacher', 'admin
   }
 });
 
-// 获取Boss关联题目 (答题攻击用)
+router.get('/:bossId/detail', authenticateToken, (req, res) => {
+  try {
+    const boss = db.prepare('SELECT * FROM boss_battles WHERE id = ?').get(req.params.bossId);
+    if (!boss) {
+      return res.status(404).json({ error: 'BOSS不存在' });
+    }
+
+    const participants = db.prepare(`
+      SELECT bbp.*, u.username, p.name as pet_name, p.level as pet_level
+      FROM boss_battle_participants bbp
+      JOIN users u ON bbp.user_id = u.id
+      LEFT JOIN pets p ON bbp.pet_id = p.id
+      WHERE bbp.boss_battle_id = ?
+      ORDER BY bbp.damage_dealt DESC
+    `).all(boss.id);
+
+    const totalDamage = participants.reduce((sum, p) => sum + p.damage_dealt, 0);
+
+    const rewardConfig = db.prepare(`
+      SELECT * FROM boss_battle_reward_config WHERE boss_battle_id = ?
+    `).all(boss.id);
+
+    const rewards = db.prepare(`
+      SELECT * FROM boss_battle_rewards WHERE boss_battle_id = ?
+    `).all(boss.id);
+
+    res.json({
+      boss: {
+        ...boss,
+        current_hp: Math.max(0, boss.boss_max_hp - totalDamage),
+        total_damage: totalDamage,
+        participant_count: participants.length,
+      },
+      participants,
+      reward_config: rewardConfig,
+      rewards,
+    });
+  } catch (error) {
+    console.error('获取BOSS详情失败:', error);
+    res.status(500).json({ error: '获取BOSS详情失败' });
+  }
+});
+
+router.post('/:bossId/terminate', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  try {
+    const boss = db.prepare('SELECT * FROM boss_battles WHERE id = ?').get(req.params.bossId);
+    if (!boss) {
+      return res.status(404).json({ error: 'BOSS不存在' });
+    }
+
+    if (boss.status !== 'active') {
+      return res.status(400).json({ error: '只能终止进行中的BOSS' });
+    }
+
+    if (!isAdmin(req.user.userId) && !checkHeadTeacher(req.user.userId, boss.class_id)) {
+      return res.status(403).json({ error: '只有班主任才能终止本班的BOSS战' });
+    }
+
+    const totalDamage = db.prepare(`
+      SELECT COALESCE(SUM(damage_dealt), 0) as total FROM boss_battle_participants WHERE boss_battle_id = ?
+    `).get(boss.id).total;
+
+    if (totalDamage >= boss.boss_max_hp) {
+      db.prepare(`
+        UPDATE boss_battles SET status = 'defeated', completed_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).run(boss.id);
+      distributeRewards(boss.id, boss.class_id);
+    } else {
+      db.prepare(`
+        UPDATE boss_battles SET status = 'expired', completed_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).run(boss.id);
+    }
+
+    res.json({ message: 'BOSS战已终止' });
+  } catch (error) {
+    console.error('终止BOSS失败:', error);
+    res.status(500).json({ error: '终止BOSS失败' });
+  }
+});
+
+router.delete('/:bossId', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  try {
+    const boss = db.prepare('SELECT * FROM boss_battles WHERE id = ?').get(req.params.bossId);
+    if (!boss) {
+      return res.status(404).json({ error: 'BOSS不存在' });
+    }
+
+    if (boss.status === 'active') {
+      return res.status(400).json({ error: '请先终止进行中的BOSS战再删除' });
+    }
+
+    if (!isAdmin(req.user.userId) && !checkHeadTeacher(req.user.userId, boss.class_id)) {
+      return res.status(403).json({ error: '只有班主任才能删除本班的BOSS记录' });
+    }
+
+    db.prepare('DELETE FROM boss_battle_rewards WHERE boss_battle_id = ?').run(boss.id);
+    db.prepare('DELETE FROM boss_battle_participants WHERE boss_battle_id = ?').run(boss.id);
+    db.prepare('DELETE FROM boss_battles WHERE id = ?').run(boss.id);
+
+    res.json({ message: 'BOSS记录已删除' });
+  } catch (error) {
+    console.error('删除BOSS失败:', error);
+    res.status(500).json({ error: '删除BOSS失败' });
+  }
+});
+
 router.get('/:bossId/question', authenticateToken, (req, res) => {
   try {
     const boss = db.prepare('SELECT * FROM boss_battles WHERE id = ? AND status = \'active\'').get(req.params.bossId);
@@ -252,12 +457,29 @@ router.get('/:bossId/question', authenticateToken, (req, res) => {
     }
 
     if (new Date() > new Date(boss.expires_at)) {
+      db.prepare('UPDATE boss_battles SET status = \'expired\' WHERE id = ?').run(boss.id);
       return res.status(400).json({ error: 'BOSS已过期' });
     }
 
-    // 选取题目：优先从Boss关联知识点选取，否则随机选取客观题
     let question;
-    if (boss.knowledge_point) {
+
+    const bossQuestions = db.prepare(`
+      SELECT question_id FROM boss_battle_questions WHERE boss_battle_id = ?
+    `).all(boss.id);
+
+    if (bossQuestions.length > 0) {
+      const qIds = bossQuestions.map((bq) => bq.question_id);
+      const placeholders = qIds.map(() => '?').join(',');
+      question = db.prepare(`
+        SELECT id, subject, topic, difficulty, type, content, options, hint
+        FROM question_bank
+        WHERE id IN (${placeholders}) AND type IN ('choice_single', 'choice_multi', 'judgment', 'fill_blank')
+        ORDER BY RANDOM()
+        LIMIT 1
+      `).get(...qIds);
+    }
+
+    if (!question && boss.knowledge_point) {
       question = db.prepare(`
         SELECT id, subject, topic, difficulty, type, content, options, hint
         FROM question_bank
@@ -267,7 +489,6 @@ router.get('/:bossId/question', authenticateToken, (req, res) => {
       `).get(boss.knowledge_point);
     }
 
-    // 如果没有找到关联题目，从任意客观题中选取
     if (!question) {
       question = db.prepare(`
         SELECT id, subject, topic, difficulty, type, content, options, hint
@@ -282,7 +503,6 @@ router.get('/:bossId/question', authenticateToken, (req, res) => {
       return res.status(404).json({ error: '题库中没有可用的题目' });
     }
 
-    // 解析options
     let options = null;
     if (question.options) {
       try {
@@ -306,7 +526,6 @@ router.get('/:bossId/question', authenticateToken, (req, res) => {
   }
 });
 
-// 攻击BOSS (答题后造成伤害)
 router.post('/:bossId/attack', authenticateToken, (req, res) => {
   try {
     const { question_id, answer } = req.body;
@@ -321,7 +540,6 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
       return res.status(404).json({ error: 'BOSS不存在或已被击败' });
     }
 
-    // 检查是否过期
     if (new Date() > new Date(boss.expires_at)) {
       db.prepare('UPDATE boss_battles SET status = \'expired\' WHERE id = ?').run(boss.id);
       return res.status(400).json({ error: 'BOSS已过期' });
@@ -337,13 +555,11 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
       return res.status(404).json({ error: '还没有宠物' });
     }
 
-    // 攻击冷却检查（30秒）
     let participant = db.prepare(
       'SELECT * FROM boss_battle_participants WHERE boss_battle_id = ? AND user_id = ?'
     ).get(boss.id, req.user.userId);
 
     if (participant && participant.last_attack_at) {
-      // SQLite CURRENT_TIMESTAMP returns UTC, append 'Z' for correct parsing
       const lastAttack = new Date(participant.last_attack_at + 'Z').getTime();
       const now = Date.now();
       const cooldownMs = 30 * 1000;
@@ -354,13 +570,11 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
       }
     }
 
-    // 获取题目并验证答案
     const question = db.prepare('SELECT * FROM question_bank WHERE id = ?').get(question_id);
     if (!question) {
       return res.status(404).json({ error: '题目不存在' });
     }
 
-    // 验证答案正确性
     let isCorrect = false;
     const correctAnswer = question.answer;
     const studentAnswer = String(answer).trim();
@@ -375,13 +589,11 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
       isCorrect = studentAnswer === String(correctAnswer).trim();
     }
 
-    // 计算伤害
     const difficultyMultiplier = { easy: 0.5, medium: 1.0, hard: 1.5 };
     const baseDamage = pet.level * 10;
     const multiplier = difficultyMultiplier[question.difficulty] || 1.0;
     const totalDamage = isCorrect ? Math.round(baseDamage * multiplier) : 0;
 
-    // 首次参与则创建记录
     if (!participant) {
       db.prepare(`
         INSERT INTO boss_battle_participants (boss_battle_id, user_id, pet_id)
@@ -393,7 +605,6 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
       ).get(boss.id, req.user.userId);
     }
 
-    // 更新参与记录
     db.prepare(`
       UPDATE boss_battle_participants
       SET damage_dealt = damage_dealt + ?,
@@ -403,7 +614,6 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
       WHERE id = ?
     `).run(totalDamage, isCorrect ? 1 : 0, participant.id);
 
-    // 检查BOSS是否被击败
     const totalDamageDealt = db.prepare(`
       SELECT SUM(damage_dealt) as total FROM boss_battle_participants
       WHERE boss_battle_id = ?
@@ -420,7 +630,6 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
       distributeRewards(boss.id, boss.class_id);
     }
 
-    // 获取当前排行
     const leaderboard = db.prepare(`
       SELECT
         bbp.*,
@@ -447,7 +656,6 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
       leaderboard
     });
 
-    // 成就检查
     try {
       const myTotalDamage = participant.damage_dealt + totalDamage;
       checkAndAwardAchievement(req.user.userId, 'boss_damage', myTotalDamage);
@@ -462,7 +670,6 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
   }
 });
 
-// 领取奖励
 router.post('/:bossId/claim-reward', authenticateToken, (req, res) => {
   try {
     const boss = db.prepare('SELECT * FROM boss_battles WHERE id = ? AND status = \'defeated\'').get(req.params.bossId);
@@ -471,31 +678,48 @@ router.post('/:bossId/claim-reward', authenticateToken, (req, res) => {
       return res.status(404).json({ error: 'BOSS未被击败或不存在' });
     }
 
-    const reward = db.prepare(
+    const rewards = db.prepare(
       'SELECT * FROM boss_battle_rewards WHERE boss_battle_id = ? AND user_id = ?'
-    ).get(boss.id, req.user.userId);
+    ).all(boss.id, req.user.userId);
 
-    if (!reward) {
+    if (!rewards || rewards.length === 0) {
       return res.status(404).json({ error: '没有可领取的奖励' });
     }
 
-    if (reward.claimed) {
-      return res.status(400).json({ error: '奖励已领取' });
+    const unclaimed = rewards.filter(r => !r.claimed);
+    if (unclaimed.length === 0) {
+      return res.status(400).json({ error: '奖励已全部领取' });
     }
 
-    // 发放奖励
-    if (reward.reward_type === 'gold') {
-      db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(reward.reward_value, reward.reward_value, req.user.userId);
-    } else if (reward.reward_type === 'exp') {
-      db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ? WHERE user_id = ?').run(reward.reward_value, reward.reward_value, req.user.userId);
+    let totalGold = 0;
+    let totalExp = 0;
+    let equipmentGiven = null;
+
+    for (const reward of unclaimed) {
+      if (reward.reward_type === 'gold') {
+        db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(reward.reward_value, reward.reward_value, req.user.userId);
+        totalGold += reward.reward_value;
+      } else if (reward.reward_type === 'exp') {
+        db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ? WHERE user_id = ?').run(reward.reward_value, reward.reward_value, req.user.userId);
+        totalExp += reward.reward_value;
+      } else if (reward.reward_type === 'equipment') {
+        const equip = db.prepare('SELECT * FROM equipment WHERE id = ?').get(reward.reward_value);
+        if (equip) {
+          db.prepare('INSERT OR IGNORE INTO user_equipment (user_id, equipment_id, equipped) VALUES (?, ?, 0)').run(req.user.userId, equip.id);
+          equipmentGiven = equip;
+        }
+      }
+      db.prepare('UPDATE boss_battle_rewards SET claimed = 1 WHERE id = ?').run(reward.id);
     }
 
-    // 标记已领取
-    db.prepare('UPDATE boss_battle_rewards SET claimed = 1 WHERE id = ?').run(reward.id);
+    const parts = [];
+    if (totalGold > 0) parts.push(`${totalGold} 金币`);
+    if (totalExp > 0) parts.push(`${totalExp} 经验`);
+    if (equipmentGiven) parts.push(`装备: ${equipmentGiven.name}`);
 
     res.json({
-      message: `领取成功: ${reward.reward_value} ${reward.reward_type === 'gold' ? '金币' : '经验'}`,
-      reward
+      message: `领取成功: ${parts.join(', ')}`,
+      rewards: { gold: totalGold, exp: totalExp, equipment: equipmentGiven }
     });
   } catch (error) {
     console.error('领取奖励失败:', error);
@@ -503,27 +727,40 @@ router.post('/:bossId/claim-reward', authenticateToken, (req, res) => {
   }
 });
 
-// 辅助函数：发放奖励
 function distributeRewards(bossId, classId) {
   const participants = db.prepare(`
     SELECT user_id, damage_dealt FROM boss_battle_participants
     WHERE boss_battle_id = ?
   `).all(bossId);
 
+  if (participants.length === 0) return;
+
   const totalDamage = participants.reduce((sum, p) => sum + p.damage_dealt, 0);
   const boss = db.prepare('SELECT * FROM boss_battles WHERE id = ?').get(bossId);
 
-  // 基础奖励池
-  const goldPool = boss.boss_level * 100;
-  const expPool = boss.boss_level * 50;
+  const customRewards = db.prepare(`
+    SELECT * FROM boss_battle_reward_config WHERE boss_battle_id = ?
+  `).all(bossId);
+
+  let goldPool, expPool, equipmentRewardId = null;
+
+  if (customRewards.length > 0) {
+    const goldConfig = customRewards.find(r => r.reward_type === 'gold');
+    const expConfig = customRewards.find(r => r.reward_type === 'exp');
+    const equipConfig = customRewards.find(r => r.reward_type === 'equipment');
+    goldPool = goldConfig ? goldConfig.reward_value : boss.boss_level * 100;
+    expPool = expConfig ? expConfig.reward_value : boss.boss_level * 50;
+    equipmentRewardId = equipConfig ? equipConfig.reward_value : null;
+  } else {
+    goldPool = boss.boss_level * 100;
+    expPool = boss.boss_level * 50;
+  }
 
   for (const participant of participants) {
-    // 按伤害比例分配（防止除零）
     const damageRatio = totalDamage > 0 ? participant.damage_dealt / totalDamage : 1 / participants.length;
     const goldReward = Math.round(goldPool * damageRatio);
     const expReward = Math.round(expPool * damageRatio);
 
-    // 参与奖
     db.prepare(`
       INSERT OR IGNORE INTO boss_battle_rewards (boss_battle_id, user_id, reward_type, reward_value)
       VALUES (?, ?, 'gold', ?)
@@ -533,6 +770,13 @@ function distributeRewards(bossId, classId) {
       INSERT OR IGNORE INTO boss_battle_rewards (boss_battle_id, user_id, reward_type, reward_value)
       VALUES (?, ?, 'exp', ?)
     `).run(bossId, participant.user_id, Math.max(5, expReward));
+
+    if (equipmentRewardId && damageRatio >= 0.15) {
+      db.prepare(`
+        INSERT OR IGNORE INTO boss_battle_rewards (boss_battle_id, user_id, reward_type, reward_value)
+        VALUES (?, ?, 'equipment', ?)
+      `).run(bossId, participant.user_id, equipmentRewardId);
+    }
   }
 }
 

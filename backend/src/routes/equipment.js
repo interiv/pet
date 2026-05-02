@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, authorizeRole } = require('../middleware/auth');
 
 // 计算套装效果
 function calculateSetBonus(userId) {
@@ -43,6 +43,16 @@ function calculateSetBonus(userId) {
 
   return { setBonus: activeSets, totalBonus };
 }
+
+router.get('/all', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  try {
+    const equipments = db.prepare('SELECT * FROM equipment ORDER BY rarity, id').all();
+    res.json({ equipments });
+  } catch (error) {
+    console.error('获取装备列表失败:', error);
+    res.status(500).json({ error: '获取装备列表失败' });
+  }
+});
 
 // 获取我的装备
 router.get('/my-equipment', authenticateToken, (req, res) => {

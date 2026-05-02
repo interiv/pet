@@ -336,6 +336,7 @@ export const adminAPI = {
 
 // 装备部件相关 API
 export const equipmentAPI = {
+  getAll: () => api.get('/equipment/all'),
   getMyEquipment: () => api.get('/equipment/my-equipment'),
   equipPart: (data: { user_equip_id: number }) => api.post('/equipment/equip', data),
   upgradePart: (data: { user_equip_id: number }) => api.post('/equipment/upgrade', data),
@@ -486,12 +487,26 @@ export const bossBattleAPI = {
   getQuestion: (bossId: number) => api.get(`/boss-battles/${bossId}/question`),
   attack: (bossId: number, data: { question_id: number; answer: string }) =>
     api.post(`/boss-battles/${bossId}/attack`, data),
-  create: (data: { class_id: number; boss_name: string; boss_level: number; knowledge_point?: string; duration_hours?: number }) =>
-    api.post('/boss-battles/create', data),
-  autoGenerate: (data: { class_id: number }) =>
+  create: (data: {
+    class_id: number; boss_name: string; boss_level: number;
+    boss_icon?: string; boss_description?: string;
+    knowledge_point?: string; duration_hours?: number;
+    boss_hp?: number; reward_gold?: number; reward_exp?: number;
+    reward_equipment_id?: number; question_source?: string;
+    question_ids?: number[];
+  }) => api.post('/boss-battles/create', data),
+  autoGenerate: (data: { class_id: number; duration_hours?: number }) =>
     api.post('/boss-battles/auto-generate', data),
   claimReward: (bossId: number) =>
     api.post(`/boss-battles/${bossId}/claim-reward`),
+  getDetail: (bossId: number) =>
+    api.get(`/boss-battles/${bossId}/detail`),
+  terminate: (bossId: number) =>
+    api.post(`/boss-battles/${bossId}/terminate`),
+  deleteBoss: (bossId: number) =>
+    api.delete(`/boss-battles/${bossId}`),
+  getWrongQuestions: (classId: number) =>
+    api.get(`/boss-battles/wrong-questions/${classId}`),
 };
 
 export default api;
