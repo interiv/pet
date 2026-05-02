@@ -9,8 +9,19 @@ const { Option } = Select;
 
 const subjectOptions = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治'];
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 const WrongQuestions: React.FC = () => {
   const { user } = useAuthStore();
+  const isMobile = useMobile();
   const [wrongQuestions, setWrongQuestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [filterSubject, setFilterSubject] = useState<string>('');
@@ -76,36 +87,46 @@ const WrongQuestions: React.FC = () => {
     }
   };
 
+  const typeMap: Record<string, { label: string; color: string }> = {
+    choice_single: { label: '单选', color: 'green' },
+    choice_multi: { label: '多选', color: 'orange' },
+    judgment: { label: '判断', color: 'purple' },
+    essay: { label: '主观', color: 'red' }
+  };
+
   const columns = [
-    { title: '科目', dataIndex: 'subject', key: 'subject', width: 80, render: (s: string) => <Tag color="blue">{s}</Tag> },
+    { title: '科目', dataIndex: 'subject', key: 'subject', width: 80, responsive: ['md'] as any, render: (s: string) => <Tag color="blue">{s}</Tag> },
     {
       title: '题目',
       key: 'content',
       render: (_: any, record: any) => (
-        <div style={{ maxWidth: 400 }}>
+        <div style={{ maxWidth: isMobile ? '100%' : 400 }}>
           <div style={{ fontWeight: 500 }}>{record.question_content}</div>
           <div style={{ color: '#999', fontSize: 12, marginTop: 4 }}>
             来自作业：{record.assignment_title}
           </div>
+          {isMobile && (
+            <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              <Tag color="blue">{record.subject}</Tag>
+              <Tag color={typeMap[record.question_type]?.color || 'default'}>{typeMap[record.question_type]?.label || record.question_type}</Tag>
+              <span style={{ color: '#ff4d4f', fontSize: 12 }}>你的：{String(record.wrong_answer)}</span>
+              <span style={{ color: '#52c41a', fontSize: 12 }}>正确：{String(record.correct_answer)}</span>
+            </div>
+          )}
         </div>
       )
     },
-    { title: '题型', dataIndex: 'question_type', key: 'type', width: 100, render: (t: string) => {
-      const map: Record<string, { label: string; color: string }> = {
-        choice_single: { label: '单选', color: 'green' },
-        choice_multi: { label: '多选', color: 'orange' },
-        judgment: { label: '判断', color: 'purple' },
-        essay: { label: '主观', color: 'red' }
-      };
-      const info = map[t] || { label: t, color: 'default' };
+    { title: '题型', dataIndex: 'question_type', key: 'type', width: 100, responsive: ['md'] as any, render: (t: string) => {
+      const info = typeMap[t] || { label: t, color: 'default' };
       return <Tag color={info.color}>{info.label}</Tag>;
     }},
-    { title: '你的答案', dataIndex: 'wrong_answer', width: 100, render: (a: any) => <span style={{ color: '#ff4d4f' }}>{String(a)}</span> },
-    { title: '正确答案', dataIndex: 'correct_answer', width: 100, render: (a: any) => <span style={{ color: '#52c41a', fontWeight: 500 }}>{String(a)}</span> },
+    { title: '你的答案', dataIndex: 'wrong_answer', width: 100, responsive: ['md'] as any, render: (a: any) => <span style={{ color: '#ff4d4f' }}>{String(a)}</span> },
+    { title: '正确答案', dataIndex: 'correct_answer', width: 100, responsive: ['md'] as any, render: (a: any) => <span style={{ color: '#52c41a', fontWeight: 500 }}>{String(a)}</span> },
     {
       title: '状态',
       key: 'status',
       width: 90,
+      responsive: ['sm'] as any,
       render: (_: any, record: any) =>
         record.reviewed ? (
           <Badge status="success" text="已复习" />
@@ -113,13 +134,13 @@ const WrongQuestions: React.FC = () => {
           <Badge status="error" text="待复习" />
         )
     },
-    { title: '错误时间', key: 'created_at', width: 140, render: (_: any, r: any) => dayjs(r.created_at).format('YYYY-MM-DD HH:mm') },
+    { title: '错误时间', key: 'created_at', width: 140, responsive: ['lg'] as any, render: (_: any, r: any) => dayjs(r.created_at).format('YYYY-MM-DD HH:mm') },
     {
       title: '操作',
       key: 'action',
       width: 180,
       render: (_: any, record: any) => (
-        <Space size="small">
+        <Space size="small" wrap>
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>详情</Button>
           {!record.reviewed && (
             <Button type="link" size="small" icon={<CheckCircleOutlined />} onClick={() => handleMarkReviewed(record.id)}>
@@ -139,6 +160,41 @@ const WrongQuestions: React.FC = () => {
     );
   }
 
+  const renderMobileCard = (record: any) => (
+    <Card key={record.id} size="small" style={{ marginBottom: 12, borderRadius: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 500, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any }}>
+            {record.question_content}
+          </div>
+          <div style={{ color: '#999', fontSize: 12, marginTop: 4 }}>来自作业：{record.assignment_title}</div>
+        </div>
+        {record.reviewed ? (
+          <Badge status="success" text="已复习" style={{ marginLeft: 8, whiteSpace: 'nowrap' }} />
+        ) : (
+          <Badge status="error" text="待复习" style={{ marginLeft: 8, whiteSpace: 'nowrap' }} />
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
+        <Tag color="blue">{record.subject}</Tag>
+        <Tag color={typeMap[record.question_type]?.color || 'default'}>{typeMap[record.question_type]?.label || record.question_type}</Tag>
+      </div>
+      <div style={{ display: 'flex', gap: 16, fontSize: 13, marginBottom: 8 }}>
+        <span>你的答案：<span style={{ color: '#ff4d4f', fontWeight: 500 }}>{String(record.wrong_answer)}</span></span>
+        <span>正确答案：<span style={{ color: '#52c41a', fontWeight: 500 }}>{String(record.correct_answer)}</span></span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ color: '#999', fontSize: 12 }}>{dayjs(record.created_at).format('MM-DD HH:mm')}</span>
+        <Space size="small">
+          <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>详情</Button>
+          {!record.reviewed && (
+            <Button type="link" size="small" icon={<CheckCircleOutlined />} onClick={() => handleMarkReviewed(record.id)}>标记已复习</Button>
+          )}
+        </Space>
+      </div>
+    </Card>
+  );
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 8 }}>
@@ -146,7 +202,7 @@ const WrongQuestions: React.FC = () => {
         <Select
           placeholder="按科目筛选"
           allowClear
-          style={{ width: 160 }}
+          style={{ width: isMobile ? '100%' : 160 }}
           value={filterSubject || undefined}
           onChange={(v) => { setFilterSubject(v || ''); loadWrongQuestions(v); }}
         >
@@ -199,28 +255,45 @@ const WrongQuestions: React.FC = () => {
         </Row>
       )}
 
-      <Table
-        columns={columns}
-        dataSource={wrongQuestions}
-        rowKey="id"
-        loading={loading}
-        pagination={{
-          current: wqTablePage,
-          pageSize: wqTablePageSize,
-          onChange: (page, size) => { setWqTablePage(page); setWqTablePageSize(size); },
-          showSizeChanger: true,
-          pageSizeOptions: ['10', '20', '50'],
-          showTotal: (total) => `共 ${total} 条`
-        }}
-        scroll={{ x: true }}
-        locale={{ emptyText: <Empty description="暂无错题，继续保持！" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
-      />
+      {isMobile ? (
+        <div>
+          {loading && <Card loading />}
+          {!loading && wrongQuestions.length === 0 && <Empty description="暂无错题，继续保持！" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+          {wrongQuestions.map((record: any) => renderMobileCard(record))}
+          {wrongQuestions.length > 0 && (
+            <div style={{ textAlign: 'center', marginTop: 12 }}>
+              <Space>
+                <Button disabled={wqTablePage <= 1} onClick={() => setWqTablePage(p => p - 1)}>上一页</Button>
+                <span style={{ color: '#999' }}>{wqTablePage} / {Math.max(1, Math.ceil(wrongQuestions.length / wqTablePageSize))}</span>
+                <Button disabled={wqTablePage >= Math.ceil(wrongQuestions.length / wqTablePageSize)} onClick={() => setWqTablePage(p => p + 1)}>下一页</Button>
+              </Space>
+            </div>
+          )}
+        </div>
+      ) : (
+        <Table
+          columns={columns}
+          dataSource={wrongQuestions}
+          rowKey="id"
+          loading={loading}
+          pagination={{
+            current: wqTablePage,
+            pageSize: wqTablePageSize,
+            onChange: (page, size) => { setWqTablePage(page); setWqTablePageSize(size); },
+            showSizeChanger: true,
+            pageSizeOptions: ['10', '20', '50'],
+            showTotal: (total) => `共 ${total} 条`
+          }}
+          scroll={{ x: true }}
+          locale={{ emptyText: <Empty description="暂无错题，继续保持！" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+        />
+      )}
 
       <Modal
         title="错题详情"
         open={isDetailVisible}
         onCancel={() => setIsDetailVisible(false)}
-        width={600}
+        width={isMobile ? '95vw' : 600}
         footer={[
           <Button key="similar" icon={<ThunderboltOutlined />} loading={similarLoading} onClick={handleLoadSimilar}>
             练习相似题
@@ -250,10 +323,10 @@ const WrongQuestions: React.FC = () => {
 
             <Card size="small" title="答题分析">
               <Row gutter={[16, 8]}>
-                <Col span={12}>
+                <Col xs={24} sm={12}>
                   <strong style={{ color: '#ff4d4f' }}>你的答案：</strong>{String(currentDetail.wrong_answer)}
                 </Col>
-                <Col span={12}>
+                <Col xs={24} sm={12}>
                   <strong style={{ color: '#52c41a' }}>正确答案：</strong>{String(currentDetail.correct_answer)}
                 </Col>
               </Row>
@@ -279,12 +352,11 @@ const WrongQuestions: React.FC = () => {
         )}
       </Modal>
 
-      {/* 相似题弹窗 */}
       <Modal
         title={<span><ThunderboltOutlined /> 相似题练习{similarMeta.knowledge_point ? ` · ${similarMeta.knowledge_point}` : ''}</span>}
         open={isSimilarVisible}
         onCancel={() => setIsSimilarVisible(false)}
-        width={700}
+        width={isMobile ? '95vw' : 700}
         footer={<Button onClick={() => setIsSimilarVisible(false)}>关闭</Button>}
       >
         {similarQuestions.length === 0 ? (

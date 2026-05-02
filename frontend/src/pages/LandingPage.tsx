@@ -279,26 +279,21 @@ const LandingPage: React.FC = () => {
               <List
                 dataSource={leaderboard}
                 renderItem={(item: any, index: number) => (
-                  <List.Item style={{ flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'flex-start' : 'center' }}>
-                    <List.Item.Meta
-                      avatar={
-                        <Avatar style={{ background: index === 0 ? '#faad14' : index === 1 ? '#d9d9d9' : index === 2 ? '#d48806' : '#e8e8e8', color: index < 3 ? '#fff' : '#666', fontWeight: 'bold', fontSize: 16, flexShrink: 0 }}>
-                          {index + 1}
-                        </Avatar>
-                      }
-                      title={<Text strong>{item.name || item.pet_name || '宠物'}</Text>}
-                      description={
-                        <Space size={isMobile ? 8 : 16} wrap>
-                          <Text type="secondary" style={{ fontSize: isMobile ? 12 : 14 }}>主人：{item.owner_name || item.username || '-'}</Text>
-                          <Text type="secondary" style={{ fontSize: isMobile ? 12 : 14 }}>物种：{item.species_name || '-'}</Text>
-                        </Space>
-                      }
-                    />
-                    <div style={{ textAlign: isMobile ? 'left' : 'right', marginLeft: isMobile ? 48 : 0, marginTop: isMobile ? 4 : 0 }}>
-                      <Space size={12}>
-                        <Text strong style={{ color: '#667eea', fontSize: 16 }}>Lv.{item.level}</Text>
-                        <Text type="secondary" style={{ fontSize: 12 }}>{item.exp} EXP</Text>
-                      </Space>
+                  <List.Item style={{ padding: isMobile ? '10px 12px' : undefined }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 12, width: '100%' }}>
+                      <Avatar style={{ background: index === 0 ? '#faad14' : index === 1 ? '#d9d9d9' : index === 2 ? '#d48806' : '#e8e8e8', color: index < 3 ? '#fff' : '#666', fontWeight: 'bold', fontSize: isMobile ? 13 : 16, flexShrink: 0, width: isMobile ? 32 : 40, height: isMobile ? 32 : 40 }}>
+                        {index + 1}
+                      </Avatar>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 'bold', fontSize: isMobile ? 13 : 15 }}>{item.name || item.pet_name || '宠物'}</div>
+                        <div style={{ color: '#8c8c8c', fontSize: isMobile ? 11 : 13, marginTop: 2 }}>
+                          {item.owner_name || item.username || '-'} · {item.species_name || '-'}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                        <div style={{ color: '#667eea', fontWeight: 'bold', fontSize: isMobile ? 14 : 16 }}>Lv.{item.level}</div>
+                        {!isMobile && <div style={{ color: '#999', fontSize: 12 }}>{item.exp} EXP</div>}
+                      </div>
                     </div>
                   </List.Item>
                 )}

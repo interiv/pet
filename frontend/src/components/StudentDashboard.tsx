@@ -13,6 +13,17 @@ import {
 } from '@ant-design/icons';
 import { battleAPI, bossBattleAPI, leaderboardAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
+import { useSearchParams } from 'react-router-dom';
+
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
 
 interface StudentDashboardProps {
   onNavigate: (menu: string) => void;
@@ -21,6 +32,8 @@ interface StudentDashboardProps {
 const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }) => {
   const { user } = useAuthStore();
   const { pet } = usePetStore();
+  const isMobile = useMobile();
+  const [, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [myRank, setMyRank] = useState<number | null>(null);
@@ -89,7 +102,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }) => {
   return (
     <div>
       {!pet ? (
-        <Card style={{ borderRadius: 12, textAlign: 'center', padding: 40 }}>
+        <Card style={{ borderRadius: 12, textAlign: 'center', padding: isMobile ? 20 : 40 }}>
           <Empty description="你还没有宠物，快去创建一只吧！" />
           <Button type="primary" size="large" onClick={() => onNavigate('pet')} style={{ marginTop: 16 }}>
             去创建宠物
@@ -106,6 +119,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }) => {
                   color: '#fff',
                   overflow: 'hidden',
                 }}
+                bodyStyle={isMobile ? { padding: 16 } : undefined}
               >
                 <Row gutter={[16, 16]} align="middle">
                   <Col xs={24} sm={10} style={{ textAlign: 'center' }}>
@@ -116,13 +130,13 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }) => {
                         imageUrl = urls[pet.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
                       } catch (e) {}
                       return imageUrl && (imageUrl.startsWith('http') || imageUrl.startsWith('/')) ? (
-                        <img src={imageUrl} alt={pet.name} style={{ maxHeight: 160, maxWidth: '100%', filter: 'drop-shadow(0 8px 16px rgba(0,0,0,0.3))' }} />
+                        <img src={imageUrl} alt={pet.name} style={{ maxHeight: isMobile ? 120 : 160, maxWidth: '100%', filter: 'drop-shadow(0 8px 16px rgba(0,0,0,0.3))' }} />
                       ) : (
-                        <span style={{ fontSize: 100 }}>{imageUrl || '🐾'}</span>
+                        <span style={{ fontSize: isMobile ? 72 : 100 }}>{imageUrl || '🐾'}</span>
                       );
                     })()}
-                    <h2 style={{ color: '#fff', margin: '8px 0 4px' }}>{pet.name}</h2>
-                    <Tag color="gold" style={{ fontSize: 14 }}>Lv.{pet.level} {pet.species_name}</Tag>
+                    <h2 style={{ color: '#fff', margin: '8px 0 4px', fontSize: isMobile ? 18 : undefined }}>{pet.name}</h2>
+                    <Tag color="gold" style={{ fontSize: isMobile ? 12 : 14 }}>Lv.{pet.level} {pet.species_name}</Tag>
                   </Col>
                   <Col xs={24} sm={14}>
                     <div style={{ marginBottom: 12 }}>
@@ -161,23 +175,26 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }) => {
             <Col xs={24} md={10}>
               <Card title="快捷操作" size="small" style={{ borderRadius: 12, height: '100%' }}>
                 <Row gutter={[8, 8]}>
-                  <Col span={12}>
-                    <Button block icon={<ShoppingCartOutlined />} onClick={() => onNavigate('pet')} style={{ height: 48 }}>
+                  <Col xs={12} span={12}>
+                    <Button block icon={<ShoppingCartOutlined />} onClick={() => onNavigate('pet')} style={{ height: isMobile ? 40 : 48, fontSize: isMobile ? 13 : undefined }}>
                       喂食
                     </Button>
                   </Col>
-                  <Col span={12}>
-                    <Button block icon={<StarOutlined />} onClick={() => onNavigate('pet')} style={{ height: 48 }}>
+                  <Col xs={12} span={12}>
+                    <Button block icon={<StarOutlined />} onClick={() => onNavigate('pet')} style={{ height: isMobile ? 40 : 48, fontSize: isMobile ? 13 : undefined }}>
                       技能
                     </Button>
                   </Col>
-                  <Col span={12}>
-                    <Button block icon={<BookOutlined />} onClick={() => onNavigate('study')} style={{ height: 48 }}>
+                  <Col xs={12} span={12}>
+                    <Button block icon={<BookOutlined />} onClick={() => onNavigate('study')} style={{ height: isMobile ? 40 : 48, fontSize: isMobile ? 13 : undefined }}>
                       学习
                     </Button>
                   </Col>
-                  <Col span={12}>
-                    <Button block icon={<TrophyOutlined />} onClick={() => onNavigate('arena')} style={{ height: 48 }}>
+                  <Col xs={12} span={12}>
+                    <Button block icon={<TrophyOutlined />} onClick={() => {
+                      setSearchParams({ menu: 'pet', tab: 'pvp' }, { replace: true });
+                      onNavigate('pet');
+                    }} style={{ height: isMobile ? 40 : 48, fontSize: isMobile ? 13 : undefined }}>
                       挑战
                     </Button>
                   </Col>
@@ -186,13 +203,13 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }) => {
                 <div style={{ marginTop: 16 }}>
                   <Row gutter={8}>
                     <Col span={8}>
-                      <Statistic title="经验" value={pet.exp} suffix={`/ ${pet.level * 100}`} valueStyle={{ fontSize: 16, color: '#52c41a' }} />
+                      <Statistic title="经验" value={pet.exp} suffix={`/ ${pet.level * 100}`} valueStyle={{ fontSize: isMobile ? 14 : 16, color: '#52c41a' }} />
                     </Col>
                     <Col span={8}>
-                      <Statistic title="金币" value={user?.gold || 0} valueStyle={{ fontSize: 16, color: '#faad14' }} />
+                      <Statistic title="金币" value={user?.gold || 0} valueStyle={{ fontSize: isMobile ? 14 : 16, color: '#faad14' }} />
                     </Col>
                     <Col span={8}>
-                      <Statistic title="胜场" value={pet.win_count || 0} valueStyle={{ fontSize: 16, color: '#1890ff' }} />
+                      <Statistic title="胜场" value={pet.win_count || 0} valueStyle={{ fontSize: isMobile ? 14 : 16, color: '#1890ff' }} />
                     </Col>
                   </Row>
                 </div>
@@ -209,20 +226,23 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }) => {
                 color: '#fff',
                 cursor: 'pointer',
               }}
-              onClick={() => onNavigate('arena')}
+              onClick={() => {
+                setSearchParams({ menu: 'pet', tab: 'boss' }, { replace: true });
+                onNavigate('pet');
+              }}
             >
-              <Row align="middle" justify="space-between">
-                <Col>
+              <Row align="middle" justify="space-between" wrap>
+                <Col xs={24} sm={20} style={{ marginBottom: isMobile ? 8 : 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <FireOutlined style={{ fontSize: 32 }} />
+                    <FireOutlined style={{ fontSize: isMobile ? 24 : 32 }} />
                     <div>
-                      <div style={{ fontSize: 18, fontWeight: 'bold' }}>BOSS战进行中！</div>
-                      <div>{activeBoss.boss_name} Lv.{activeBoss.boss_level} · 进度 {activeBoss.progress}%</div>
+                      <div style={{ fontSize: isMobile ? 15 : 18, fontWeight: 'bold' }}>BOSS战进行中！</div>
+                      <div style={{ fontSize: isMobile ? 12 : undefined }}>{activeBoss.boss_name} Lv.{activeBoss.boss_level} · 进度 {activeBoss.progress}%</div>
                     </div>
                   </div>
                 </Col>
                 <Col>
-                  <Button ghost icon={<ArrowRightOutlined />}>立即参战</Button>
+                  <Button ghost icon={<ArrowRightOutlined />} size={isMobile ? 'small' : 'middle'}>立即参战</Button>
                 </Col>
               </Row>
             </Card>

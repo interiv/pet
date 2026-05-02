@@ -440,6 +440,7 @@ const ChatRoom: React.FC = () => {
           onCancel={() => { setShowSearchModal(false); setSearchResults([]); }}
           footer={null}
           centered
+          width={isMobile ? '90%' : undefined}
         >
           <Input.Search
             placeholder="输入用户名搜索..."

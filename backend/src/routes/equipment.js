@@ -54,6 +54,100 @@ router.get('/all', authenticateToken, authorizeRole('teacher', 'admin'), (req, r
   }
 });
 
+router.get('/shop', authenticateToken, (req, res) => {
+  try {
+    const equipments = db.prepare('SELECT * FROM equipment ORDER BY slot, rarity, required_level').all();
+    const userEquips = db.prepare('SELECT equipment_id FROM user_equipment WHERE user_id = ?').all(req.user.userId);
+    const ownedIds = new Set(userEquips.map(e => e.equipment_id));
+    const pet = db.prepare('SELECT level FROM pets WHERE user_id = ?').get(req.user.userId);
+    const petLevel = pet ? pet.level : 1;
+
+    const shopList = equipments.map(e => ({
+      ...e,
+      owned: ownedIds.has(e.id),
+      can_buy: !ownedIds.has(e.id) && petLevel >= e.required_level,
+      level_locked: petLevel < e.required_level
+    }));
+
+    res.json({ equipments: shopList, petLevel });
+  } catch (error) {
+    console.error('获取装备商店失败:', error);
+    res.status(500).json({ error: '获取装备商店失败' });
+  }
+});
+
+router.post('/buy', authenticateToken, (req, res) => {
+  try {
+    const { equipment_id } = req.body;
+
+    const equip = db.prepare('SELECT * FROM equipment WHERE id = ?').get(equipment_id);
+    if (!equip) {
+      return res.status(404).json({ error: '装备不存在' });
+    }
+
+    const existing = db.prepare('SELECT id FROM user_equipment WHERE user_id = ? AND equipment_id = ?').get(req.user.userId, equipment_id);
+    if (existing) {
+      return res.status(400).json({ error: '你已经拥有该装备' });
+    }
+
+    const pet = db.prepare('SELECT level FROM pets WHERE user_id = ?').get(req.user.userId);
+    if (!pet || pet.level < equip.required_level) {
+      return res.status(400).json({ error: `宠物等级不足，需要 ${equip.required_level} 级` });
+    }
+
+    const user = db.prepare('SELECT gold FROM users WHERE id = ?').get(req.user.userId);
+    if (!user || user.gold < equip.price) {
+      return res.status(400).json({ error: `金币不足，需要 ${equip.price} 金币` });
+    }
+
+    const buyTransaction = db.transaction(() => {
+      db.prepare('UPDATE users SET gold = gold - ? WHERE id = ?').run(equip.price, req.user.userId);
+      db.prepare('INSERT INTO user_equipment (user_id, equipment_id, equipped, level) VALUES (?, ?, 0, 1)').run(req.user.userId, equipment_id);
+    });
+    buyTransaction();
+
+    res.json({ message: `购买成功：${equip.name}`, equipment: equip });
+  } catch (error) {
+    console.error('购买装备失败:', error);
+    res.status(500).json({ error: '购买装备失败' });
+  }
+});
+
+router.post('/sell', authenticateToken, (req, res) => {
+  try {
+    const { user_equip_id } = req.body;
+
+    const equip = db.prepare(`
+      SELECT ue.*, e.name, e.price, e.slot, e.stats_bonus, e.rarity
+      FROM user_equipment ue
+      JOIN equipment e ON ue.equipment_id = e.id
+      WHERE ue.id = ? AND ue.user_id = ?
+    `).get(user_equip_id, req.user.userId);
+
+    if (!equip) {
+      return res.status(404).json({ error: '未找到该装备' });
+    }
+
+    if (equip.equipped === 1) {
+      return res.status(400).json({ error: '请先卸下装备再出售' });
+    }
+
+    const levelMultiplier = 1 + (equip.level - 1) * 0.15;
+    const sellPrice = Math.floor(equip.price * 0.4 * levelMultiplier);
+
+    const sellTransaction = db.transaction(() => {
+      db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(sellPrice, req.user.userId);
+      db.prepare('DELETE FROM user_equipment WHERE id = ?').run(user_equip_id);
+    });
+    sellTransaction();
+
+    res.json({ message: `出售成功：${equip.name}，获得 ${sellPrice} 金币`, sellPrice, equipmentName: equip.name });
+  } catch (error) {
+    console.error('出售装备失败:', error);
+    res.status(500).json({ error: '出售装备失败' });
+  }
+});
+
 // 获取我的装备
 router.get('/my-equipment', authenticateToken, (req, res) => {
   try {
@@ -124,7 +218,12 @@ router.post('/upgrade', authenticateToken, (req, res) => {
   try {
     const { user_equip_id } = req.body;
     
-    const equip = db.prepare('SELECT * FROM user_equipment WHERE id = ? AND user_id = ?').get(user_equip_id, req.user.userId);
+    const equip = db.prepare(`
+      SELECT ue.*, e.name, e.stats_bonus, e.rarity, e.price
+      FROM user_equipment ue
+      JOIN equipment e ON ue.equipment_id = e.id
+      WHERE ue.id = ? AND ue.user_id = ?
+    `).get(user_equip_id, req.user.userId);
     if (!equip) {
       return res.status(404).json({ error: '未找到该装备' });
     }
@@ -135,11 +234,27 @@ router.post('/upgrade', authenticateToken, (req, res) => {
     if (currentLevel >= maxLevel) {
       return res.status(400).json({ error: '装备已达到满级' });
     }
-    
-    const upgradeCost = currentLevel * 100;
+
+    const rarityMultiplier = { common: 1, rare: 1.5, epic: 2, legendary: 3 };
+    const upgradeCost = Math.floor(currentLevel * 100 * (rarityMultiplier[equip.rarity] || 1));
+
     const user = db.prepare('SELECT gold FROM users WHERE id = ?').get(req.user.userId);
     if (!user || user.gold < upgradeCost) {
       return res.status(400).json({ error: `金币不足，升级需要 ${upgradeCost} 金币` });
+    }
+
+    let statsBefore, statsAfter;
+    try {
+      statsBefore = JSON.parse(equip.stats_bonus);
+      const oldMultiplier = 1 + (currentLevel - 1) * 0.2;
+      const newMultiplier = 1 + currentLevel * 0.2;
+      statsAfter = {};
+      for (const [key, baseValue] of Object.entries(statsBefore)) {
+        statsAfter[key] = Math.floor(baseValue * newMultiplier);
+      }
+    } catch {
+      statsBefore = {};
+      statsAfter = {};
     }
     
     const upgradeTransaction = db.transaction(() => {
@@ -148,7 +263,13 @@ router.post('/upgrade', authenticateToken, (req, res) => {
     });
     upgradeTransaction();
 
-    res.json({ message: '升级成功', newLevel: currentLevel + 1 });
+    res.json({ 
+      message: `升级成功：${equip.name} Lv.${currentLevel} → Lv.${currentLevel + 1}`, 
+      newLevel: currentLevel + 1,
+      upgradeCost,
+      statsBefore,
+      statsAfter
+    });
   } catch (error) {
     console.error('升级部件失败:', error);
     res.status(500).json({ error: '升级部件失败' });

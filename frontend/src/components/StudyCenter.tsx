@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tabs } from 'antd';
-import { BookOutlined, ExclamationCircleOutlined, FireOutlined, BarChartOutlined, EyeOutlined, CrownOutlined } from '@ant-design/icons';
+import { BookOutlined, ExclamationCircleOutlined, FireOutlined, BarChartOutlined, EyeOutlined, CrownOutlined, TrophyOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import Assignments from './Assignments';
 import WrongQuestions from './WrongQuestions';
@@ -8,7 +8,8 @@ import DailyTasks from './DailyTasks';
 import ClassDashboard from './ClassDashboard';
 import { ClassTeachingOverview } from './Admin';
 import BossBattleManager from './BossBattleManager';
-import BossBattle from './BossBattle';
+import Achievements from './Achievements';
+import LearningDashboard from './LearningDashboard';
 import { useAuthStore } from '../store/authStore';
 
 interface StudyCenterProps {
@@ -43,16 +44,22 @@ const StudyCenter: React.FC<StudyCenterProps> = ({ onNavigate }) => {
       children: <WrongQuestions />,
     },
     {
-      key: 'boss',
-      label: 'BOSS战',
-      icon: <CrownOutlined />,
-      children: <BossBattle />,
-    },
-    {
       key: 'daily',
       label: '每日任务',
       icon: <FireOutlined />,
       children: <DailyTasks />,
+    },
+    {
+      key: 'achievements',
+      label: '成就',
+      icon: <TrophyOutlined />,
+      children: <Achievements />,
+    },
+    {
+      key: 'learning',
+      label: '学习数据',
+      icon: <BarChartOutlined />,
+      children: <LearningDashboard />,
     },
   ];
 

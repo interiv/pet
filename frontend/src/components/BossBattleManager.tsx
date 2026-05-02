@@ -12,6 +12,16 @@ import {
 import { bossBattleAPI, equipmentAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 const BOSS_ICON_OPTIONS = [
   { label: '👹 鬼怪', value: '👹' },
   { label: '👑 王者', value: '👑' },
@@ -27,6 +37,7 @@ const BOSS_ICON_OPTIONS = [
 
 const BossBattleManager: React.FC = () => {
   const { user } = useAuthStore();
+  const isMobile = useMobile();
   const [classes, setClasses] = useState<any[]>([]);
   const [headClasses, setHeadClasses] = useState<any[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
@@ -231,6 +242,7 @@ const BossBattleManager: React.FC = () => {
     {
       title: '血量',
       key: 'hp',
+      responsive: ['md'] as any,
       render: (_: any, record: any) => {
         const totalDmg = record.total_damage || 0;
         const remaining = Math.max(0, record.boss_max_hp - totalDmg);
@@ -247,12 +259,14 @@ const BossBattleManager: React.FC = () => {
       title: '知识点',
       dataIndex: 'knowledge_point',
       key: 'knowledge_point',
+      responsive: ['md'] as any,
       render: (kp: string) => kp ? <Tag color="blue">{kp}</Tag> : '-',
     },
     {
       title: '参与',
       dataIndex: 'participant_count',
       key: 'participant_count',
+      responsive: ['md'] as any,
       render: (count: number) => count ? <Tag icon={<TeamOutlined />}>{count}人</Tag> : '-',
     },
     {
@@ -268,6 +282,7 @@ const BossBattleManager: React.FC = () => {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
+      responsive: ['lg'] as any,
       render: (t: string) => t ? new Date(t).toLocaleString() : '-',
     },
     {
@@ -291,6 +306,48 @@ const BossBattleManager: React.FC = () => {
     },
   ];
 
+  const renderMobileBossCard = (record: any) => (
+    <Card key={record.id} size="small" style={{ marginBottom: 10, borderRadius: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+        <div>
+          <span style={{ fontSize: 20, marginRight: 6 }}>{record.boss_icon || '👹'}</span>
+          <span style={{ fontWeight: 'bold', fontSize: 14 }}>{record.boss_name}</span>
+        </div>
+        <Tag color={statusConfig[record.status]?.color}>{statusConfig[record.status]?.label || record.status}</Tag>
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+        <Tag color="red">Lv.{record.boss_level}</Tag>
+        {record.knowledge_point && <Tag color="blue">{record.knowledge_point}</Tag>}
+        {record.participant_count ? <Tag icon={<TeamOutlined />}>{record.participant_count}人</Tag> : null}
+      </div>
+      {record.boss_max_hp > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, color: '#999', marginBottom: 2 }}>
+            血量 {Math.max(0, record.boss_max_hp - (record.total_damage || 0))}/{record.boss_max_hp}
+          </div>
+          <Progress
+            percent={Math.min(100, record.boss_max_hp > 0 ? Math.round(((record.total_damage || 0) / record.boss_max_hp) * 100) : 0)}
+            size="small"
+            strokeColor="#f5222d"
+          />
+        </div>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 4 }}>
+        <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record.id)}>详情</Button>
+        {record.status === 'active' && (
+          <Popconfirm title="确定要终止此BOSS战吗？" onConfirm={() => handleTerminate(record.id)}>
+            <Button size="small" danger icon={<StopOutlined />}>终止</Button>
+          </Popconfirm>
+        )}
+        {record.status !== 'active' && (
+          <Popconfirm title="确定要删除此BOSS记录吗？" onConfirm={() => handleDelete(record.id)}>
+            <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+          </Popconfirm>
+        )}
+      </div>
+    </Card>
+  );
+
   return (
     <div>
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
@@ -299,17 +356,18 @@ const BossBattleManager: React.FC = () => {
           <Select
             value={selectedClassId}
             onChange={setSelectedClassId}
-            style={{ width: 200 }}
+            style={{ width: isMobile ? 150 : 200 }}
             options={headClasses.map((c: any) => ({ label: `${c.name} (班主任)`, value: c.id }))}
             placeholder="请选择班级"
           />
         </Space>
-        <Space>
+        <Space wrap>
           <Button
             type="primary"
             icon={<PlusOutlined />}
             onClick={handleCreateOpen}
             disabled={!selectedClassId || !!currentBoss}
+            size={isMobile ? 'small' : 'middle'}
           >
             创建BOSS
           </Button>
@@ -318,6 +376,7 @@ const BossBattleManager: React.FC = () => {
             onClick={handleAutoGenerate}
             loading={autoGenerating}
             disabled={!selectedClassId || !!currentBoss}
+            size={isMobile ? 'small' : 'middle'}
           >
             从错题自动生成
           </Button>
@@ -349,8 +408,8 @@ const BossBattleManager: React.FC = () => {
         >
           <Row gutter={[24, 16]}>
             <Col xs={24} md={8} style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 80 }}>{currentBoss.boss_icon || '👹'}</div>
-              <h3>{currentBoss.boss_name}</h3>
+              <div style={{ fontSize: isMobile ? 56 : 80 }}>{currentBoss.boss_icon || '👹'}</div>
+              <h3 style={{ fontSize: isMobile ? 16 : undefined }}>{currentBoss.boss_name}</h3>
               <Tag color="red">Lv.{currentBoss.boss_level}</Tag>
               {currentBoss.knowledge_point && <Tag color="blue">{currentBoss.knowledge_point}</Tag>}
             </Col>
@@ -367,19 +426,20 @@ const BossBattleManager: React.FC = () => {
                 />
               </div>
               <Row gutter={16}>
-                <Col span={8}>
-                  <Statistic title="参与人数" value={currentBoss.participant_count || 0} prefix={<TeamOutlined />} />
+                <Col xs={8}>
+                  <Statistic title="参与人数" value={currentBoss.participant_count || 0} prefix={<TeamOutlined />} valueStyle={{ fontSize: isMobile ? 16 : undefined }} />
                 </Col>
-                <Col span={8}>
+                <Col xs={8}>
                   <Statistic
                     title="剩余时间"
                     value={currentBoss.expires_at ? Math.max(0, Math.floor((new Date(currentBoss.expires_at).getTime() - Date.now()) / (1000 * 60 * 60))) : 0}
                     suffix="小时"
                     prefix={<ClockCircleOutlined />}
+                    valueStyle={{ fontSize: isMobile ? 16 : undefined }}
                   />
                 </Col>
-                <Col span={8}>
-                  <Statistic title="BOSS等级" value={currentBoss.boss_level} prefix={<ThunderboltOutlined />} />
+                <Col xs={8}>
+                  <Statistic title="BOSS等级" value={currentBoss.boss_level} prefix={<ThunderboltOutlined />} valueStyle={{ fontSize: isMobile ? 16 : undefined }} />
                 </Col>
               </Row>
             </Col>
@@ -388,15 +448,25 @@ const BossBattleManager: React.FC = () => {
       )}
 
       <Card title="BOSS 历史记录" size="small">
-        <Table
-          dataSource={bossList}
-          columns={bossColumns}
-          rowKey="id"
-          loading={loading}
-          pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
-          size="small"
-          locale={{ emptyText: <Empty description={`${selectedClassName}暂无BOSS记录`} /> }}
-        />
+        {isMobile ? (
+          <Spin spinning={loading}>
+            {bossList.length === 0 ? (
+              <Empty description={`${selectedClassName}暂无BOSS记录`} />
+            ) : (
+              bossList.map(record => renderMobileBossCard(record))
+            )}
+          </Spin>
+        ) : (
+          <Table
+            dataSource={bossList}
+            columns={bossColumns}
+            rowKey="id"
+            loading={loading}
+            pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
+            size="small"
+            locale={{ emptyText: <Empty description={`${selectedClassName}暂无BOSS记录`} /> }}
+          />
+        )}
       </Card>
 
       <Modal
@@ -405,35 +475,35 @@ const BossBattleManager: React.FC = () => {
         onCancel={() => { setCreateModalVisible(false); createForm.resetFields(); }}
         onOk={() => createForm.submit()}
         confirmLoading={creating}
-        width={720}
+        width={isMobile ? '95%' : 720}
         destroyOnClose
       >
         <Form form={createForm} layout="vertical" onFinish={handleCreate}>
           <Divider orientation="left">基本信息</Divider>
           <Row gutter={16}>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="boss_name" label="BOSS名称" rules={[{ required: true, message: '请输入BOSS名称' }]}>
                 <Input placeholder="例如：暗影数学之王" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="boss_icon" label="BOSS图标">
                 <Select options={BOSS_ICON_OPTIONS} placeholder="选择图标（空为随机）" allowClear />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={16}>
-            <Col span={8}>
+            <Col xs={24} sm={8}>
               <Form.Item name="boss_level" label="BOSS等级" rules={[{ required: true, message: '请输入等级' }]} extra="影响默认血量">
                 <InputNumber min={1} max={50} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={8}>
               <Form.Item name="boss_hp" label="自定义血量" extra="留空则 = 等级×1000">
                 <InputNumber min={100} style={{ width: '100%' }} placeholder="自动计算" />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={8}>
               <Form.Item name="duration_hours" label="持续时间(小时)" initialValue={24}>
                 <InputNumber min={1} max={168} style={{ width: '100%' }} />
               </Form.Item>
@@ -490,17 +560,17 @@ const BossBattleManager: React.FC = () => {
 
           <Divider orientation="left">奖励配置</Divider>
           <Row gutter={16}>
-            <Col span={8}>
+            <Col xs={24} sm={8}>
               <Form.Item name="reward_gold" label="金币奖励池" extra="按伤害比例分配">
                 <InputNumber min={0} style={{ width: '100%' }} placeholder="默认=等级×100" />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={8}>
               <Form.Item name="reward_exp" label="经验奖励池" extra="按伤害比例分配">
                 <InputNumber min={0} style={{ width: '100%' }} placeholder="默认=等级×50" />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={8}>
               <Form.Item name="reward_equipment_id" label="装备奖励" extra="伤害前15%可获得">
                 <Select
                   placeholder="无装备奖励"
@@ -518,18 +588,18 @@ const BossBattleManager: React.FC = () => {
         open={detailModalVisible}
         onCancel={() => setDetailModalVisible(false)}
         footer={<Button onClick={() => setDetailModalVisible(false)}>关闭</Button>}
-        width={700}
+        width={isMobile ? '95%' : 700}
       >
         {detailData && (
           <div>
             <Row gutter={[24, 16]} style={{ marginBottom: 16 }}>
-              <Col span={8} style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 64 }}>{detailData.boss.boss_icon || '👹'}</div>
+              <Col xs={24} md={8} style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: isMobile ? 48 : 64 }}>{detailData.boss.boss_icon || '👹'}</div>
                 <h3>{detailData.boss.boss_name}</h3>
                 <Tag color="red">Lv.{detailData.boss.boss_level}</Tag>
               </Col>
-              <Col span={16}>
-                <Descriptions column={2} size="small">
+              <Col xs={24} md={16}>
+                <Descriptions column={isMobile ? 1 : 2} size="small">
                   <Descriptions.Item label="血量">{detailData.boss.current_hp}/{detailData.boss.boss_max_hp}</Descriptions.Item>
                   <Descriptions.Item label="总伤害">{detailData.boss.total_damage}</Descriptions.Item>
                   <Descriptions.Item label="参与人数">{detailData.boss.participant_count}</Descriptions.Item>
@@ -562,9 +632,9 @@ const BossBattleManager: React.FC = () => {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
                         <Badge count={index + 1} style={{ backgroundColor: index < 3 ? '#f5222d' : '#d9d9d9' }} />
                         <span style={{ flex: 1 }}>{item.username}</span>
-                        <span style={{ color: '#999', fontSize: 12 }}>
+                        {!isMobile && <span style={{ color: '#999', fontSize: 12 }}>
                           正确 {item.correct_answers}/{item.total_attempts}
-                        </span>
+                        </span>}
                         <Tag color="red">{item.damage_dealt} 伤害</Tag>
                       </div>
                     </List.Item>

@@ -975,13 +975,13 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         )}
       </div>
     )},
-    { title: '班级', dataIndex: 'class_name', key: 'class_name', render: (name: string) => name ? <Tag color="green">{name}</Tag> : <Tag>未分班</Tag> },
+    { title: '班级', dataIndex: 'class_name', key: 'class_name', responsive: ['md'] as any, render: (name: string) => name ? <Tag color="green">{name}</Tag> : <Tag>未分班</Tag> },
     { title: '科目', dataIndex: 'subject', key: 'subject', render: (subject: string) => <Tag color="blue">{subject}</Tag> },
-    { title: '题型', dataIndex: 'question_type', key: 'question_type', render: (type: string) => <Tag color="purple">{typeOptions.find(t => t.value === type)?.label || type}</Tag> },
-    { title: '题目数', dataIndex: 'question_count', key: 'question_count', render: (count: number) => count ?? '-' },
-    { title: '金币奖励', dataIndex: 'max_exp', key: 'max_exp', render: (exp: number) => <span style={{ color: '#faad14', fontWeight: 'bold' }}>+{exp} 金币</span> },
+    { title: '题型', dataIndex: 'question_type', key: 'question_type', responsive: ['md'] as any, render: (type: string) => <Tag color="purple">{typeOptions.find(t => t.value === type)?.label || type}</Tag> },
+    { title: '题目数', dataIndex: 'question_count', key: 'question_count', responsive: ['md'] as any, render: (count: number) => count ?? '-' },
+    { title: '金币奖励', dataIndex: 'max_exp', key: 'max_exp', responsive: ['md'] as any, render: (exp: number) => <span style={{ color: '#faad14', fontWeight: 'bold' }}>+{exp} 金币</span> },
     { 
-      title: '截止日期', dataIndex: 'due_date', key: 'due_date', 
+      title: '截止日期', dataIndex: 'due_date', key: 'due_date', responsive: ['sm'] as any,
       render: (date: string) => {
         const d = dayjs(date);
         const overdue = d.isBefore(dayjs());
@@ -997,7 +997,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       key: 'action',
       width: 260,
       render: (_: any, record: any) => (
-        <Space size="small">
+        <Space size="small" wrap>
           {!isTeacher && !record.my_submission_id && !isOverdue(record.due_date) && (
             <Button type="primary" size="small" onClick={() => handleStartDoing(record)}>去完成</Button>
           )}
@@ -1060,22 +1060,22 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', marginBottom: 20, flexDirection: isMobile ? 'column' : 'row', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 16, flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
           <h2 style={{ margin: 0 }}>📝 班级作业</h2>
           {isTeacher && classes.length > 1 && (
-            <Select placeholder="筛选班级" allowClear style={{ width: 160 }} onChange={(v) => setSelectedClass(v)} value={selectedClass}>
+            <Select placeholder="筛选班级" allowClear style={{ width: isMobile ? '100%' : 160 }} onChange={(v) => setSelectedClass(v)} value={selectedClass}>
               {classes.map(c => <Option key={c.id} value={c.id}>{c.name}</Option>)}
             </Select>
           )}
           {isTeacher && (
-            <Select placeholder="筛选科目" allowClear style={{ width: 120 }} onChange={(v) => setFilterSubject(v)} value={filterSubject}>
+            <Select placeholder="筛选科目" allowClear style={{ width: isMobile ? '100%' : 120 }} onChange={(v) => setFilterSubject(v)} value={filterSubject}>
               {subjectOptions.map(s => <Option key={s} value={s}>{s}</Option>)}
             </Select>
           )}
           {isTeacher && (
             <DatePicker.RangePicker
-              style={{ width: 240 }}
+              style={{ width: isMobile ? '100%' : 240 }}
               onChange={(dates) => setFilterDateRange(dates as any)}
               value={filterDateRange as any}
               placeholder={['开始日期', '结束日期']}
@@ -1099,14 +1099,100 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         </Space>
       </div>
 
-      <Table columns={columns} dataSource={assignments} rowKey="id" loading={loading} pagination={{
-        current: assignmentTablePage,
-        pageSize: assignmentTablePageSize,
-        onChange: (page, size) => { setAssignmentTablePage(page); setAssignmentTablePageSize(size); },
-        showSizeChanger: true,
-        pageSizeOptions: ['10', '20', '50'],
-        showTotal: (total) => `共 ${total} 条`
-      }} scroll={{ x: true }} />
+      {isMobile ? (
+        <div>
+          {assignments.length === 0 && !loading && <Empty description="暂无作业" />}
+          {assignments.map((record: any) => (
+            <Card key={record.id} size="small" style={{ marginBottom: 12, borderRadius: 8 }} onClick={() => {}}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 500, fontSize: 15 }}>{record.title}</div>
+                  <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    <Tag color="blue">{record.subject}</Tag>
+                    {record.class_name && <Tag color="green">{record.class_name}</Tag>}
+                    {getStatusTag(record)}
+                  </div>
+                </div>
+                <span style={{ color: '#faad14', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}>+{record.max_exp}💰</span>
+              </div>
+              <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
+                {record.question_count}道题 · 截止 {dayjs(record.due_date).format('MM-DD HH:mm')}
+                {isOverdue(record.due_date) && <span style={{ color: '#ff4d4f', marginLeft: 4 }}>已过期</span>}
+              </div>
+              {record.my_submission_id && (
+                <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
+                  最高得分：<span style={{ color: '#52c41a', fontWeight: 'bold' }}>{record.my_score || 0}</span> 分
+                  {record.my_gold_reward > 0 && <span style={{ color: '#faad14', marginLeft: 8 }}>+{record.my_gold_reward}💰</span>}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {!isTeacher && !record.my_submission_id && !isOverdue(record.due_date) && (
+                  <Button type="primary" size="small" onClick={() => handleStartDoing(record)}>去完成</Button>
+                )}
+                {!isTeacher && !record.my_submission_id && isOverdue(record.due_date) && (
+                  <Button type="primary" size="small" danger onClick={() => handleStartDoing(record)}>补交</Button>
+                )}
+                {!isTeacher && record.my_submission_id && record.my_submission_status === 'retry_available' && (
+                  <Button type="primary" size="small" style={{ background: '#faad14', borderColor: '#faad14' }} onClick={() => handleRetryWrongFromList(record)}>重做错题</Button>
+                )}
+                {!isTeacher && record.my_submission_id && (
+                  <Button size="small" icon={<EyeOutlined />} onClick={async () => {
+                    try {
+                      const res = await assignmentAPI.getSubmissionDetail(record.my_submission_id);
+                      setSubmitResult({ results: res.data.answers, total_score: res.data.submission.total_score, total_max_score: res.data.submission.total_max_score, gold_reward: res.data.submission.gold_reward, correct_count: res.data.answers.filter((a: any) => a.is_correct).length, total_count: res.data.answers.length });
+                      setIsResultModalVisible(true);
+                    } catch(e) { message.error('获取结果失败'); }
+                  }}>查看结果</Button>
+                )}
+                {isTeacher && record.teacher_id === user?.id && (
+                  <Button size="small" icon={<EditOutlined />} onClick={() => handleStartDoing(record)}>编辑</Button>
+                )}
+                {isTeacher && (
+                  <Button size="small" icon={<BarChartOutlined />} onClick={() => handleViewStatistics(record)}>统计</Button>
+                )}
+                {isTeacher && record.status !== 'cancelled' && record.teacher_id === user?.id && (
+                  <Button size="small" danger icon={<StopOutlined />} onClick={() => {
+                    Modal.confirm({
+                      title: '确认取消此作业？',
+                      content: '已提交的成绩会保留，未提交的学生将无法继续作答',
+                      okText: '确认取消',
+                      cancelText: '再想想',
+                      okButtonProps: { danger: true },
+                      onOk: async () => {
+                        try {
+                          await assignmentAPI.cancelAssignment(record.id);
+                          message.success('作业已取消');
+                          loadAssignments();
+                        } catch (e: any) {
+                          message.error(e.response?.data?.error || '取消失败');
+                        }
+                      }
+                    });
+                  }}>取消</Button>
+                )}
+              </div>
+            </Card>
+          ))}
+          {assignments.length > 0 && (
+            <div style={{ textAlign: 'center', marginTop: 12 }}>
+              <Space>
+                <Button disabled={assignmentTablePage <= 1} onClick={() => setAssignmentTablePage(p => p - 1)}>上一页</Button>
+                <span style={{ color: '#999' }}>{assignmentTablePage} / {Math.max(1, Math.ceil(assignments.length / assignmentTablePageSize))}</span>
+                <Button disabled={assignmentTablePage >= Math.ceil(assignments.length / assignmentTablePageSize)} onClick={() => setAssignmentTablePage(p => p + 1)}>下一页</Button>
+              </Space>
+            </div>
+          )}
+        </div>
+      ) : (
+        <Table columns={columns} dataSource={assignments} rowKey="id" loading={loading} pagination={{
+          current: assignmentTablePage,
+          pageSize: assignmentTablePageSize,
+          onChange: (page, size) => { setAssignmentTablePage(page); setAssignmentTablePageSize(size); },
+          showSizeChanger: true,
+          pageSizeOptions: ['10', '20', '50'],
+          showTotal: (total) => `共 ${total} 条`
+        }} scroll={{ x: true }} />
+      )}
 
       {/* 教师发布作业弹窗 */}
       <Modal
@@ -1124,14 +1210,14 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             children: (
               <Form form={generateForm} layout="vertical" onFinish={handleGenerateQuestions}>
                 <Row gutter={16}>
-                  <Col span={12}>
+                  <Col xs={24} sm={12}>
                     <Form.Item name="subject" label="科目" rules={[{ required: true }]}>
                       <Select placeholder="选择科目">
                         {subjectOptions.map(s => <Option key={s} value={s}>{s}</Option>)}
                       </Select>
                     </Form.Item>
                   </Col>
-                  <Col span={12}>
+                  <Col xs={24} sm={12}>
                     <Form.Item name="question_type" label="题型（每次仅一种）" rules={[{ required: true }]}>
                       <Select placeholder="选择题型">
                         {typeOptions.map(t => <Option key={t.value} value={t.value}>{t.label}</Option>)}
@@ -1306,12 +1392,12 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 </Form.Item>
 
                 <Row gutter={16}>
-                  <Col span={12}>
+                  <Col xs={24} sm={12}>
                     <Form.Item name="max_exp" label="金币奖励" rules={[{ required: true }]} initialValue={30}>
                       <InputNumber min={1} max={100} style={{ width: '100%' }} addonAfter="金币" />
                     </Form.Item>
                   </Col>
-                  <Col span={12}>
+                  <Col xs={24} sm={12}>
                     <Form.Item name="due_date" label="截止日期" rules={[{ required: true }]}>
                       <DatePicker showTime style={{ width: '100%' }} disabledDate={(current) => current && current < dayjs().startOf('day')} />
                     </Form.Item>

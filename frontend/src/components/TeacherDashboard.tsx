@@ -14,12 +14,23 @@ import { useSearchParams } from 'react-router-dom';
 import { adminAPI, leaderboardAPI, knowledgePointAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 interface TeacherDashboardProps {
   onNavigate: (menu: string) => void;
 }
 
 const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
   const { user } = useAuthStore();
+  const isMobile = useMobile();
   const [, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<any>(null);
@@ -83,50 +94,50 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
   return (
     <div>
       <Row gutter={[16, 16]}>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={12} sm={12} md={6}>
           <Card size="small" style={{ borderRadius: 12 }}>
             <Statistic
               title="任教班级"
               value={stats?.classes?.total || 0}
               prefix={<TeamOutlined />}
-              valueStyle={{ color: '#1890ff' }}
+              valueStyle={{ color: '#1890ff', fontSize: isMobile ? 18 : undefined }}
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={12} sm={12} md={6}>
           <Card size="small" style={{ borderRadius: 12 }}>
             <Statistic
               title="学生总数"
               value={stats?.users?.students || 0}
               prefix={<UserOutlined />}
-              valueStyle={{ color: '#52c41a' }}
+              valueStyle={{ color: '#52c41a', fontSize: isMobile ? 18 : undefined }}
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={12} sm={12} md={6}>
           <Card size="small" style={{ borderRadius: 12 }}>
             <Statistic
               title="今日活跃"
               value={stats?.daily?.active_users || 0}
               prefix={<ThunderboltOutlined />}
-              valueStyle={{ color: '#faad14' }}
+              valueStyle={{ color: '#faad14', fontSize: isMobile ? 18 : undefined }}
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={12} sm={12} md={6}>
           <Card size="small" style={{ borderRadius: 12 }}>
             <Statistic
               title="今日发金"
               value={stats?.daily?.gold_distributed || 0}
               prefix={<TrophyOutlined />}
-              valueStyle={{ color: '#eb2f96' }}
+              valueStyle={{ color: '#eb2f96', fontSize: isMobile ? 18 : undefined }}
             />
           </Card>
         </Col>
       </Row>
 
       {myClasses.length > 1 && (
-        <div style={{ marginTop: 16 }}>
+        <div style={{ marginTop: 16, overflowX: 'auto' }}>
           <Segmented
             options={myClasses.map((c: any) => ({ label: c.name, value: c.id }))}
             value={selectedClassId || undefined}
@@ -143,8 +154,10 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
             style={{ borderRadius: 12 }}
             extra={
               <Button type="link" size="small" onClick={() => {
-                setSearchParams({ menu: 'study', tab: 'dashboard' }, { replace: true });
                 onNavigate('study');
+                setTimeout(() => {
+                  setSearchParams({ menu: 'study', tab: 'dashboard' }, { replace: true });
+                }, 0);
               }}>
                 详细数据 <ArrowRightOutlined />
               </Button>
@@ -153,38 +166,38 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
             {classOverview ? (
               <>
                 <Row gutter={16} style={{ marginBottom: 16 }}>
-                  <Col span={8}>
+                  <Col xs={8} sm={8}>
                     <Statistic
-                      title="平均正确率"
+                      title="正确率"
                       value={classOverview.avg_accuracy || 0}
                       suffix="%"
-                      valueStyle={{ fontSize: 24, color: (classOverview.avg_accuracy || 0) >= 60 ? '#52c41a' : '#f5222d' }}
+                      valueStyle={{ fontSize: isMobile ? 16 : 24, color: (classOverview.avg_accuracy || 0) >= 60 ? '#52c41a' : '#f5222d' }}
                     />
                   </Col>
-                  <Col span={8}>
+                  <Col xs={8} sm={8}>
                     <Statistic
-                      title="答题总数"
+                      title="答题数"
                       value={classOverview.total_attempts || 0}
-                      valueStyle={{ fontSize: 24 }}
+                      valueStyle={{ fontSize: isMobile ? 16 : 24 }}
                     />
                   </Col>
-                  <Col span={8}>
+                  <Col xs={8} sm={8}>
                     <Statistic
-                      title="知识点覆盖"
+                      title="知识点"
                       value={classOverview.knowledge_point_count || 0}
-                      valueStyle={{ fontSize: 24, color: '#722ed1' }}
+                      valueStyle={{ fontSize: isMobile ? 16 : 24, color: '#722ed1' }}
                     />
                   </Col>
                 </Row>
 
                 {classOverview.top_weak && classOverview.top_weak.length > 0 && (
                   <div style={{ marginBottom: 12 }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: 8, color: '#f5222d' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: 8, color: '#f5222d', fontSize: isMobile ? 13 : undefined }}>
                       <WarningOutlined /> 薄弱知识点
                     </div>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      {classOverview.top_weak.slice(0, 5).map((kp: any, idx: number) => (
-                        <Tag key={idx} color="error">
+                      {classOverview.top_weak.slice(0, isMobile ? 3 : 5).map((kp: any, idx: number) => (
+                        <Tag key={idx} color="error" style={{ fontSize: isMobile ? 11 : undefined }}>
                           {kp.knowledge_point} ({kp.accuracy}%)
                         </Tag>
                       ))}
@@ -194,12 +207,12 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
 
                 {classOverview.top_mastered && classOverview.top_mastered.length > 0 && (
                   <div>
-                    <div style={{ fontWeight: 'bold', marginBottom: 8, color: '#52c41a' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: 8, color: '#52c41a', fontSize: isMobile ? 13 : undefined }}>
                       <CheckCircleOutlined /> 已掌握知识点
                     </div>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      {classOverview.top_mastered.slice(0, 5).map((kp: any, idx: number) => (
-                        <Tag key={idx} color="success">
+                      {classOverview.top_mastered.slice(0, isMobile ? 3 : 5).map((kp: any, idx: number) => (
+                        <Tag key={idx} color="success" style={{ fontSize: isMobile ? 11 : undefined }}>
                           {kp.knowledge_point} ({kp.accuracy}%)
                         </Tag>
                       ))}
@@ -232,7 +245,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
                     <Tag color={index < 3 ? 'gold' : 'default'}>{index + 1}</Tag>
                     <span style={{ flex: 1 }}>{item.name}</span>
-                    <span style={{ color: '#999', fontSize: 12 }}>{item.owner_name}</span>
+                    {!isMobile && <span style={{ color: '#999', fontSize: 12 }}>{item.owner_name}</span>}
                     <Tag>Lv.{item.level}</Tag>
                   </div>
                 </List.Item>
@@ -246,17 +259,21 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} sm={12}>
           <Button block size="large" icon={<BookOutlined />} onClick={() => {
-            setSearchParams({ menu: 'study', tab: 'assignments' }, { replace: true });
             onNavigate('study');
-          }} style={{ height: 56, borderRadius: 12 }}>
+            setTimeout(() => {
+              setSearchParams({ menu: 'study', tab: 'assignments' }, { replace: true });
+            }, 0);
+          }} style={{ height: isMobile ? 48 : 56, borderRadius: 12 }}>
             布置作业
           </Button>
         </Col>
         <Col xs={24} sm={12}>
           <Button block size="large" icon={<TeamOutlined />} onClick={() => {
-            setSearchParams({ menu: 'study', tab: 'dashboard' }, { replace: true });
             onNavigate('study');
-          }} style={{ height: 56, borderRadius: 12 }}>
+            setTimeout(() => {
+              setSearchParams({ menu: 'study', tab: 'dashboard' }, { replace: true });
+            }, 0);
+          }} style={{ height: isMobile ? 48 : 56, borderRadius: 12 }}>
             班级详情
           </Button>
         </Col>

@@ -18,6 +18,16 @@ import { useAuthStore } from '../store/authStore';
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
 
+const useMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
+
 interface DailyTask {
   id: number;
   user_id: number;
@@ -42,6 +52,7 @@ interface DailyTaskData {
 
 const DailyTasks: React.FC = () => {
   const navigate = useNavigate();
+  const isMobile = useMobile();
   const { checkAuth } = useAuthStore();
   const [loading, setLoading] = useState(false);
   const [taskData, setTaskData] = useState<DailyTaskData | null>(null);
@@ -207,55 +218,192 @@ const DailyTasks: React.FC = () => {
 
   const allCompleted = taskData.daily_task.tasks_completed >= taskData.daily_task.total_tasks;
 
+  const renderTaskItem = (task: DailyTask) => {
+    const progress = Math.min((task.task_progress / task.task_target) * 100, 100);
+    const isCompleted = task.is_completed === 1;
+    const isClaimed = task.reward_claimed === 1;
+    const rewardGold = getRewardGold(task.task_type);
+
+    if (isMobile) {
+      return (
+        <Card key={task.id} size="small" style={{
+          marginBottom: 12,
+          borderRadius: 8,
+          background: isCompleted ? '#f6ffed' : '#fff',
+          border: isCompleted ? '1px solid #b7eb8f' : '1px solid #f0f0f0'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+            <div style={{
+              width: 40,
+              height: 40,
+              borderRadius: '50%',
+              background: isCompleted ? '#f6ffed' : '#f5f5f5',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 20,
+              color: isCompleted ? '#52c41a' : '#999',
+              flexShrink: 0
+            }}>
+              {isCompleted ? <CheckCircleOutlined /> : getTaskIcon(task.task_type)}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 500, fontSize: 15 }}>{getTaskTitle(task.task_type)}</span>
+                {isCompleted && <Tag color="success" icon={<CheckCircleOutlined />}>已完成</Tag>}
+                {isClaimed && <Tag color="default">已领取</Tag>}
+              </div>
+              <div style={{ color: '#666', fontSize: 13, marginTop: 2 }}>{getTaskDescription(task)}</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <Progress
+                percent={Math.round(progress)}
+                status={isCompleted ? 'success' : 'active'}
+                size="small"
+                format={() => `${task.task_progress} / ${task.task_target}`}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <span style={{ color: '#faad14', fontWeight: 'bold', fontSize: 14 }}>+{rewardGold}💰</span>
+              {isCompleted && !isClaimed && (
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<GiftOutlined />}
+                  loading={claiming === (task.task_type as any)}
+                  onClick={() => handleClaimReward(task.task_type)}
+                >
+                  领取
+                </Button>
+              )}
+            </div>
+          </div>
+        </Card>
+      );
+    }
+
+    return (
+      <List.Item key={task.id} style={{
+        padding: '16px',
+        background: isCompleted ? '#f6ffed' : '#fff',
+        borderRadius: 8,
+        marginBottom: 12,
+        border: isCompleted ? '1px solid #b7eb8f' : '1px solid #f0f0f0'
+      }}>
+        <List.Item.Meta
+          avatar={
+            <Badge count={isCompleted ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : null}>
+              <div style={{
+                width: 48,
+                height: 48,
+                borderRadius: '50%',
+                background: isCompleted ? '#f6ffed' : '#f5f5f5',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 24,
+                color: isCompleted ? '#52c41a' : '#999'
+              }}>
+                {getTaskIcon(task.task_type)}
+              </div>
+            </Badge>
+          }
+          title={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 16, fontWeight: 500 }}>
+                {getTaskTitle(task.task_type)}
+              </span>
+              {isCompleted && (
+                <Tag color="success" icon={<CheckCircleOutlined />}>已完成</Tag>
+              )}
+              {isClaimed && (
+                <Tag color="default">已领取</Tag>
+              )}
+            </div>
+          }
+          description={
+            <div style={{ marginTop: 8 }}>
+              <div style={{ color: '#666', marginBottom: 8 }}>
+                {getTaskDescription(task)}
+              </div>
+              <Progress
+                percent={Math.round(progress)}
+                status={isCompleted ? 'success' : 'active'}
+                size="small"
+                format={() => `${task.task_progress} / ${task.task_target}`}
+              />
+            </div>
+          }
+        />
+        <div style={{ textAlign: 'right', minWidth: 120 }}>
+          <div style={{ marginBottom: 8, color: '#faad14', fontWeight: 'bold', fontSize: 16 }}>
+            +{rewardGold} 金币
+          </div>
+          {isCompleted && !isClaimed && (
+            <Button
+              type="primary"
+              size="small"
+              icon={<GiftOutlined />}
+              loading={claiming === (task.task_type as any)}
+              onClick={() => handleClaimReward(task.task_type)}
+            >
+              领取奖励
+            </Button>
+          )}
+        </div>
+      </List.Item>
+    );
+  };
+
   return (
     <div>
       <div style={{ marginBottom: 20 }}>
         <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
-          <FireOutlined style={{ color: '#faad14', fontSize: 28 }} />
+          <FireOutlined style={{ color: '#faad14', fontSize: isMobile ? 22 : 28 }} />
           每日任务
         </h2>
-        <p style={{ color: '#666', margin: '8px 0 0' }}>
+        <p style={{ color: '#666', margin: '8px 0 0', fontSize: isMobile ? 13 : undefined }}>
           完成每日任务获得金币奖励，连续完成还有额外奖励！
         </p>
       </div>
 
-      {/* 连续完成统计 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
-        <Col xs={12} sm={8}>
-          <Card>
+        <Col xs={8} sm={8}>
+          <Card size="small">
             <Statistic
               title="今日进度"
               value={taskData.daily_task.tasks_completed}
               suffix={`/ ${taskData.daily_task.total_tasks}`}
-              valueStyle={{ color: allCompleted ? '#52c41a' : '#1890ff' }}
+              valueStyle={{ color: allCompleted ? '#52c41a' : '#1890ff', fontSize: isMobile ? 18 : undefined }}
             />
           </Card>
         </Col>
-        <Col xs={12} sm={8}>
-          <Card>
+        <Col xs={8} sm={8}>
+          <Card size="small">
             <Statistic
               title="连续完成"
               value={taskData.streak_days}
               suffix="天"
-              valueStyle={{ color: taskData.streak_days > 0 ? '#faad14' : '#999' }}
+              valueStyle={{ color: taskData.streak_days > 0 ? '#faad14' : '#999', fontSize: isMobile ? 18 : undefined }}
               prefix={<FireOutlined />}
             />
           </Card>
         </Col>
-        <Col xs={12} sm={8}>
-          <Card>
+        <Col xs={8} sm={8}>
+          <Card size="small">
             <Statistic
-              title="可领取奖励"
+              title="可领取"
               value={taskData.claimable_rewards.length}
               suffix="个"
-              valueStyle={{ color: taskData.claimable_rewards.length > 0 ? '#52c41a' : '#999' }}
+              valueStyle={{ color: taskData.claimable_rewards.length > 0 ? '#52c41a' : '#999', fontSize: isMobile ? 18 : undefined }}
               prefix={<GiftOutlined />}
             />
           </Card>
         </Col>
       </Row>
 
-      {/* 全部完成提示 */}
       {allCompleted && (
         <Alert
           type="success"
@@ -266,96 +414,21 @@ const DailyTasks: React.FC = () => {
         />
       )}
 
-      {/* 任务列表 */}
       <Card title="今日任务列表" size="small">
-        <List
-          dataSource={taskData.tasks}
-          renderItem={(task) => {
-            const progress = Math.min((task.task_progress / task.task_target) * 100, 100);
-            const isCompleted = task.is_completed === 1;
-            const isClaimed = task.reward_claimed === 1;
-            const rewardGold = getRewardGold(task.task_type);
-
-            return (
-              <List.Item
-                style={{
-                  padding: '16px',
-                  background: isCompleted ? '#f6ffed' : '#fff',
-                  borderRadius: 8,
-                  marginBottom: 12,
-                  border: isCompleted ? '1px solid #b7eb8f' : '1px solid #f0f0f0'
-                }}
-              >
-                <List.Item.Meta
-                  avatar={
-                    <Badge count={isCompleted ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : null}>
-                      <div style={{
-                        width: 48,
-                        height: 48,
-                        borderRadius: '50%',
-                        background: isCompleted ? '#f6ffed' : '#f5f5f5',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: 24,
-                        color: isCompleted ? '#52c41a' : '#999'
-                      }}>
-                        {getTaskIcon(task.task_type)}
-                      </div>
-                    </Badge>
-                  }
-                  title={
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 16, fontWeight: 500 }}>
-                        {getTaskTitle(task.task_type)}
-                      </span>
-                      {isCompleted && (
-                        <Tag color="success" icon={<CheckCircleOutlined />}>已完成</Tag>
-                      )}
-                      {isClaimed && (
-                        <Tag color="default">已领取</Tag>
-                      )}
-                    </div>
-                  }
-                  description={
-                    <div style={{ marginTop: 8 }}>
-                      <div style={{ color: '#666', marginBottom: 8 }}>
-                        {getTaskDescription(task)}
-                      </div>
-                      <Progress
-                        percent={Math.round(progress)}
-                        status={isCompleted ? 'success' : 'active'}
-                        size="small"
-                        format={() => `${task.task_progress} / ${task.task_target}`}
-                      />
-                    </div>
-                  }
-                />
-                <div style={{ textAlign: 'right', minWidth: 120 }}>
-                  <div style={{ marginBottom: 8, color: '#faad14', fontWeight: 'bold', fontSize: 16 }}>
-                    +{rewardGold} 金币
-                  </div>
-                  {isCompleted && !isClaimed && (
-                    <Button
-                      type="primary"
-                      size="small"
-                      icon={<GiftOutlined />}
-                      loading={claiming === (task.task_type as any)}
-                      onClick={() => handleClaimReward(task.task_type)}
-                    >
-                      领取奖励
-                    </Button>
-                  )}
-                </div>
-              </List.Item>
-            );
-          }}
-        />
+        {isMobile ? (
+          <div>
+            {taskData.tasks.map((task) => renderTaskItem(task))}
+          </div>
+        ) : (
+          <List
+            dataSource={taskData.tasks}
+            renderItem={(task) => renderTaskItem(task)}
+          />
+        )}
       </Card>
 
-      {/* 任务说明 */}
       <Card title="任务说明" size="small" style={{ marginTop: 16 }}>
-        <div style={{ color: '#666', lineHeight: 1.8 }}>
+        <div style={{ color: '#666', lineHeight: 1.8, fontSize: isMobile ? 13 : undefined }}>
           <p>• <strong>每日登录</strong>：每天登录系统即可完成任务，奖励 5 金币</p>
           <p>• <strong>完成作业</strong>：完成任意一道作业题，奖励 10 金币</p>
           <p>• <strong>投喂宠物</strong>：使用道具投喂宠物一次，奖励 5 金币</p>

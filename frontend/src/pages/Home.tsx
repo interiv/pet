@@ -4,7 +4,6 @@ import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, Modal,
 import {
   HomeOutlined,
   BookOutlined,
-  TrophyOutlined,
   UserOutlined,
   LogoutOutlined,
   SettingOutlined,
@@ -21,11 +20,9 @@ import Admin from '../components/Admin';
 import Profile from '../components/Profile';
 import Notifications from '../components/Notifications';
 import ClassDashboard from '../components/ClassDashboard';
-import Arena from '../components/Arena';
 import StudyCenter from '../components/StudyCenter';
 import PetCenter from '../components/PetCenter';
 import SocialHub from '../components/SocialHub';
-import AchievementCenter from '../components/AchievementCenter';
 import StudentDashboard from '../components/StudentDashboard';
 import TeacherDashboard from '../components/TeacherDashboard';
 
@@ -230,8 +227,6 @@ const Home: React.FC = () => {
     menuItems.push(
       { key: 'study', icon: <BookOutlined />, label: '学习中心' },
       { key: 'pet', icon: <HomeOutlined />, label: '我的宠物' },
-      { key: 'arena', icon: <TrophyOutlined />, label: '挑战' },
-      { key: 'achievement', icon: <TrophyOutlined />, label: '成就与数据' },
       { key: 'social', icon: <MessageOutlined />, label: '班级' },
       { key: 'notifications', icon: <BellOutlined />, label: '通知' },
     );
@@ -312,7 +307,7 @@ const Home: React.FC = () => {
                 style={{ borderRadius: '12px', overflow: 'hidden', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', cursor: 'pointer' }}
                 styles={{ body: { padding: '16px' } }}
                 cover={
-                  <div style={{ height: 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #f5f7fa 0%, #c3cfe2 100%)', padding: '20px' }}>
+                  <div style={{ height: isMobile ? 140 : 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #f5f7fa 0%, #c3cfe2 100%)', padding: '20px' }}>
                     <img alt={item.name} src={(() => {
                       try {
                         const urls = typeof item.image_urls === 'string' ? JSON.parse(item.image_urls) : item.image_urls;
@@ -326,7 +321,7 @@ const Home: React.FC = () => {
                 size="small"
               >
                 <Card.Meta
-                  title={<span style={{ fontSize: '16px', fontWeight: 'bold' }}>{item.name}</span>}
+                  title={<span style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: 'bold' }}>{item.name}</span>}
                   description={<span style={{ color: '#8c8c8c' }}>{item.owner_name}的宠物</span>}
                   style={{ marginBottom: '12px' }}
                 />
@@ -334,7 +329,7 @@ const Home: React.FC = () => {
                   title={<span style={{ fontSize: '12px' }}>当前等级</span>}
                   value={item.level}
                   suffix={`级 (${item.species_name})`}
-                  valueStyle={{ color: '#1890ff', fontSize: '20px', fontWeight: 'bold' }}
+                  valueStyle={{ color: '#1890ff', fontSize: isMobile ? '16px' : '20px', fontWeight: 'bold' }}
                 />
               </Card>
             </Col>
@@ -406,8 +401,8 @@ const Home: React.FC = () => {
                 style={{ borderRadius: '12px', overflow: 'hidden', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', cursor: 'pointer' }}
                 styles={{ body: { padding: '16px' } }}
                 cover={
-                  <div style={{ height: 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #fdfbfb 0%, #ebedee 100%)', padding: '20px', position: 'relative' }}>
-                    <div style={{ position: 'absolute', top: 10, left: 10, fontSize: '24px', fontWeight: 'bold', color: '#faad14', textShadow: '2px 2px 4px rgba(0,0,0,0.1)' }}>#{index + 1}</div>
+                  <div style={{ height: isMobile ? 140 : 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #fdfbfb 0%, #ebedee 100%)', padding: '20px', position: 'relative' }}>
+                    <div style={{ position: 'absolute', top: 10, left: 10, fontSize: isMobile ? '18px' : '24px', fontWeight: 'bold', color: '#faad14', textShadow: '2px 2px 4px rgba(0,0,0,0.1)' }}>#{index + 1}</div>
                     <img alt={item.name} src={(() => {
                       try {
                         const urls = typeof item.image_urls === 'string' ? JSON.parse(item.image_urls) : item.image_urls;
@@ -421,7 +416,7 @@ const Home: React.FC = () => {
                 size="small"
               >
                 <Card.Meta
-                  title={<span style={{ fontSize: '16px', fontWeight: 'bold' }}>{item.name}</span>}
+                  title={<span style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: 'bold' }}>{item.name}</span>}
                   description={<span style={{ color: '#8c8c8c' }}>{item.owner_name}的宠物</span>}
                   style={{ marginBottom: '12px' }}
                 />
@@ -429,7 +424,7 @@ const Home: React.FC = () => {
                   title={<span style={{ fontSize: '12px' }}>当前等级</span>}
                   value={item.level}
                   suffix={`级 (${item.species_name})`}
-                  valueStyle={{ color: '#faad14', fontSize: '20px', fontWeight: 'bold' }}
+                  valueStyle={{ color: '#faad14', fontSize: isMobile ? '16px' : '20px', fontWeight: 'bold' }}
                 />
               </Card>
             </Col>
@@ -469,8 +464,8 @@ const Home: React.FC = () => {
       }
     }} />;
     if (activeMenu === 'pet') return <PetCenter onNavigate={handleMenuChange} />;
-    if (activeMenu === 'arena') return <Arena />;
-    if (activeMenu === 'achievement') return <AchievementCenter />;
+    if (activeMenu === 'arena') return <PetCenter onNavigate={handleMenuChange} />;
+    if (activeMenu === 'achievement') return <StudyCenter onNavigate={handleMenuChange} />;
     if (activeMenu === 'social') return <SocialHub />;
     if (activeMenu === 'notifications') return <Notifications />;
     if (activeMenu === 'class-dashboard') return <ClassDashboard />;
@@ -519,7 +514,7 @@ const Home: React.FC = () => {
             <Button
               type="text"
               icon={<MenuOutlined />}
-              onClick={() => setMobileMenuOpen(true)}
+              onClick={(e) => { e.stopPropagation(); setMobileMenuOpen(true); }}
               size="large"
               style={{ color: '#fff' }}
             />
@@ -666,7 +661,7 @@ const Home: React.FC = () => {
           <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginBottom: 8 }}>
             {siteSettings.site_description || '寓教于乐，让学习更有趣'}
           </p>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: isMobile ? 12 : 24, marginBottom: 12, flexWrap: 'wrap' }}>
             <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }} onClick={() => navigate('/about')}>关于我们</a>
             <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }} onClick={() => navigate('/help')}>使用帮助</a>
             <a style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer' }} onClick={() => navigate('/privacy')}>隐私政策</a>
@@ -694,7 +689,7 @@ const Home: React.FC = () => {
               <Row gutter={[24, 24]}>
                 <Col xs={24} md={8}>
                   <div style={{ 
-                    height: 300, 
+                    height: isMobile ? 200 : 300, 
                     display: 'flex', 
                     justifyContent: 'center', 
                     alignItems: 'center', 
@@ -729,56 +724,56 @@ const Home: React.FC = () => {
                 </Col>
                 <Col xs={24} md={16}>
                   <Row gutter={[16, 16]}>
-                    <Col xs={12}>
+                    <Col xs={12} sm={12}>
                       <Card size="small" style={{ borderRadius: 8 }}>
                         <Statistic 
                           title="等级" 
                           value={selectedPet.level} 
                           suffix="级"
-                          valueStyle={{ color: '#1890ff', fontSize: 24, fontWeight: 'bold' }}
+                          valueStyle={{ color: '#1890ff', fontSize: isMobile ? 18 : 24, fontWeight: 'bold' }}
                         />
                       </Card>
                     </Col>
-                    <Col xs={12}>
+                    <Col xs={12} sm={12}>
                       <Card size="small" style={{ borderRadius: 8 }}>
                         <Statistic 
                           title="经验值" 
                           value={selectedPet.exp} 
                           suffix="EXP"
-                          valueStyle={{ color: '#52c41a', fontSize: 24, fontWeight: 'bold' }}
+                          valueStyle={{ color: '#52c41a', fontSize: isMobile ? 18 : 24, fontWeight: 'bold' }}
                         />
                       </Card>
                     </Col>
-                    <Col xs={8}>
+                    <Col xs={8} sm={8}>
                       <Card size="small" style={{ borderRadius: 8 }}>
                         <Statistic 
                           title="攻击力" 
                           value={selectedPet.attack} 
-                          valueStyle={{ color: '#ff4d4f', fontSize: 20, fontWeight: 'bold' }}
+                          valueStyle={{ color: '#ff4d4f', fontSize: isMobile ? 16 : 20, fontWeight: 'bold' }}
                         />
                         {petBonus?.attack > 0 && (
                           <div style={{ fontSize: 12, color: '#52c41a', marginTop: 4 }}>+{petBonus.attack} 装备加成</div>
                         )}
                       </Card>
                     </Col>
-                    <Col xs={8}>
+                    <Col xs={8} sm={8}>
                       <Card size="small" style={{ borderRadius: 8 }}>
                         <Statistic 
                           title="防御力" 
                           value={selectedPet.defense} 
-                          valueStyle={{ color: '#1890ff', fontSize: 20, fontWeight: 'bold' }}
+                          valueStyle={{ color: '#1890ff', fontSize: isMobile ? 16 : 20, fontWeight: 'bold' }}
                         />
                         {petBonus?.defense > 0 && (
                           <div style={{ fontSize: 12, color: '#52c41a', marginTop: 4 }}>+{petBonus.defense} 装备加成</div>
                         )}
                       </Card>
                     </Col>
-                    <Col xs={8}>
+                    <Col xs={8} sm={8}>
                       <Card size="small" style={{ borderRadius: 8 }}>
                         <Statistic 
                           title="速度" 
                           value={selectedPet.speed} 
-                          valueStyle={{ color: '#faad14', fontSize: 20, fontWeight: 'bold' }}
+                          valueStyle={{ color: '#faad14', fontSize: isMobile ? 16 : 20, fontWeight: 'bold' }}
                         />
                         {petBonus?.speed > 0 && (
                           <div style={{ fontSize: 12, color: '#52c41a', marginTop: 4 }}>+{petBonus.speed} 装备加成</div>

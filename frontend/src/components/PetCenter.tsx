@@ -1,6 +1,6 @@
 import React, { useEffect, useCallback } from 'react';
 import { Tabs } from 'antd';
-import { HomeOutlined, ThunderboltOutlined, ShoppingOutlined, GiftOutlined } from '@ant-design/icons';
+import { HomeOutlined, ThunderboltOutlined, ShoppingOutlined, GiftOutlined, SkinOutlined, TrophyOutlined, FireOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import { usePetStore } from '../store/authStore';
 import { petAPI } from '../utils/api';
@@ -8,6 +8,9 @@ import PetDisplay from './PetDisplay';
 import CreatePet from './CreatePet';
 import PetSkills from './PetSkills';
 import ShopAndBackpack from './ShopAndBackpack';
+import { EquipmentPanel } from './EquipmentPanel';
+import Battle from './Battle';
+import BossBattle from './BossBattle';
 
 interface PetCenterProps {
   onNavigate?: (menu: string) => void;
@@ -66,6 +69,24 @@ const PetCenter: React.FC<PetCenterProps> = ({ onNavigate: _onNavigate }) => {
       icon: <ShoppingOutlined />,
       children: <ShopAndBackpack viewMode="shop" />,
     },
+    {
+      key: 'equipment',
+      label: '装备商店',
+      icon: <SkinOutlined />,
+      children: <EquipmentPanel />,
+    },
+    {
+      key: 'pvp',
+      label: 'PVP 对战',
+      icon: <TrophyOutlined />,
+      children: <Battle />,
+    },
+    {
+      key: 'boss',
+      label: 'BOSS 战',
+      icon: <FireOutlined />,
+      children: <BossBattle />,
+    },
   ];
 
   return (
@@ -73,6 +94,7 @@ const PetCenter: React.FC<PetCenterProps> = ({ onNavigate: _onNavigate }) => {
       activeKey={activeTab}
       onChange={handleTabChange}
       items={items}
+      destroyInactiveTabPane
     />
   );
 };

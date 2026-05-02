@@ -24,7 +24,7 @@ const StaticPageLayout: React.FC<StaticPageProps> = ({ title, children }) => {
         padding: '0 24px', height: 56, position: 'sticky', top: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/')} style={{ color: '#fff' }} />
+          <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} style={{ color: '#fff' }} />
           <span style={{ fontSize: 16, fontWeight: 'bold', color: '#fff' }}>{title}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

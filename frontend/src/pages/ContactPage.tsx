@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Typography, Form, Input, Button, message, Card, Row, Col, Space } from 'antd';
-import { MailOutlined, MessageOutlined, GithubOutlined } from '@ant-design/icons';
+import { MailOutlined, MessageOutlined, GithubOutlined, TeamOutlined } from '@ant-design/icons';
 import StaticPageLayout from '../components/StaticPageLayout';
 
 const { Title, Paragraph, Text } = Typography;
@@ -26,8 +26,19 @@ const ContactPage: React.FC = () => {
           <Card title="联系方式" style={{ height: '100%' }}>
             <Space direction="vertical" size="large" style={{ width: '100%' }}>
               <div>
+                <Text strong><TeamOutlined style={{ marginRight: 8 }} />交流群</Text><br />
+                <Text type="secondary">扫描二维码加入学习交流群</Text>
+                <div style={{ marginTop: 12, textAlign: 'center' }}>
+                  <img
+                    src="/images/group_qrcode.jpg"
+                    alt="群二维码"
+                    style={{ maxWidth: 200, width: '100%', borderRadius: 8, border: '1px solid #f0f0f0' }}
+                  />
+                </div>
+              </div>
+              <div>
                 <Text strong><MailOutlined style={{ marginRight: 8 }} />电子邮件</Text><br />
-                <Text type="secondary">support@classpet.example.com</Text>
+                <Text type="secondary">interiv@qq.com</Text>
               </div>
               <div>
                 <Text strong><MessageOutlined style={{ marginRight: 8 }} />在线反馈</Text><br />
@@ -35,7 +46,8 @@ const ContactPage: React.FC = () => {
               </div>
               <div>
                 <Text strong><GithubOutlined style={{ marginRight: 8 }} />开源项目</Text><br />
-                <Text type="secondary">欢迎参与项目开发和问题反馈</Text>
+                <Text type="secondary">欢迎参与项目开发和问题反馈</Text><br />
+                <a href="https://github.com/interiv/pet" target="_blank" rel="noopener noreferrer" style={{ color: '#1890ff' }}>https://github.com/interiv/pet</a>
               </div>
             </Space>
           </Card>

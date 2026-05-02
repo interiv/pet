@@ -340,6 +340,9 @@ export const equipmentAPI = {
   getMyEquipment: () => api.get('/equipment/my-equipment'),
   equipPart: (data: { user_equip_id: number }) => api.post('/equipment/equip', data),
   upgradePart: (data: { user_equip_id: number }) => api.post('/equipment/upgrade', data),
+  getShop: () => api.get('/equipment/shop'),
+  buyEquipment: (data: { equipment_id: number }) => api.post('/equipment/buy', data),
+  sellEquipment: (data: { user_equip_id: number }) => api.post('/equipment/sell', data),
 };
 
 // 动态/留言板相关 API

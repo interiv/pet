@@ -16,7 +16,8 @@ import { notificationAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
 const adminVisibleTypes = ['system', 'forum_reply', 'forum_like', 'forum_quote', 'answer_changed'];
-const teacherVisibleTypes = ['system', 'forum_reply', 'forum_like', 'forum_quote', 'answer_changed', 'friend_request', 'friend_accepted', 'post_like', 'post_comment'];
+const teacherVisibleTypes = ['system', 'forum_reply', 'forum_like', 'forum_quote', 'friend_request', 'friend_accepted', 'post_like', 'post_comment'];
+const studentVisibleTypes = ['friend_request', 'friend_accepted', 'gift_received', 'achievement', 'post_like', 'post_comment', 'forum_reply', 'forum_like', 'answer_changed'];
 
 const useMobile = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -83,7 +84,7 @@ const Notifications: React.FC = () => {
       } else if (isTeacher) {
         setUnreadCount(teacherVisibleTypes.reduce((sum, t) => sum + (byType[t] || 0), 0));
       } else {
-        setUnreadCount(res.data.total);
+        setUnreadCount(studentVisibleTypes.reduce((sum, t) => sum + (byType[t] || 0), 0));
       }
     } catch (e) {
       console.error('获取未读数失败:', e);
@@ -100,6 +101,8 @@ const Notifications: React.FC = () => {
         params.types = adminVisibleTypes.join(',');
       } else if (isTeacher) {
         params.types = teacherVisibleTypes.join(',');
+      } else {
+        params.types = studentVisibleTypes.join(',');
       }
 
       const res = await notificationAPI.getNotifications(params);
@@ -108,6 +111,8 @@ const Notifications: React.FC = () => {
         items = items.filter((n: NotificationItem) => adminVisibleTypes.includes(n.type));
       } else if (isTeacher && activeTab === 'all') {
         items = items.filter((n: NotificationItem) => teacherVisibleTypes.includes(n.type));
+      } else if (activeTab === 'all') {
+        items = items.filter((n: NotificationItem) => studentVisibleTypes.includes(n.type));
       }
       setNotifications(items);
     } catch (e) {
@@ -198,7 +203,6 @@ const Notifications: React.FC = () => {
         { key: 'system', label: `系统 ${unreadByType.system || ''}`.trim() || '系统' },
         { key: 'friend_request', label: `好友 ${unreadByType.friend_request || ''}`.trim() || '好友' },
         { key: 'forum_reply', label: `论坛 ${unreadByType.forum_reply || ''}`.trim() || '论坛' },
-        { key: 'answer_changed', label: `答案更正 ${unreadByType.answer_changed || ''}`.trim() || '答案更正' },
       ]
     : [
         { key: 'all', label: `全部 ${unreadCount > 0 ? `(${unreadCount})` : ''}` },
@@ -207,6 +211,7 @@ const Notifications: React.FC = () => {
         { key: 'achievement', label: `成就 ${unreadByType.achievement || ''}`.trim() || '成就' },
         { key: 'post_like', label: `赞 ${unreadByType.post_like || ''}`.trim() || '赞' },
         { key: 'forum_reply', label: `论坛 ${unreadByType.forum_reply || ''}`.trim() || '论坛' },
+        { key: 'answer_changed', label: `答案更正 ${unreadByType.answer_changed || ''}`.trim() || '答案更正' },
       ];
 
   return (
