@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Card, Row, Col, Button, Tabs, List, Tag, Statistic, message, Avatar, TabsProps, Modal, Progress } from 'antd';
 import { TrophyOutlined, FireOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { petAPI, battleAPI, authAPI } from '../utils/api';
+import { getPetThumbUrl } from '../utils/petImage';
 import { usePetStore, useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
 import CelebrationAnimation from './CelebrationAnimation';
@@ -167,18 +168,11 @@ const Battle: React.FC = () => {
                 cover={
                   <div style={{ height: 160, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#f5f7fa', padding: '20px' }}>
                     {(() => {
-                      let imageUrl = opponent.image_urls;
-                      try {
-                        const urls = typeof opponent.image_urls === 'string' ? JSON.parse(opponent.image_urls) : opponent.image_urls;
-                        imageUrl = urls[opponent.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
-                      } catch (e) {}
-                      
+                      const imageUrl = getPetThumbUrl(opponent);
                       if (!imageUrl) return <span style={{ fontSize: '64px' }}>🐾</span>;
-                      
                       if (imageUrl.startsWith('http') || imageUrl.startsWith('/')) {
-                        return <img alt={opponent.name} src={imageUrl} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }} />;
+                        return <img alt={opponent.name} src={imageUrl} loading="lazy" style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }} />;
                       }
-                      
                       return <span style={{ fontSize: '64px' }}>{imageUrl}</span>;
                     })()}
                   </div>

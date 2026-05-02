@@ -12,6 +12,7 @@ import {
   ArrowRightOutlined,
 } from '@ant-design/icons';
 import { battleAPI, bossBattleAPI, leaderboardAPI } from '../utils/api';
+import { getPetImageUrl } from '../utils/petImage';
 import { useAuthStore, usePetStore } from '../store/authStore';
 import { useSearchParams } from 'react-router-dom';
 
@@ -124,11 +125,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }) => {
                 <Row gutter={[16, 16]} align="middle">
                   <Col xs={24} sm={10} style={{ textAlign: 'center' }}>
                     {(() => {
-                      let imageUrl = pet.image_urls;
-                      try {
-                        const urls = typeof pet.image_urls === 'string' ? JSON.parse(pet.image_urls) : pet.image_urls;
-                        imageUrl = urls[pet.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
-                      } catch (e) {}
+                      const imageUrl = getPetImageUrl(pet);
                       return imageUrl && (imageUrl.startsWith('http') || imageUrl.startsWith('/')) ? (
                         <img src={imageUrl} alt={pet.name} style={{ maxHeight: isMobile ? 120 : 160, maxWidth: '100%', filter: 'drop-shadow(0 8px 16px rgba(0,0,0,0.3))' }} />
                       ) : (

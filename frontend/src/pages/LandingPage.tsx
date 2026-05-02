@@ -34,7 +34,7 @@ const getSpeciesImage = (imageUrls: string | object | null): string => {
     const urls = typeof imageUrls === 'string' ? JSON.parse(imageUrls) : imageUrls;
     if (!urls || typeof urls !== 'object') return '';
     const values = Object.values(urls) as string[];
-    return values[0] || '';
+    return (values[0] || '').replace(/\.png$/, '_thumb.png');
   } catch { return ''; }
 };
 

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Card, Row, Col, Button, Tabs, Badge, Statistic, message, List, Avatar, TabsProps } from 'antd';
 import { ShoppingCartOutlined, DollarCircleOutlined, GiftOutlined } from '@ant-design/icons';
 import { itemAPI, petAPI, authAPI } from '../utils/api';
+import { getThumbUrl } from '../utils/petImage';
 import { useAuthStore, usePetStore } from '../store/authStore';
 
 
@@ -163,7 +164,7 @@ const ShopAndBackpack: React.FC<Props> = ({ defaultTab = 'shop', viewMode = 'all
               >
                 <Card.Meta 
                   avatar={
-                    <Avatar size={48} style={{ background: '#f0f2f5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }} src={item.image_url?.startsWith('http') || item.image_url?.startsWith('/') ? item.image_url : undefined}>
+                    <Avatar size={48} style={{ background: '#f0f2f5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }} src={item.image_url?.startsWith('http') || item.image_url?.startsWith('/') ? getThumbUrl(item.image_url) : undefined}>
                       {(!item.image_url?.startsWith('http') && !item.image_url?.startsWith('/')) ? (item.image_url || '🎁') : null}
                     </Avatar>
                   }
@@ -207,7 +208,7 @@ const ShopAndBackpack: React.FC<Props> = ({ defaultTab = 'shop', viewMode = 'all
                 <List.Item.Meta
                     avatar={
                       <Badge count={`x${item.quantity}`} color="#1890ff">
-                        <Avatar size={48} style={{ background: '#f0f2f5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }} src={item.image_url?.startsWith('http') || item.image_url?.startsWith('/') ? item.image_url : undefined}>
+                        <Avatar size={48} style={{ background: '#f0f2f5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }} src={item.image_url?.startsWith('http') || item.image_url?.startsWith('/') ? getThumbUrl(item.image_url) : undefined}>
                           {(!item.image_url?.startsWith('http') && !item.image_url?.startsWith('/')) ? (item.image_url || '🎁') : null}
                         </Avatar>
                       </Badge>

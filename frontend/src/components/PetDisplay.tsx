@@ -14,6 +14,7 @@ import {
   WarningOutlined,
 } from '@ant-design/icons';
 import { petAPI, equipmentAPI, petExtendedAPI, itemAPI } from '../utils/api';
+import { getPetImageUrl, getThumbUrl } from '../utils/petImage';
 import { usePetStore, useAuthStore } from '../store/authStore';
 import { EquipmentPanel } from './EquipmentPanel';
 
@@ -181,7 +182,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
                     <div>
                       {item.image_url?.startsWith('http') || item.image_url?.startsWith('/images/') ? (
                         <img
-                          src={item.image_url}
+                          src={getThumbUrl(item.image_url)}
                           alt={item.name}
                           style={{ width: 60, height: 60, objectFit: 'contain', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }}
                         />
@@ -214,14 +215,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
               }}>
                 <div style={{ position: 'relative', height: '60%', width: '60%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                   <img 
-                    src={(() => {
-                      try {
-                        const urls = typeof pet.image_urls === 'string' ? JSON.parse(pet.image_urls) : pet.image_urls;
-                        return urls[pet.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
-                      } catch (e) {
-                        return pet.image_urls;
-                      }
-                    })()} 
+                    src={getPetImageUrl(pet)} 
                     alt={pet.name} 
                     style={{ 
                       maxHeight: '100%', 

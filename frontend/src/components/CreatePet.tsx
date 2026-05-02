@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Form, Input, Button, Select, message, Row, Col, Tag, Image } from 'antd';
 import { petAPI } from '../utils/api';
+import { getPetImageUrl, getPetThumbUrl } from '../utils/petImage';
 import { usePetStore } from '../store/authStore';
 
 const { Option } = Select;
@@ -89,14 +90,7 @@ const CreatePet: React.FC<CreatePetProps> = ({ onSuccess }) => {
               {speciesList.map((species) => (
                 <Option key={species.id} value={species.id} label={species.name}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <img src={(() => {
-                      try {
-                        const urls = typeof species.image_urls === 'string' ? JSON.parse(species.image_urls) : species.image_urls;
-                        return urls['宠物蛋'] || urls['幼年期'] || Object.values(urls)[0] || '';
-                      } catch (e) {
-                        return species.image_urls;
-                      }
-                    })()} alt={species.name} style={{ width: 40, height: 40, objectFit: 'contain' }} />
+                    <img src={getPetThumbUrl(species, '宠物蛋')} alt={species.name} style={{ width: 40, height: 40, objectFit: 'contain' }} />
                     <div>
                       <div style={{ fontWeight: 'bold' }}>{species.name}</div>
                       <div style={{ fontSize: 12, color: '#888' }}>
@@ -129,8 +123,7 @@ const CreatePet: React.FC<CreatePetProps> = ({ onSuccess }) => {
               <Row gutter={[8, 8]}>
                 {['宠物蛋', '初生期', '幼年期', '成长期', '成年期', '完全体', '究极体'].map((stage, index) => {
                   try {
-                    const urls = typeof selectedSpecies.image_urls === 'string' ? JSON.parse(selectedSpecies.image_urls) : selectedSpecies.image_urls;
-                    const url = urls[stage] || '';
+                    const url = getPetImageUrl(selectedSpecies, stage);
                     return (
                       <Col xs={6} sm={4} md={3} key={stage}>
                         <div style={{ textAlign: 'center' }}>

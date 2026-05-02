@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, lazy, Suspense } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, Modal, Spin, Table, Segmented, Drawer, Button, Steps, message, Alert } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, Modal, Spin, Table, Segmented, Drawer, Button, Steps, message, Alert, Pagination } from 'antd';
 import {
   HomeOutlined,
   BookOutlined,
@@ -16,15 +16,17 @@ import {
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
 import CreatePet from '../components/CreatePet';
-import Admin from '../components/Admin';
-import Profile from '../components/Profile';
-import Notifications from '../components/Notifications';
-import ClassDashboard from '../components/ClassDashboard';
-import StudyCenter from '../components/StudyCenter';
-import PetCenter from '../components/PetCenter';
-import SocialHub from '../components/SocialHub';
-import StudentDashboard from '../components/StudentDashboard';
-import TeacherDashboard from '../components/TeacherDashboard';
+import { getPetImageUrl, getPetThumbUrl } from '../utils/petImage';
+
+const Admin = lazy(() => import('../components/Admin'));
+const Profile = lazy(() => import('../components/Profile'));
+const Notifications = lazy(() => import('../components/Notifications'));
+const ClassDashboard = lazy(() => import('../components/ClassDashboard'));
+const StudyCenter = lazy(() => import('../components/StudyCenter'));
+const PetCenter = lazy(() => import('../components/PetCenter'));
+const SocialHub = lazy(() => import('../components/SocialHub'));
+const StudentDashboard = lazy(() => import('../components/StudentDashboard'));
+const TeacherDashboard = lazy(() => import('../components/TeacherDashboard'));
 
 const { Header, Content, Sider, Footer } = Layout;
 
@@ -268,6 +270,8 @@ const Home: React.FC = () => {
   const [petsView, setPetsView] = useState<'card' | 'list'>('card');
   const [petsTablePage, setPetsTablePage] = useState(1);
   const [petsTablePageSize, setPetsTablePageSize] = useState(10);
+  const [petsCardPage, setPetsCardPage] = useState(1);
+  const petsCardPageSize = isMobile ? 8 : 12;
   const [lbTablePage, setLbTablePage] = useState(1);
   const [lbTablePageSize, setLbTablePageSize] = useState(10);
 
@@ -298,48 +302,63 @@ const Home: React.FC = () => {
         />
       </div>
       {petsView === 'card' ? (
-        <Row gutter={[16, 16]}>
-          {allPets.map((item: any) => (
-            <Col xs={24} sm={12} md={8} lg={6} key={item.id}>
-              <Card
-                hoverable
-                onClick={() => handleViewPet(item)}
-                style={{ borderRadius: '12px', overflow: 'hidden', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', cursor: 'pointer' }}
-                styles={{ body: { padding: '16px' } }}
-                cover={
-                  <div style={{ height: isMobile ? 140 : 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #f5f7fa 0%, #c3cfe2 100%)', padding: '20px' }}>
-                    <img alt={item.name} src={(() => {
-                      try {
-                        const urls = typeof item.image_urls === 'string' ? JSON.parse(item.image_urls) : item.image_urls;
-                        return urls[item.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
-                      } catch (e) {
-                        return item.image_urls;
-                      }
-                    })()} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', filter: 'drop-shadow(0 10px 8px rgba(0,0,0,0.2))' }} />
-                  </div>
-                }
-                size="small"
-              >
-                <Card.Meta
-                  title={<span style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: 'bold' }}>{item.name}</span>}
-                  description={<span style={{ color: '#8c8c8c' }}>{item.owner_name}的宠物</span>}
-                  style={{ marginBottom: '12px' }}
-                />
-                <Statistic
-                  title={<span style={{ fontSize: '12px' }}>当前等级</span>}
-                  value={item.level}
-                  suffix={`级 (${item.species_name})`}
-                  valueStyle={{ color: '#1890ff', fontSize: isMobile ? '16px' : '20px', fontWeight: 'bold' }}
-                />
-              </Card>
-            </Col>
-          ))}
-          {allPets.length === 0 && (
-            <div style={{ textAlign: 'center', width: '100%', padding: '20px', color: '#999' }}>
-              暂无宠物数据
+        <>
+          <Row gutter={[16, 16]}>
+            {allPets
+              .slice((petsCardPage - 1) * petsCardPageSize, petsCardPage * petsCardPageSize)
+              .map((item: any) => (
+              <Col xs={24} sm={12} md={8} lg={6} key={item.id}>
+                <Card
+                  hoverable
+                  onClick={() => handleViewPet(item)}
+                  style={{ borderRadius: '12px', overflow: 'hidden', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', cursor: 'pointer' }}
+                  styles={{ body: { padding: '16px' } }}
+                  cover={
+                    <div style={{ height: isMobile ? 140 : 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #f5f7fa 0%, #c3cfe2 100%)', padding: '20px' }}>
+                      <img
+                        alt={item.name}
+                        src={getPetThumbUrl(item)}
+                        loading="lazy"
+                        style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', filter: 'drop-shadow(0 10px 8px rgba(0,0,0,0.2))' }}
+                      />
+                    </div>
+                  }
+                  size="small"
+                >
+                  <Card.Meta
+                    title={<span style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: 'bold' }}>{item.name}</span>}
+                    description={<span style={{ color: '#8c8c8c' }}>{item.owner_name}的宠物</span>}
+                    style={{ marginBottom: '12px' }}
+                  />
+                  <Statistic
+                    title={<span style={{ fontSize: '12px' }}>当前等级</span>}
+                    value={item.level}
+                    suffix={`级 (${item.species_name})`}
+                    valueStyle={{ color: '#1890ff', fontSize: isMobile ? '16px' : '20px', fontWeight: 'bold' }}
+                  />
+                </Card>
+              </Col>
+            ))}
+            {allPets.length === 0 && (
+              <div style={{ textAlign: 'center', width: '100%', padding: '20px', color: '#999' }}>
+                暂无宠物数据
+              </div>
+            )}
+          </Row>
+          {allPets.length > petsCardPageSize && (
+            <div style={{ textAlign: 'center', marginTop: 20 }}>
+              <Pagination
+                current={petsCardPage}
+                pageSize={petsCardPageSize}
+                total={allPets.length}
+                onChange={(page) => setPetsCardPage(page)}
+                showSizeChanger={false}
+                showTotal={(total) => `共 ${total} 只宠物`}
+                size={isMobile ? 'small' : 'default'}
+              />
             </div>
           )}
-        </Row>
+        </>
       ) : (
         <Table
           dataSource={allPets}
@@ -403,14 +422,7 @@ const Home: React.FC = () => {
                 cover={
                   <div style={{ height: isMobile ? 140 : 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #fdfbfb 0%, #ebedee 100%)', padding: '20px', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: 10, left: 10, fontSize: isMobile ? '18px' : '24px', fontWeight: 'bold', color: '#faad14', textShadow: '2px 2px 4px rgba(0,0,0,0.1)' }}>#{index + 1}</div>
-                    <img alt={item.name} src={(() => {
-                      try {
-                        const urls = typeof item.image_urls === 'string' ? JSON.parse(item.image_urls) : item.image_urls;
-                        return urls[item.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
-                      } catch (e) {
-                        return item.image_urls;
-                      }
-                    })()} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', filter: 'drop-shadow(0 10px 8px rgba(0,0,0,0.2))' }} />
+                    <img alt={item.name} src={getPetThumbUrl(item)} loading="lazy" style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', filter: 'drop-shadow(0 10px 8px rgba(0,0,0,0.2))' }} />
                   </div>
                 }
                 size="small"
@@ -450,7 +462,10 @@ const Home: React.FC = () => {
   );
 
   const renderContent = () => {
-    if (activeMenu === 'study') return <StudyCenter onNavigate={(menu: string) => {
+    const lazyFallback = <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}><Spin /></div>;
+    const wrap = (node: React.ReactNode) => <Suspense fallback={lazyFallback}>{node}</Suspense>;
+
+    if (activeMenu === 'study') return wrap(<StudyCenter onNavigate={(menu: string) => {
       if (menu === 'wrong_questions') {
         setSearchParams(prev => {
           prev.set('menu', 'study');
@@ -462,26 +477,26 @@ const Home: React.FC = () => {
       } else {
         handleMenuChange(menu);
       }
-    }} />;
-    if (activeMenu === 'pet') return <PetCenter onNavigate={handleMenuChange} />;
-    if (activeMenu === 'arena') return <PetCenter onNavigate={handleMenuChange} />;
-    if (activeMenu === 'achievement') return <StudyCenter onNavigate={handleMenuChange} />;
-    if (activeMenu === 'social') return <SocialHub />;
-    if (activeMenu === 'notifications') return <Notifications />;
-    if (activeMenu === 'class-dashboard') return <ClassDashboard />;
-    if (activeMenu === 'admin') return <Admin />;
-    if (activeMenu === 'profile') return <Profile />;
+    }} />);
+    if (activeMenu === 'pet') return wrap(<PetCenter onNavigate={handleMenuChange} />);
+    if (activeMenu === 'arena') return wrap(<PetCenter onNavigate={handleMenuChange} />);
+    if (activeMenu === 'achievement') return wrap(<StudyCenter onNavigate={handleMenuChange} />);
+    if (activeMenu === 'social') return wrap(<SocialHub />);
+    if (activeMenu === 'notifications') return wrap(<Notifications />);
+    if (activeMenu === 'class-dashboard') return wrap(<ClassDashboard />);
+    if (activeMenu === 'admin') return wrap(<Admin />);
+    if (activeMenu === 'profile') return wrap(<Profile />);
 
     if (isAuthenticated && user?.role === 'admin') {
-      return <Admin defaultTab="dashboard" />;
+      return wrap(<Admin defaultTab="dashboard" />);
     }
 
     if (isAuthenticated && isTeacher) {
-      return <TeacherDashboard onNavigate={handleMenuChange} />;
+      return wrap(<TeacherDashboard onNavigate={handleMenuChange} />);
     }
 
     if (isAuthenticated && isStudent) {
-      return <StudentDashboard onNavigate={handleMenuChange} />;
+      return wrap(<StudentDashboard onNavigate={handleMenuChange} />);
     }
 
     return (
@@ -699,14 +714,7 @@ const Home: React.FC = () => {
                   }}>
                     <img 
                       alt={selectedPet.name} 
-                      src={(() => {
-                        try {
-                          const urls = typeof selectedPet.image_urls === 'string' ? JSON.parse(selectedPet.image_urls) : selectedPet.image_urls;
-                          return urls[selectedPet.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
-                        } catch (e) {
-                          return selectedPet.image_urls;
-                        }
-                      })()} 
+                      src={getPetImageUrl(selectedPet)} 
                       style={{ 
                         maxHeight: '100%', 
                         maxWidth: '100%', 
@@ -875,14 +883,7 @@ const Home: React.FC = () => {
               <Card size="small" style={{ marginBottom: 16 }}>
                 <div style={{ textAlign: 'center' }}>
                   <img 
-                    src={(() => {
-                      try {
-                        const urls = typeof guidePetData.image_urls === 'string' ? JSON.parse(guidePetData.image_urls) : guidePetData.image_urls;
-                        return urls[guidePetData.growth_stage] || urls['宠物蛋'] || Object.values(urls)[0] || '';
-                      } catch (e) {
-                        return '';
-                      }
-                    })()} 
+                    src={getPetImageUrl(guidePetData, '宠物蛋')} 
                     alt={guidePetData.name} 
                     style={{ width: 100, height: 100, objectFit: 'contain' }} 
                   />

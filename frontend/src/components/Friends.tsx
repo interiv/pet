@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Card, Button, Input, List, Avatar, message, Modal, Form, Spin, Row, Col, Statistic, Popconfirm, Select, Tabs, Badge, Empty } from 'antd';
 import { UserAddOutlined, TeamOutlined, HeartFilled, DeleteOutlined, GiftOutlined, FireOutlined, EyeOutlined, SearchOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import { friendAPI, petAPI, itemAPI } from '../utils/api';
+import { getPetImageUrl } from '../utils/petImage';
 
 import { useAuthStore, usePetStore } from '../store/authStore';
 
@@ -398,14 +399,7 @@ const Friends: React.FC = () => {
                   }}>
                     <img 
                       alt={selectedPet.name} 
-                      src={(() => {
-                        try {
-                          const urls = typeof selectedPet.image_urls === 'string' ? JSON.parse(selectedPet.image_urls) : selectedPet.image_urls;
-                          return urls[selectedPet.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
-                        } catch (e) {
-                          return selectedPet.image_urls;
-                        }
-                      })()} 
+                      src={getPetImageUrl(selectedPet)} 
                       style={{ 
                         maxHeight: '100%', 
                         maxWidth: '100%', 

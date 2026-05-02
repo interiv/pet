@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { usePetStore } from '../store/authStore';
+import { getPetImageUrl } from '../utils/petImage';
 
 interface CelebrationProps {
   show: boolean;
@@ -112,14 +113,7 @@ const CelebrationAnimation: React.FC<CelebrationProps> = ({
         <div style={{ fontSize: 80 }}>
           {pet ? (
             <img
-              src={(() => {
-                try {
-                  const urls = typeof pet.image_urls === 'string' ? JSON.parse(pet.image_urls) : pet.image_urls;
-                  return urls[pet.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
-                } catch (e) {
-                  return '';
-                }
-              })()}
+              src={getPetImageUrl(pet)}
               alt="宠物"
               style={{
                 width: 120,

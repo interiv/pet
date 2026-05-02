@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, Row, Col, Button, List, Tag, Badge, message, Tooltip, Tabs, Modal, Statistic } from 'antd';
 import { SkinOutlined, ArrowUpOutlined, SafetyCertificateOutlined, ThunderboltOutlined, HeartOutlined, RocketOutlined, ShoppingCartOutlined, DollarCircleOutlined, LockOutlined } from '@ant-design/icons';
 import { equipmentAPI } from '../utils/api';
+import { getThumbUrl } from '../utils/petImage';
 import { useAuthStore } from '../store/authStore';
 
 interface EquipmentPanelProps {
@@ -241,7 +242,7 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
                         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
                           {equipped.image_url?.startsWith('http') || equipped.image_url?.startsWith('/images/') ? (
                             <img
-                              src={equipped.image_url}
+                              src={getThumbUrl(equipped.image_url)}
                               alt={equipped.name}
                               style={{ width: 64, height: 64, objectFit: 'contain', filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.1))', borderRadius: 8 }}
                             />
@@ -373,7 +374,7 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
                           display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
                         }}>
                           {item.image_url?.startsWith('http') || item.image_url?.startsWith('/images/') ? (
-                            <img src={item.image_url} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                            <img src={getThumbUrl(item.image_url)} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                           ) : (
                             <span style={{ fontSize: 28 }}>{item.image_url || '✨'}</span>
                           )}
@@ -433,7 +434,7 @@ export const EquipmentPanel: React.FC<EquipmentPanelProps> = ({ onEquipChange })
                 <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                   <div style={{ background: '#f5f5f5', borderRadius: 8, padding: 8, width: 64, height: 64, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     {item.image_url?.startsWith('http') || item.image_url?.startsWith('/images/') ? (
-                      <img src={item.image_url} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                      <img src={getThumbUrl(item.image_url)} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                     ) : (
                       <span style={{ fontSize: 36 }}>{item.image_url || '✨'}</span>
                     )}

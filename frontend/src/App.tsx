@@ -1,17 +1,18 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ConfigProvider, Spin, Alert, Button, Space } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
-import Login from './pages/Login';
-import Register from './pages/Register';
-import LandingPage from './pages/LandingPage';
-import ClassHome from './pages/ClassHome';
-import Workspace from './pages/Workspace';
-import AboutPage from './pages/AboutPage';
-import HelpPage from './pages/HelpPage';
-import PrivacyPage from './pages/PrivacyPage';
-import ContactPage from './pages/ContactPage';
 import { useAuthStore } from './store/authStore';
+import LandingPage from './pages/LandingPage';
+
+const Login = lazy(() => import('./pages/Login'));
+const Register = lazy(() => import('./pages/Register'));
+const ClassHome = lazy(() => import('./pages/ClassHome'));
+const Workspace = lazy(() => import('./pages/Workspace'));
+const AboutPage = lazy(() => import('./pages/AboutPage'));
+const HelpPage = lazy(() => import('./pages/HelpPage'));
+const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
+const ContactPage = lazy(() => import('./pages/ContactPage'));
 
 // 路由守卫组件：未登录跳 /login 并带上原地址
 export const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -81,6 +82,11 @@ const App: React.FC = () => {
   return (
     <ConfigProvider locale={zhCN}>
       <Router>
+        <Suspense fallback={
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+            <Spin size="large"><span style={{ paddingLeft: 16 }}>加载中...</span></Spin>
+          </div>
+        }>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
@@ -93,6 +99,7 @@ const App: React.FC = () => {
           <Route path="/contact" element={<ContactPage />} />
           <Route path="/" element={<RootRedirect />} />
         </Routes>
+        </Suspense>
       </Router>
     </ConfigProvider>
   );
