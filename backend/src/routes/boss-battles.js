@@ -19,21 +19,46 @@ router.get('/list/:classId', authenticateToken, (req, res) => {
   }
 });
 
-// 获取班级当前BOSS
+// 获取班级当前BOSS（含已击败但未领奖的）
 router.get('/current/:classId', authenticateToken, (req, res) => {
   try {
-    const boss = db.prepare(`
+    let boss = db.prepare(`
       SELECT * FROM boss_battles 
       WHERE class_id = ? AND status = 'active'
       ORDER BY created_at DESC
       LIMIT 1
     `).get(req.params.classId);
 
+    let myRewards: any[] = [];
+    let bossStatus = boss ? 'active' : null;
+
+    if (!boss) {
+      boss = db.prepare(`
+        SELECT * FROM boss_battles 
+        WHERE class_id = ? AND status = 'defeated'
+        ORDER BY completed_at DESC
+        LIMIT 1
+      `).get(req.params.classId);
+
+      if (boss) {
+        myRewards = db.prepare(`
+          SELECT * FROM boss_battle_rewards 
+          WHERE boss_battle_id = ? AND user_id = ?
+        `).all(boss.id, req.user.userId);
+
+        const allClaimed = myRewards.length > 0 && myRewards.every((r: any) => r.claimed);
+        if (allClaimed) {
+          boss = null;
+        } else {
+          bossStatus = 'defeated';
+        }
+      }
+    }
+
     if (!boss) {
       return res.json({ boss: null, message: '当前没有活跃的BOSS' });
     }
 
-    // 获取参与者和伤害排行
     const participants = db.prepare(`
       SELECT 
         bbp.*,
@@ -48,18 +73,25 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
       ORDER BY bbp.damage_dealt DESC
     `).all(boss.id);
 
-    const totalDamage = participants.reduce((sum, p) => sum + p.damage_dealt, 0);
+    const totalDamage = participants.reduce((sum: number, p: any) => sum + p.damage_dealt, 0);
     const progress = Math.round((totalDamage / boss.boss_max_hp) * 100);
 
     res.json({
       boss: {
         ...boss,
-        current_hp: boss.boss_max_hp - totalDamage,
-        progress,
-        participant_count: participants.length
+        current_hp: Math.max(0, boss.boss_max_hp - totalDamage),
+        progress: Math.min(100, progress),
+        participant_count: participants.length,
+        status: bossStatus,
       },
       participants,
-      leaderboard: participants.slice(0, 10)
+      leaderboard: participants.slice(0, 10),
+      myRewards: myRewards.map((r: any) => ({
+        id: r.id,
+        type: r.reward_type,
+        value: r.reward_value,
+        claimed: !!r.claimed,
+      })),
     });
   } catch (error) {
     console.error('获取BOSS信息失败:', error);

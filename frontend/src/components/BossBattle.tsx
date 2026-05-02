@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { Card, Progress, Button, List, Avatar, Tag, message, Statistic, Row, Col, Badge, Empty, Spin, Modal, Radio, Input } from 'antd';
+import { Card, Progress, Button, List, Avatar, Tag, message, Statistic, Row, Col, Badge, Empty, Spin, Modal, Radio, Input, Alert } from 'antd';
 import {
   ThunderboltOutlined,
   TeamOutlined,
@@ -7,6 +7,7 @@ import {
   ClockCircleOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  GiftOutlined,
 } from '@ant-design/icons';
 import { bossBattleAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
@@ -61,6 +62,9 @@ const BossBattle: React.FC = () => {
   const [cooldown, setCooldown] = useState(0);
   const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [myRewards, setMyRewards] = useState<any[]>([]);
+  const [claimingReward, setClaimingReward] = useState(false);
+
   useEffect(() => {
     if (user?.class_id) {
       loadBoss();
@@ -101,6 +105,7 @@ const BossBattle: React.FC = () => {
       setLoading(true);
       const response = await bossBattleAPI.getCurrentBoss(user.class_id);
       setBossData(response.data);
+      setMyRewards(response.data.myRewards || []);
     } catch (error: any) {
       console.error('加载BOSS失败:', error);
     } finally {
@@ -163,6 +168,20 @@ const BossBattle: React.FC = () => {
       }
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleClaimReward = async () => {
+    if (!bossData?.boss) return;
+    setClaimingReward(true);
+    try {
+      const res = await bossBattleAPI.claimReward(bossData.boss.id);
+      message.success(res.data.message);
+      loadBoss();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '领取失败');
+    } finally {
+      setClaimingReward(false);
     }
   };
 
@@ -359,26 +378,79 @@ const BossBattle: React.FC = () => {
               </Col>
             </Row>
 
-            <Button
-              type="primary"
-              size="large"
-              block
-              icon={<FireOutlined />}
-              loading={questionLoading}
-              disabled={cooldown > 0}
-              onClick={handleAttackClick}
-              style={{
-                marginTop: 24,
-                height: 56,
-                fontSize: 20,
-                background: cooldown > 0 ? 'rgba(255,255,255,0.5)' : '#fff',
-                color: '#764ba2',
-                border: 'none',
-                fontWeight: 'bold'
-              }}
-            >
-              {cooldown > 0 ? `冷却中... ${cooldown}秒` : '⚔️ 攻击BOSS'}
-            </Button>
+            {boss.status === 'defeated' ? (
+              <div style={{ marginTop: 24 }}>
+                <Alert
+                  type="success"
+                  message="BOSS已被击败！"
+                  description="恭喜！全班同学合力击败了BOSS，快来领取你的奖励吧！"
+                  showIcon
+                  icon={<CheckCircleOutlined />}
+                  style={{ marginBottom: 16 }}
+                />
+                {myRewards.length > 0 ? (
+                  <div>
+                    <div style={{ marginBottom: 12, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                      {myRewards.map((r: any) => (
+                        <Tag
+                          key={r.id}
+                          color={r.claimed ? 'default' : 'gold'}
+                          icon={r.claimed ? <CheckCircleOutlined /> : <GiftOutlined />}
+                          style={{ fontSize: 14, padding: '4px 12px' }}
+                        >
+                          {r.type === 'gold' ? '💰' : '⭐'} {r.value} {r.type === 'gold' ? '金币' : '经验'}
+                          {r.claimed ? ' (已领取)' : ''}
+                        </Tag>
+                      ))}
+                    </div>
+                    <Button
+                      type="primary"
+                      size="large"
+                      block
+                      icon={<GiftOutlined />}
+                      loading={claimingReward}
+                      onClick={handleClaimReward}
+                      disabled={myRewards.every((r: any) => r.claimed)}
+                      style={{
+                        height: 56,
+                        fontSize: 20,
+                        background: myRewards.every((r: any) => r.claimed) ? '#d9d9d9' : '#faad14',
+                        color: '#fff',
+                        border: 'none',
+                        fontWeight: 'bold',
+                      }}
+                    >
+                      {myRewards.every((r: any) => r.claimed) ? '奖励已全部领取' : '🎁 领取奖励'}
+                    </Button>
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.7)', padding: 16 }}>
+                    你没有参与本次BOSS战，无法领取奖励
+                  </div>
+                )}
+              </div>
+            ) : (
+              <Button
+                type="primary"
+                size="large"
+                block
+                icon={<FireOutlined />}
+                loading={questionLoading}
+                disabled={cooldown > 0}
+                onClick={handleAttackClick}
+                style={{
+                  marginTop: 24,
+                  height: 56,
+                  fontSize: 20,
+                  background: cooldown > 0 ? 'rgba(255,255,255,0.5)' : '#fff',
+                  color: '#764ba2',
+                  border: 'none',
+                  fontWeight: 'bold'
+                }}
+              >
+                {cooldown > 0 ? `冷却中... ${cooldown}秒` : '⚔️ 攻击BOSS'}
+              </Button>
+            )}
           </Col>
         </Row>
       </Card>

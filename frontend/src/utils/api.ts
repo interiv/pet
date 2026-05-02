@@ -490,6 +490,8 @@ export const bossBattleAPI = {
     api.post('/boss-battles/create', data),
   autoGenerate: (data: { class_id: number }) =>
     api.post('/boss-battles/auto-generate', data),
+  claimReward: (bossId: number) =>
+    api.post(`/boss-battles/${bossId}/claim-reward`),
 };
 
 export default api;

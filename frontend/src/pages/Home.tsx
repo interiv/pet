@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, TabsProps, Modal, Spin, Table, Segmented, Drawer, Button, Steps, message, Alert } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, Modal, Spin, Table, Segmented, Drawer, Button, Steps, message, Alert } from 'antd';
 import {
   HomeOutlined,
   BookOutlined,
@@ -26,6 +26,8 @@ import StudyCenter from '../components/StudyCenter';
 import PetCenter from '../components/PetCenter';
 import SocialHub from '../components/SocialHub';
 import AchievementCenter from '../components/AchievementCenter';
+import StudentDashboard from '../components/StudentDashboard';
+import TeacherDashboard from '../components/TeacherDashboard';
 
 const { Header, Content, Sider, Footer } = Layout;
 
@@ -68,9 +70,6 @@ const Home: React.FC = () => {
   const [petBonus, setPetBonus] = useState<any>(null);
   const [leaderboardView, setLeaderboardView] = useState<'card' | 'list'>('card');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [myClasses, setMyClasses] = useState<any[]>([]);
-  const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
-  const [taughtClassPets, setTaughtClassPets] = useState<any[]>([]);
   
   // 新手引导状态
   const [newbieGuideVisible, setNewbieGuideVisible] = useState(false);
@@ -102,8 +101,6 @@ const Home: React.FC = () => {
       if (isStudent) {
         loadPetData();
         loadMyClassPets();
-      } else if (isTeacher) {
-        loadTeacherClasses();
       } else {
         loadPetData();
         loadAllPets();
@@ -129,43 +126,6 @@ const Home: React.FC = () => {
           setNewbieStep(0);
         }
       }
-    }
-  };
-
-  const loadTeacherClasses = async () => {
-    try {
-      const res = await adminAPI.getClasses();
-      const classes = res.data.classes || [];
-      setMyClasses(classes);
-      if (classes.length > 0) {
-        setSelectedClassId(classes[0].id);
-        loadClassPetsForTeacher(classes[0].id);
-        loadAllTaughtClassPets(classes);
-      }
-    } catch (error) {
-      console.error('加载教师班级失败:', error);
-    }
-  };
-
-  const loadAllTaughtClassPets = async (classes: any[]) => {
-    const classIds = classes.map((c: any) => c.id);
-    const allPetLists = await Promise.all(
-      classIds.map((cid: number) => petAPI.getAllPets({ class_id: cid }).then(r => r.data.pets || []).catch(() => []))
-    );
-    const merged = allPetLists.flat();
-    const uniquePets = Array.from(new Map(merged.map(p => [p.id, p])).values());
-    setTaughtClassPets(uniquePets);
-  };
-
-  const loadClassPetsForTeacher = async (classId: number) => {
-    try {
-      const response = await petAPI.getAllPets({ class_id: classId });
-      const pets = response.data.pets || [];
-      setAllPets(pets);
-      const sorted = [...pets].sort((a: any, b: any) => b.level - a.level || b.exp - a.exp).slice(0, 10);
-      setLeaderboard(sorted);
-    } catch (error) {
-      console.error('加载班级宠物失败:', error);
     }
   };
 
@@ -315,10 +275,6 @@ const Home: React.FC = () => {
   const [petsTablePageSize, setPetsTablePageSize] = useState(10);
   const [lbTablePage, setLbTablePage] = useState(1);
   const [lbTablePageSize, setLbTablePageSize] = useState(10);
-  const [classLbTablePage, setClassLbTablePage] = useState(1);
-  const [classLbTablePageSize, setClassLbTablePageSize] = useState(10);
-  const [globalLbTablePage, setGlobalLbTablePage] = useState(1);
-  const [globalLbTablePageSize, setGlobalLbTablePageSize] = useState(10);
 
   const getPetsTitle = () => {
     if (user?.role === 'admin') return '全校宠物';
@@ -498,117 +454,6 @@ const Home: React.FC = () => {
     </div>
   );
 
-  const taughtLeaderboardChildren = (
-    <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: 14, color: '#666' }}>任教各班宠物排行榜</span>
-        {myClasses.length > 1 && (
-          <Segmented
-            options={myClasses.map((c: any) => ({ label: c.name, value: c.id }))}
-            value={selectedClassId || undefined}
-            onChange={(value) => { setSelectedClassId(value as number); loadClassPetsForTeacher(value as number); }}
-          />
-        )}
-        <Segmented
-          options={[
-            { label: '卡片', value: 'card' },
-            { label: '列表', value: 'list' },
-          ]}
-          value={leaderboardView}
-          onChange={(value) => setLeaderboardView(value as 'card' | 'list')}
-        />
-      </div>
-      {leaderboardView === 'card' ? (
-        <Row gutter={[16, 16]}>
-          {leaderboard.map((item: any, index: number) => (
-            <Col xs={24} sm={12} md={8} lg={6} key={item.id}>
-              <Card
-                hoverable
-                onClick={() => handleViewPet(item)}
-                style={{ borderRadius: '12px', overflow: 'hidden', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', cursor: 'pointer' }}
-                styles={{ body: { padding: '16px' } }}
-                cover={
-                  <div style={{ height: 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #fdfbfb 0%, #ebedee 100%)', padding: '20px', position: 'relative' }}>
-                    <div style={{ position: 'absolute', top: 10, left: 10, fontSize: '24px', fontWeight: 'bold', color: '#faad14', textShadow: '2px 2px 4px rgba(0,0,0,0.1)' }}>#{index + 1}</div>
-                    <img alt={item.name} src={(() => {
-                      try {
-                        const urls = typeof item.image_urls === 'string' ? JSON.parse(item.image_urls) : item.image_urls;
-                        return urls[item.growth_stage] || urls['成年期'] || Object.values(urls)[0] || '';
-                      } catch (e) { return item.image_urls; }
-                    })()} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', filter: 'drop-shadow(0 10px 8px rgba(0,0,0,0.2))' }} />
-                  </div>
-                }
-                size="small"
-              >
-                <Card.Meta title={<span style={{ fontSize: '16px', fontWeight: 'bold' }}>{item.name}</span>} description={<span style={{ color: '#8c8c8c' }}>{item.owner_name}的宠物</span>} style={{ marginBottom: '12px' }} />
-                <Statistic title={<span style={{ fontSize: '12px' }}>当前等级</span>} value={item.level} suffix={`级 (${item.species_name})`} valueStyle={{ color: '#faad14', fontSize: '20px', fontWeight: 'bold' }} />
-              </Card>
-            </Col>
-          ))}
-          {leaderboard.length === 0 && <div style={{ textAlign: 'center', width: '100%', padding: '20px', color: '#999' }}>该班级暂无宠物</div>}
-        </Row>
-      ) : (
-        <Table dataSource={leaderboard} columns={leaderboardColumns} rowKey="id" pagination={{
-          current: classLbTablePage,
-          pageSize: classLbTablePageSize,
-          onChange: (page, size) => { setClassLbTablePage(page); setClassLbTablePageSize(size); },
-          showSizeChanger: true,
-          pageSizeOptions: ['10', '20', '50'],
-          showTotal: (total) => `共 ${total} 条`
-        }} size="small" />
-      )}
-    </div>
-  );
-
-  const allTaughtLeaderboardChildren = (
-    <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: 14, color: '#666' }}>任教各班宠物总排行</span>
-        <Segmented options={[{ label: '卡片', value: 'card' }, { label: '列表', value: 'list' }]} value={leaderboardView} onChange={(value) => setLeaderboardView(value as 'card' | 'list')} />
-      </div>
-      {(() => {
-        const sorted = [...taughtClassPets].sort((a: any, b: any) => b.level - a.level || b.exp - a.exp).slice(0, 10);
-        if (leaderboardView === 'card') {
-          return (
-            <Row gutter={[16, 16]}>
-              {sorted.map((item: any, index: number) => (
-                <Col xs={24} sm={12} md={8} lg={6} key={item.id}>
-                  <Card hoverable onClick={() => handleViewPet(item)} style={{ borderRadius: '12px', overflow: 'hidden', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', cursor: 'pointer' }} styles={{ body: { padding: '16px' } }} cover={
-                    <div style={{ height: 180, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(to bottom, #fdfbfb 0%, #ebedee 100%)', padding: '20px', position: 'relative' }}>
-                      <div style={{ position: 'absolute', top: 10, left: 10, fontSize: '24px', fontWeight: 'bold', color: '#faad14', textShadow: '2px 2px 4px rgba(0,0,0,0.1)' }}>#{index + 1}</div>
-                      <img alt={item.name} src={(() => { try { const urls = typeof item.image_urls === 'string' ? JSON.parse(item.image_urls) : item.image_urls; return urls[item.growth_stage] || urls['成年期'] || Object.values(urls)[0] || ''; } catch (e) { return item.image_urls; } })()} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain', filter: 'drop-shadow(0 10px 8px rgba(0,0,0,0.2))' }} />
-                    </div>
-                  } size="small">
-                    <Card.Meta title={<span style={{ fontSize: '16px', fontWeight: 'bold' }}>{item.name}</span>} description={<span style={{ color: '#8c8c8c' }}>{item.owner_name}的宠物</span>} style={{ marginBottom: '12px' }} />
-                    <Statistic title={<span style={{ fontSize: '12px' }}>当前等级</span>} value={item.level} suffix={`级 (${item.species_name})`} valueStyle={{ color: '#faad14', fontSize: '20px', fontWeight: 'bold' }} />
-                  </Card>
-                </Col>
-              ))}
-              {sorted.length === 0 && <div style={{ textAlign: 'center', width: '100%', padding: '20px', color: '#999' }}>暂无宠物数据</div>}
-            </Row>
-          );
-        }
-        return <Table dataSource={sorted} columns={leaderboardColumns} rowKey="id" pagination={{
-          current: globalLbTablePage,
-          pageSize: globalLbTablePageSize,
-          onChange: (page, size) => { setGlobalLbTablePage(page); setGlobalLbTablePageSize(size); },
-          showSizeChanger: true,
-          pageSizeOptions: ['10', '20', '50'],
-          showTotal: (total) => `共 ${total} 条`
-        }} size="small" />;
-      })()}
-    </div>
-  );
-
-  const teacherTabItems: TabsProps['items'] = [
-    { key: 'class_leaderboard', label: '本班宠物排行', children: taughtLeaderboardChildren },
-    { key: 'all_taught_leaderboard', label: '任教各班排行', children: allTaughtLeaderboardChildren },
-  ];
-
-  const studentHomeTabItems: TabsProps['items'] = [
-    { key: 'class_leaderboard', label: '本班宠物排行', children: leaderboardChildren },
-  ];
-
   const renderContent = () => {
     if (activeMenu === 'study') return <StudyCenter onNavigate={(menu: string) => {
       if (menu === 'wrong_questions') {
@@ -637,26 +482,11 @@ const Home: React.FC = () => {
     }
 
     if (isAuthenticated && isTeacher) {
-      return (
-        <Tabs
-          activeKey={activeMenu === 'home' ? 'class_leaderboard' : activeMenu}
-          onChange={(key) => handleMenuChange(key)}
-          items={teacherTabItems}
-          size={isMobile ? 'small' : 'middle'}
-          centered={isMobile}
-        />
-      );
+      return <TeacherDashboard onNavigate={handleMenuChange} />;
     }
 
     if (isAuthenticated && isStudent) {
-      return (
-        <Tabs
-          activeKey="class_leaderboard"
-          items={studentHomeTabItems}
-          size={isMobile ? 'small' : 'middle'}
-          centered={isMobile}
-        />
-      );
+      return <StudentDashboard onNavigate={handleMenuChange} />;
     }
 
     return (
