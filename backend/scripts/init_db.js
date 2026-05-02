@@ -21,10 +21,9 @@ if (fs.existsSync(dbPath)) {
     fs.unlinkSync(dbPath);
     console.log('   ✓ 旧数据库已删除\n');
   } catch (e) {
-    console.log('   ⚠  删除失败，使用新文件名...');
-    const timestamp = Date.now();
-    dbPath = path.join(dataDir, `database_${timestamp}.sqlite`);
-    console.log(`   将使用新数据库: database_${timestamp}.sqlite\n`);
+    console.log('   ✗ 删除失败！数据库文件可能被其他进程占用（如服务器正在运行）');
+    console.log('   请先停止所有连接数据库的服务，然后重试。\n');
+    process.exit(1);
   }
 } else {
   console.log('1. 数据库不存在，跳过删除\n');

@@ -55,6 +55,6 @@ echo.
 echo 按任意键查看使用说明...
 pause >nul
 
-start "" "https://github.com/your-repo/README.md"
+start "" "https://github.com/interiv/pet/README.md"
 
 exit /b 0

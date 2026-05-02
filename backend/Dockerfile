@@ -1,19 +1,22 @@
-FROM node:18-alpine AS builder
+FROM docker.m.daocloud.io/library/node:20-slim AS builder
 
 WORKDIR /app
 
 COPY package*.json ./
 
-RUN npm install --registry=https://registry.npmmirror.com
+RUN npm ci --registry=https://registry.npmmirror.com --build-from-source=false || npm install --registry=https://registry.npmmirror.com --build-from-source=false
 
-FROM node:18-alpine AS production
+FROM docker.m.daocloud.io/library/node:20-slim AS production
 
 WORKDIR /app
 
 COPY --from=builder /app/node_modules ./node_modules
 COPY package*.json ./
 COPY src ./src
-COPY .env ./
+
+RUN mkdir -p /app/data
+
+COPY .env* ./
 
 EXPOSE 3000
 

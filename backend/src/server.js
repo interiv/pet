@@ -37,13 +37,18 @@ initDatabase();
 
 const { db } = require('./config/database');
 
+const allowedOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map(u => u.trim())
+  .filter(Boolean);
+
 const app = express();
 const server = http.createServer(app);
 
 // Socket.IO 初始化（用于战斗和实时互动）
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: allowedOrigins,
     methods: ['GET', 'POST']
   }
 });
@@ -55,7 +60,15 @@ app.set('io', io);
 app.use(helmet()); // 安全头
 app.use(compression()); // 压缩响应
 app.use(cors({
-  origin: process.env.FRONTEND_URL || ['http://localhost:5173', 'http://localhost:5174'],
+  origin: function (origin, callback) {
+    // 允许没有 origin 的请求（如移动应用、curl 等）
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('不允许的跨域请求'));
+    }
+  },
   credentials: true
 }));
 app.use(morgan('dev')); // 日志

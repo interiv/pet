@@ -14,25 +14,13 @@ services:
       - PORT=3000
       - JWT_SECRET=${JWT_SECRET:-class-pet-game-secret-key-2024}
       - JWT_EXPIRES_IN=7d
-      - FRONTEND_URL=http://localhost:80
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}
       - AI_API_KEY=${AI_API_KEY}
       - AI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
       - AI_MODEL=doubao-seed-2-0-pro-260215
     volumes:
-      - ./backend/data:/app/data
-    networks:
-      - app-network
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: class-pet-frontend
-    restart: unless-stopped
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
+      # 挂载外部数据库文件（每个域名部署时修改这个路径）
+      - ${DB_PATH:-./backend/data/database.sqlite}:/app/data/database.sqlite
     networks:
       - app-network
 

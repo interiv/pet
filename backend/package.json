@@ -6,7 +6,14 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "node tests/run-api-tests.js"
+    "test": "node tests/run-api-tests.js",
+    "setup": "node scripts/setup.js",
+    "setup:db": "node scripts/setup.js --db",
+    "setup:db:test": "node scripts/setup.js --db --test-data",
+    "setup:classes": "node scripts/setup.js --classes",
+    "setup:achievements": "node scripts/setup.js --achievements",
+    "setup:full": "node scripts/setup.js",
+    "setup:clean": "node scripts/setup.js --clean"
   },
   "keywords": [
     "pet",

@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge, Switch, Alert, Empty, Spin } from 'antd';
-import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined, FireOutlined } from '@ant-design/icons';
+import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined } from '@ant-design/icons';
 import { adminAPI, schoolAPI, assignmentAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import ClassInvitationManager from './ClassInvitationManager';
 import AchievementManagement from './admin/AchievementManagement';
-import BossBattleManager from './BossBattleManager';
 
 const useTablePagination = (defaultPageSize = 10) => {
   const [page, setPage] = useState(1);
@@ -77,7 +76,6 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
         );
       }
       items.push(
-        { key: 'boss', label: <span><FireOutlined /> BOSS管理</span>, children: <BossBattleManager /> },
         { key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> },
       );
       return items;

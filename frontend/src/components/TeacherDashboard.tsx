@@ -4,14 +4,14 @@ import {
   TeamOutlined,
   TrophyOutlined,
   BookOutlined,
-  FireOutlined,
   ThunderboltOutlined,
   ArrowRightOutlined,
   WarningOutlined,
   CheckCircleOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { adminAPI, leaderboardAPI, knowledgePointAPI, bossBattleAPI } from '../utils/api';
+import { useSearchParams } from 'react-router-dom';
+import { adminAPI, leaderboardAPI, knowledgePointAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
 interface TeacherDashboardProps {
@@ -20,11 +20,11 @@ interface TeacherDashboardProps {
 
 const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
   const { user } = useAuthStore();
+  const [, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<any>(null);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [classOverview, setClassOverview] = useState<any>(null);
-  const [activeBoss, setActiveBoss] = useState<any>(null);
   const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
   const [myClasses, setMyClasses] = useState<any[]>([]);
 
@@ -45,15 +45,13 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
         const firstClassId = classes[0].id;
         setSelectedClassId(firstClassId);
 
-        const [lbRes, overviewRes, bossRes] = await Promise.all([
+        const [lbRes, overviewRes] = await Promise.all([
           leaderboardAPI.getLevelLeaderboard({ class_id: firstClassId, limit: 5 }),
           knowledgePointAPI.getClassOverview(firstClassId, { days: 14 }).catch(() => ({ data: null })),
-          bossBattleAPI.getCurrentBoss(firstClassId).catch(() => ({ data: { boss: null } })),
         ]);
 
         setLeaderboard(lbRes.data.leaderboard || []);
         setClassOverview(overviewRes.data);
-        setActiveBoss(bossRes.data.boss);
       }
     } catch (error) {
       console.error('加载教师仪表盘失败:', error);
@@ -65,14 +63,12 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
   const handleClassChange = async (classId: number) => {
     setSelectedClassId(classId);
     try {
-      const [lbRes, overviewRes, bossRes] = await Promise.all([
+      const [lbRes, overviewRes] = await Promise.all([
         leaderboardAPI.getLevelLeaderboard({ class_id: classId, limit: 5 }),
         knowledgePointAPI.getClassOverview(classId, { days: 14 }).catch(() => ({ data: null })),
-        bossBattleAPI.getCurrentBoss(classId).catch(() => ({ data: { boss: null } })),
       ]);
       setLeaderboard(lbRes.data.leaderboard || []);
       setClassOverview(overviewRes.data);
-      setActiveBoss(bossRes.data.boss);
     } catch (error) {
       console.error('切换班级数据失败:', error);
     }
@@ -146,7 +142,10 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
             size="small"
             style={{ borderRadius: 12 }}
             extra={
-              <Button type="link" size="small" onClick={() => onNavigate('class-dashboard')}>
+              <Button type="link" size="small" onClick={() => {
+                setSearchParams({ menu: 'study', tab: 'dashboard' }, { replace: true });
+                onNavigate('study');
+              }}>
                 详细数据 <ArrowRightOutlined />
               </Button>
             }
@@ -244,47 +243,20 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
         </Col>
       </Row>
 
-      {activeBoss && (
-        <Card
-          style={{
-            marginTop: 16,
-            borderRadius: 12,
-            background: 'linear-gradient(135deg, #f5222d 0%, #fa8c16 100%)',
-            color: '#fff',
-            cursor: 'pointer',
-          }}
-          onClick={() => onNavigate('admin')}
-        >
-          <Row align="middle" justify="space-between">
-            <Col>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <FireOutlined style={{ fontSize: 32 }} />
-                <div>
-                  <div style={{ fontSize: 18, fontWeight: 'bold' }}>{selectedClassName} BOSS战进行中</div>
-                  <div>{activeBoss.boss_name} Lv.{activeBoss.boss_level} · 进度 {activeBoss.progress}%</div>
-                </div>
-              </div>
-            </Col>
-            <Col>
-              <Button ghost icon={<ArrowRightOutlined />}>管理BOSS</Button>
-            </Col>
-          </Row>
-        </Card>
-      )}
-
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col xs={24} sm={8}>
-          <Button block size="large" icon={<BookOutlined />} onClick={() => onNavigate('admin')} style={{ height: 56, borderRadius: 12 }}>
+        <Col xs={24} sm={12}>
+          <Button block size="large" icon={<BookOutlined />} onClick={() => {
+            setSearchParams({ menu: 'study', tab: 'assignments' }, { replace: true });
+            onNavigate('study');
+          }} style={{ height: 56, borderRadius: 12 }}>
             布置作业
           </Button>
         </Col>
-        <Col xs={24} sm={8}>
-          <Button block size="large" icon={<FireOutlined />} onClick={() => onNavigate('admin')} style={{ height: 56, borderRadius: 12 }}>
-            管理BOSS
-          </Button>
-        </Col>
-        <Col xs={24} sm={8}>
-          <Button block size="large" icon={<TeamOutlined />} onClick={() => onNavigate('class-dashboard')} style={{ height: 56, borderRadius: 12 }}>
+        <Col xs={24} sm={12}>
+          <Button block size="large" icon={<TeamOutlined />} onClick={() => {
+            setSearchParams({ menu: 'study', tab: 'dashboard' }, { replace: true });
+            onNavigate('study');
+          }} style={{ height: 56, borderRadius: 12 }}>
             班级详情
           </Button>
         </Col>
