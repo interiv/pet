@@ -11,7 +11,7 @@ import {
   ScheduleOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
-import { aiCoachAPI, knowledgePointAPI } from '../utils/api';
+import { aiCoachAPI, knowledgePointAPI, adminAPI } from '../utils/api';
 import { MasteryRing, AccuracyColumn, CountColumn, WeakPointBar, LearningHeatmap, TrendLine } from './charts/ChartKit';
 
 const API_BASE_URL = (import.meta as any).env.VITE_API_URL || '/api';
@@ -62,12 +62,14 @@ const LearningDashboard: React.FC = () => {
   const [learningTimeLoading, setLearningTimeLoading] = useState(false);
   const [kpTablePage, setKpTablePage] = useState(1);
   const [kpTablePageSize, setKpTablePageSize] = useState(10);
+  const [aiTimeout, setAiTimeout] = useState<number>(300);
 
   useEffect(() => {
     loadData();
   }, [days]);
 
   useEffect(() => {
+    loadAISettings();
     loadReviewEffect();
   }, []);
 
@@ -79,6 +81,16 @@ const LearningDashboard: React.FC = () => {
     loadAIPlan();
     loadDiagnosis();
   }, []);
+
+  const loadAISettings = async () => {
+    try {
+      const res = await adminAPI.getSiteSettings();
+      const timeout = parseInt(res.data.settings?.ai_timeout) || 300;
+      setAiTimeout(timeout);
+    } catch (e) {
+      // 静默失败，使用默认值
+    }
+  };
 
   const loadLearningTime = async () => {
     try {
@@ -168,7 +180,7 @@ const LearningDashboard: React.FC = () => {
   const loadAIPlan = async (force = false) => {
     try {
       setAiPlanLoading(true);
-      const res = await aiCoachAPI.getLearningPlan({ days: 14, force: force ? '1' : undefined });
+      const res = await aiCoachAPI.getLearningPlan({ days: 14, force: force ? '1' : undefined }, aiTimeout);
       if (res.data.empty) {
         setAiPlan(null);
         if (force) message.info(res.data.message || '暂无数据生成规划');
@@ -184,7 +196,11 @@ const LearningDashboard: React.FC = () => {
         }
       }
     } catch (e: any) {
-      message.error(e.response?.data?.error || '生成学习规划失败');
+      if (e.code === 'ECONNABORTED') {
+        message.error(`AI请求超时（${aiTimeout}秒），请稍后重试`);
+      } else {
+        message.error(e.response?.data?.error || '生成学习规划失败');
+      }
     } finally {
       setAiPlanLoading(false);
     }
@@ -193,7 +209,7 @@ const LearningDashboard: React.FC = () => {
   const loadDiagnosis = async (force = false) => {
     try {
       setDiagnosisLoading(true);
-      const res = await aiCoachAPI.getDiagnosis({ days: 30, force: force ? '1' : undefined });
+      const res = await aiCoachAPI.getDiagnosis({ days: 30, force: force ? '1' : undefined }, aiTimeout);
       if (res.data.empty) {
         setDiagnosis(null);
         if (force) message.info(res.data.message || '暂无数据生成诊断报告');
@@ -210,7 +226,11 @@ const LearningDashboard: React.FC = () => {
         }
       }
     } catch (e: any) {
-      message.error(e.response?.data?.error || '生成诊断报告失败');
+      if (e.code === 'ECONNABORTED') {
+        message.error(`AI请求超时（${aiTimeout}秒），请稍后重试`);
+      } else {
+        message.error(e.response?.data?.error || '生成诊断报告失败');
+      }
     } finally {
       setDiagnosisLoading(false);
     }

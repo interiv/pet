@@ -1738,6 +1738,7 @@ const AISettings: React.FC = () => {
         ai_base_url: data.ai_base_url || 'https://api.openai.com/v1',
         ai_api_key: data.ai_api_key || '',
         ai_report_interval_days: data.ai_report_interval_days || '3',
+        ai_timeout: data.ai_timeout || '300',
       });
     } catch (error) {
       message.error('加载设置失败');
@@ -1808,6 +1809,9 @@ const AISettings: React.FC = () => {
         </Form.Item>
         <Form.Item name="ai_report_interval_days" label="AI报告重新生成间隔（天）" rules={[{ required: true, message: '请输入间隔天数' }]} extra="学生生成学习规划或诊断报告后，需间隔多少天才可重新生成。默认3天。">
           <Input type="number" min={1} max={30} placeholder="3" />
+        </Form.Item>
+        <Form.Item name="ai_timeout" label="大模型请求超时（秒）" rules={[{ required: true, message: '请输入超时时间' }]} extra="AI请求的最大等待时间，超时将返回错误。默认300秒（5分钟）。">
+          <Input type="number" min={10} max={600} placeholder="300" />
         </Form.Item>
 
         {testResult && (

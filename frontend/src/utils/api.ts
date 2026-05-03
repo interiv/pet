@@ -100,8 +100,8 @@ export const assignmentAPI = {
   
   getAssignment: (id: number) => api.get(`/assignments/${id}`),
   
-  generateQuestions: (data: { subject: string; topic: string; difficulty?: string; question_type: string; count?: number; grade_level?: string }) =>
-    api.post('/assignments/generate', data),
+  generateQuestions: (data: { subject: string; topic: string; difficulty?: string; question_type: string; count?: number; grade_level?: string }, timeout?: number) =>
+    api.post('/assignments/generate', data, { timeout: (timeout || 300) * 1000 }),
   
   createAssignment: (data: any) => 
     api.post('/assignments', data),
@@ -159,8 +159,8 @@ export const knowledgePointAPI = {
 
 // AI学习教练 API
 export const aiCoachAPI = {
-  getLearningPlan: (params?: { days?: number; force?: string }) => api.get('/ai-coach/learning-plan', { params }),
-  getDiagnosis: (params?: { days?: number; force?: string }) => api.get('/ai-coach/diagnosis', { params }),
+  getLearningPlan: (params?: { days?: number; force?: string }, timeout?: number) => api.get('/ai-coach/learning-plan', { params, timeout: (timeout || 300) * 1000 }),
+  getDiagnosis: (params?: { days?: number; force?: string }, timeout?: number) => api.get('/ai-coach/diagnosis', { params, timeout: (timeout || 300) * 1000 }),
 };
 
 // 战斗相关 API

@@ -72,6 +72,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [classes, setClasses] = useState<any[]>([]);
   const [selectedClass, setSelectedClass] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [aiTimeout, setAiTimeout] = useState<number>(300);
   
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const [isDoModalVisible, setIsDoModalVisible] = useState(false);
@@ -155,6 +156,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     if (user) {
       loadAssignments();
       if (isTeacher) loadClasses();
+      loadAISettings();
     }
   }, [user]);
 
@@ -168,6 +170,16 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       setClasses(res.data.classes || []);
     } catch (e) {
       console.error('加载班级列表失败');
+    }
+  };
+
+  const loadAISettings = async () => {
+    try {
+      const res = await adminAPI.getSiteSettings();
+      const timeout = parseInt(res.data.settings?.ai_timeout) || 300;
+      setAiTimeout(timeout);
+    } catch (e) {
+      // 静默失败，使用默认值
     }
   };
 
@@ -200,7 +212,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         question_type: values.question_type,
         count: values.count || 10,
         grade_level: values.grade_level || ''
-      });
+      }, aiTimeout);
       setGeneratedData(res.data as GeneratedResult);
       const nextDayMidnight = dayjs().add(1, 'day').startOf('day');
       const allClassIds = classes.map(c => c.id);
@@ -216,7 +228,11 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       setCreateModalTab('preview');
       message.success(`成功生成 ${res.data.question_count} 道题目（共${res.data.total_generated}道含变体）`);
     } catch (e: any) {
-      message.error(e.response?.data?.error || 'AI生成失败');
+      if (e.code === 'ECONNABORTED') {
+        message.error(`AI生成超时（${aiTimeout}秒），请稍后重试或联系管理员调整超时设置`);
+      } else {
+        message.error(e.response?.data?.error || 'AI生成失败');
+      }
     } finally {
       setGenerating(false);
     }

@@ -1360,7 +1360,7 @@ router.get('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
 // 保存大模型设置
 router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
   try {
-    const { ai_model, ai_api_key, ai_base_url, ai_report_interval_days } = req.body;
+    const { ai_model, ai_api_key, ai_base_url, ai_report_interval_days, ai_timeout } = req.body;
     
     const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {
@@ -1368,6 +1368,7 @@ router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
       if (ai_api_key !== undefined) stmt.run('ai_api_key', ai_api_key);
       if (ai_base_url !== undefined) stmt.run('ai_base_url', ai_base_url);
       if (ai_report_interval_days !== undefined) stmt.run('ai_report_interval_days', String(ai_report_interval_days));
+      if (ai_timeout !== undefined) stmt.run('ai_timeout', String(ai_timeout));
     })();
 
     res.json({ message: '设置保存成功' });
@@ -1381,16 +1382,19 @@ router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
 router.post('/settings/ai/test', authenticateToken, requireAdmin, async (req, res) => {
   const axios = require('axios');
   try {
-    const { ai_model, ai_api_key, ai_base_url } = req.body;
+    const { ai_model, ai_api_key, ai_base_url, ai_timeout } = req.body;
     
     if (!ai_model || !ai_api_key || !ai_base_url) {
       return res.status(400).json({ error: '请填写完整的 AI 配置' });
     }
 
+    const timeoutMs = (parseInt(ai_timeout) || 300) * 1000;
+
     console.log('\n========== AI 连接测试 ==========');
     console.log('🎯 目标地址:', `${ai_base_url}/chat/completions`);
     console.log('🤖 使用模型:', ai_model);
     console.log('🔑 API Key:', `${ai_api_key.slice(0, 8)}...${ai_api_key.slice(-4)}`);
+    console.log('⏱️ 超时设置:', timeoutMs / 1000, '秒');
 
     const startTime = Date.now();
     const response = await axios.post(`${ai_base_url}/chat/completions`, {
@@ -1401,7 +1405,7 @@ router.post('/settings/ai/test', authenticateToken, requireAdmin, async (req, re
         'Authorization': `Bearer ${ai_api_key}`,
         'Content-Type': 'application/json'
       },
-      timeout: 30000
+      timeout: timeoutMs
     });
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
@@ -1428,7 +1432,7 @@ router.post('/settings/ai/test', authenticateToken, requireAdmin, async (req, re
       });
     } else if (error.code === 'ECONNABORTED') {
       console.error('⏱️ 请求超时');
-      res.status(500).json({ error: '请求超时 (30秒)', detail: '请检查网络连接或 API 地址是否正确' });
+      res.status(500).json({ error: `请求超时 (${timeoutMs / 1000}秒)`, detail: '请检查网络连接或 API 地址是否正确' });
     } else if (error.code === 'ECONNREFUSED') {
       console.error('🚫 连接被拒绝');
       res.status(500).json({ error: '连接被拒绝', detail: '请检查 API 地址是否正确' });
@@ -1658,6 +1662,7 @@ function ensureSettingsTable() {
       ['ai_model', 'gpt-3.5-turbo'],
       ['ai_api_key', ''],
       ['ai_base_url', 'https://api.openai.com/v1'],
+      ['ai_timeout', '300'],
       ['perm_battle_records', 'head_teacher'],
       ['perm_homework_records', 'subject_teacher'],
       ['perm_purchase_records', 'head_teacher'],
@@ -1690,7 +1695,7 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
       'site_announcement', 'registration_enabled', 'battle_enabled',
       'shop_enabled', 'max_pets_per_user', 'daily_login_gold',
       'battle_stamina_cost', 'ai_model', 'ai_api_key', 'ai_base_url',
-      'ai_report_interval_days',
+      'ai_report_interval_days', 'ai_timeout',
       'perm_battle_records', 'perm_homework_records', 'perm_purchase_records',
     ];
     const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);

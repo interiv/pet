@@ -119,10 +119,13 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       return res.status(500).json({ error: 'AI 配置未完成，请联系管理员' });
     }
 
+    const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
+
     console.log('🔧 AI 配置:', {
       base_url: config.ai_base_url,
       model: config.ai_model,
-      api_key: config.ai_api_key ? `${config.ai_api_key.slice(0, 8)}...${config.ai_api_key.slice(-4)}` : '未配置'
+      api_key: config.ai_api_key ? `${config.ai_api_key.slice(0, 8)}...${config.ai_api_key.slice(-4)}` : '未配置',
+      timeout: timeoutMs / 1000 + '秒'
     });
 
     const typeLabel = typeLabels[question_type] || question_type;
@@ -200,7 +203,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     console.log('🎯 目标地址:', `${config.ai_base_url}/chat/completions`);
     console.log('🤖 使用模型:', config.ai_model);
     console.log('📝 Prompt 长度:', prompt.length, '字符');
-    console.log('⏱️ 超时设置: 120秒');
+    console.log('⏱️ 超时设置:', timeoutMs / 1000, '秒');
     
     const startTime = Date.now();
     const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
@@ -211,7 +214,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
         'Authorization': `Bearer ${config.ai_api_key}`,
         'Content-Type': 'application/json'
       },
-      timeout: 300000
+      timeout: timeoutMs
     });
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
@@ -1269,6 +1272,7 @@ async function reviewSubjectiveAssignment(submissionId, assignmentId, userId) {
     `).all(submissionId);
 
     const config = getAIConfig();
+    const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
     let totalScore = 0;
     const feedbackList = [];
 
@@ -1300,7 +1304,7 @@ ${qa.student_answer || '(未提供文字答案)'}
             messages: [{ role: 'user', content: reviewPrompt }]
           }, {
             headers: { 'Authorization': `Bearer ${config.ai_api_key}`, 'Content-Type': 'application/json' },
-            timeout: 60000
+            timeout: timeoutMs
           });
 
           const aiContent = resp.data.choices[0].message.content;

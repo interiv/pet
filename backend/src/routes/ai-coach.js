@@ -90,10 +90,13 @@ async function callAI(prompt) {
     throw new Error('AI 配置未完成，请联系管理员');
   }
   
+  const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
+  
   console.log('\n🤖 调用 AI 服务...');
   console.log('🎯 地址:', `${config.ai_base_url}/chat/completions`);
   console.log('🤖 模型:', config.ai_model);
   console.log('📝 Prompt 长度:', prompt.length, '字符');
+  console.log('⏱️ 超时设置:', timeoutMs / 1000, '秒');
   
   const startTime = Date.now();
   const resp = await axios.post(`${config.ai_base_url}/chat/completions`, {
@@ -104,7 +107,7 @@ async function callAI(prompt) {
       'Authorization': `Bearer ${config.ai_api_key}`,
       'Content-Type': 'application/json'
     },
-    timeout: 300000
+    timeout: timeoutMs
   });
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
   
