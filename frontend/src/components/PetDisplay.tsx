@@ -14,7 +14,7 @@ import {
   WarningOutlined,
 } from '@ant-design/icons';
 import { petAPI, equipmentAPI, petExtendedAPI, itemAPI } from '../utils/api';
-import { getPetImageUrl, getThumbUrl } from '../utils/petImage';
+import { getPetThumbUrl, getThumbUrl } from '../utils/petImage';
 import { usePetStore, useAuthStore } from '../store/authStore';
 import { EquipmentPanel } from './EquipmentPanel';
 
@@ -215,7 +215,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
               }}>
                 <div style={{ position: 'relative', height: '60%', width: '60%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                   <img 
-                    src={getPetImageUrl(pet)} 
+                    src={getPetThumbUrl(pet)} 
                     alt={pet.name} 
                     style={{ 
                       maxHeight: '100%', 

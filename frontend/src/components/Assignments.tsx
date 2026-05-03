@@ -96,6 +96,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [generateForm] = Form.useForm();
   
   const [generating, setGenerating] = useState(false);
+  const [genLimit, setGenLimit] = useState<{ daily_limit: number; daily_used: number; daily_remaining: number; global_tokens_remaining: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [studentAnswers, setStudentAnswers] = useState<Record<number, any>>({});
   const [uploadedImages, setUploadedImages] = useState<Record<number, string>>({});
@@ -155,7 +156,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   useEffect(() => {
     if (user) {
       loadAssignments();
-      if (isTeacher) loadClasses();
+      if (isTeacher) {
+        loadClasses();
+        loadGenLimit();
+      }
       loadAISettings();
     }
   }, [user]);
@@ -180,6 +184,15 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       setAiTimeout(timeout);
     } catch (e) {
       // 静默失败，使用默认值
+    }
+  };
+
+  const loadGenLimit = async () => {
+    try {
+      const res = await adminAPI.getMyGenLimit();
+      setGenLimit(res.data);
+    } catch (e) {
+      // 非教师角色可能无权限，静默
     }
   };
 
@@ -227,11 +240,16 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       setShowVariantQuestions({});
       setCreateModalTab('preview');
       message.success(`成功生成 ${res.data.question_count} 道题目（共${res.data.total_generated}道含变体）`);
+      loadGenLimit();
     } catch (e: any) {
       if (e.code === 'ECONNABORTED') {
         message.error(`AI生成超时（${aiTimeout}秒），请稍后重试或联系管理员调整超时设置`);
       } else {
-        message.error(e.response?.data?.error || 'AI生成失败');
+        const errMsg = e.response?.data?.error || 'AI生成失败';
+        message.error(errMsg);
+        if (e.response?.status === 429) {
+          loadGenLimit();
+        }
       }
     } finally {
       setGenerating(false);
@@ -1108,7 +1126,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             }}>错题本</Button>
           )}
           {isTeacher && (
-            <Button type="primary" icon={<RobotOutlined />} onClick={() => { setIsCreateModalVisible(true); setGeneratedData(null); generateForm.resetFields(); form.resetFields(); setCreateModalTab('generate'); setShowVariantQuestions({}); }}>
+            <Button type="primary" icon={<RobotOutlined />} onClick={() => { setIsCreateModalVisible(true); setGeneratedData(null); generateForm.resetFields(); form.resetFields(); setCreateModalTab('generate'); setShowVariantQuestions({}); loadGenLimit(); }}>
               发布新作业
             </Button>
           )}
@@ -1261,9 +1279,29 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     </Form.Item>
                   </Col>
                 </Row>
-                <Button type="primary" htmlType="submit" block icon={generating ? <LoadingOutlined /> : <RobotOutlined />} loading={generating}>
+                <Button type="primary" htmlType="submit" block icon={generating ? <LoadingOutlined /> : <RobotOutlined />} loading={generating} disabled={genLimit ? genLimit.daily_remaining <= 0 : false}>
                   {generating ? 'AI正在生成中...' : '🤖 AI生成题目'}
                 </Button>
+                {genLimit && (
+                  <Alert
+                    style={{ marginTop: 12 }}
+                    type={genLimit.daily_remaining > 0 ? 'info' : 'warning'}
+                    showIcon
+                    message={
+                      genLimit.daily_remaining > 0
+                        ? `今日剩余生成次数：${genLimit.daily_remaining} / ${genLimit.daily_limit}（次日0点重置）`
+                        : `今日生成次数已用完（${genLimit.daily_limit}次），请明日0点后再试`
+                    }
+                  />
+                )}
+                {genLimit && genLimit.global_tokens_remaining < 100000 && (
+                  <Alert
+                    style={{ marginTop: 8 }}
+                    type="warning"
+                    showIcon
+                    message={`全站Token余量较低，剩余约 ${(genLimit.global_tokens_remaining / 1000).toFixed(0)}K tokens`}
+                  />
+                )}
                 <div style={{ textAlign: 'center', color: '#999', fontSize: 12, marginTop: 8 }}>
                   提示：实际将生成 N×3 道题（每道题有2个变体），用于学生做错时提供相似新题
                 </div>

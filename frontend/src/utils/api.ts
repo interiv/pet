@@ -333,6 +333,10 @@ export const adminAPI = {
   // 运营看板
   getOperationalStats: () => api.get('/admin/operational-stats'),
   getClassTeacherActivity: (classId: number) => api.get(`/admin/classes/${classId}/teacher-activity`),
+
+  getTokenUsageDashboard: () => api.get('/admin/token-usage/dashboard'),
+  getTokenUsageRecords: (params?: { user_id?: number; date?: string; page?: number; pageSize?: number }) => api.get('/admin/token-usage/records', { params }),
+  getMyGenLimit: () => api.get('/admin/token-usage/my-limit'),
 };
 
 // 装备部件相关 API

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Form, Input, Button, Select, message, Row, Col, Tag, Image } from 'antd';
 import { petAPI } from '../utils/api';
-import { getPetImageUrl, getPetThumbUrl } from '../utils/petImage';
+import { getPetThumbUrl } from '../utils/petImage';
 import { usePetStore } from '../store/authStore';
 
 const { Option } = Select;
@@ -123,7 +123,7 @@ const CreatePet: React.FC<CreatePetProps> = ({ onSuccess }) => {
               <Row gutter={[8, 8]}>
                 {['宠物蛋', '初生期', '幼年期', '成长期', '成年期', '完全体', '究极体'].map((stage, index) => {
                   try {
-                    const url = getPetImageUrl(selectedSpecies, stage);
+                    const url = getPetThumbUrl(selectedSpecies, stage);
                     return (
                       <Col xs={6} sm={4} md={3} key={stage}>
                         <div style={{ textAlign: 'center' }}>

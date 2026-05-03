@@ -1666,11 +1666,49 @@ function ensureSettingsTable() {
       ['perm_battle_records', 'head_teacher'],
       ['perm_homework_records', 'subject_teacher'],
       ['perm_purchase_records', 'head_teacher'],
+      ['max_tokens_per_generation', '18000'],
+      ['daily_teacher_gen_limit', '5'],
+      ['daily_global_token_limit', '2000000'],
+      ['max_questions_per_generation', '20'],
     ];
     const stmt = db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {
       defaults.forEach(([key, value]) => stmt.run(key, value));
     })();
+  } else {
+    const newKeys = [
+      ['max_tokens_per_generation', '18000'],
+      ['daily_teacher_gen_limit', '5'],
+      ['daily_global_token_limit', '2000000'],
+      ['max_questions_per_generation', '20'],
+    ];
+    const stmt = db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`);
+    db.transaction(() => {
+      newKeys.forEach(([key, value]) => stmt.run(key, value));
+    })();
+  }
+
+  const hasTokenUsage = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'`).get();
+  if (!hasTokenUsage) {
+    db.prepare(`
+      CREATE TABLE token_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        prompt_tokens INTEGER DEFAULT 0,
+        completion_tokens INTEGER DEFAULT 0,
+        total_tokens INTEGER DEFAULT 0,
+        model TEXT DEFAULT '',
+        subject TEXT DEFAULT '',
+        topic TEXT DEFAULT '',
+        question_type TEXT DEFAULT '',
+        question_count INTEGER DEFAULT 0,
+        duration_ms INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now'))
+      )
+    `).run();
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_token_usage_user_date ON token_usage(user_id, date)`).run();
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_token_usage_date ON token_usage(date)`).run();
   }
 }
 
@@ -1697,6 +1735,8 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
       'battle_stamina_cost', 'ai_model', 'ai_api_key', 'ai_base_url',
       'ai_report_interval_days', 'ai_timeout',
       'perm_battle_records', 'perm_homework_records', 'perm_purchase_records',
+      'max_tokens_per_generation', 'daily_teacher_gen_limit',
+      'daily_global_token_limit', 'max_questions_per_generation',
     ];
     const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {
@@ -1817,3 +1857,140 @@ router.delete('/assignments/:assignmentId/questions/:questionId', authenticateTo
 });
 
 module.exports = router;
+
+// ==================== Token 使用看板 ====================
+
+router.get('/token-usage/dashboard', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    ensureSettingsTable();
+    const { getChinaDate } = require('../config/timezone');
+    const today = getChinaDate();
+
+    const todayStats = db.prepare(`
+      SELECT 
+        COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
+        COALESCE(SUM(completion_tokens), 0) as total_completion_tokens,
+        COALESCE(SUM(total_tokens), 0) as total_tokens,
+        COUNT(*) as total_generations
+      FROM token_usage WHERE date = ?
+    `).get(today);
+
+    const last7Days = db.prepare(`
+      SELECT 
+        date,
+        SUM(prompt_tokens) as prompt_tokens,
+        SUM(completion_tokens) as completion_tokens,
+        SUM(total_tokens) as total_tokens,
+        COUNT(*) as generations,
+        COUNT(DISTINCT user_id) as active_teachers
+      FROM token_usage 
+      WHERE date >= date(?, '-6 days')
+      GROUP BY date 
+      ORDER BY date ASC
+    `).all(today);
+
+    const topTeachers = db.prepare(`
+      SELECT 
+        tu.user_id,
+        u.username,
+        SUM(tu.total_tokens) as total_tokens,
+        SUM(tu.prompt_tokens) as prompt_tokens,
+        SUM(tu.completion_tokens) as completion_tokens,
+        COUNT(*) as generations
+      FROM token_usage tu
+      JOIN users u ON tu.user_id = u.id
+      WHERE tu.date = ?
+      GROUP BY tu.user_id
+      ORDER BY total_tokens DESC
+      LIMIT 10
+    `).all(today);
+
+    const settings = db.prepare(`SELECT key, value FROM settings WHERE key IN ('daily_global_token_limit', 'daily_teacher_gen_limit', 'max_tokens_per_generation', 'max_questions_per_generation')`).all();
+    const settingsMap = {};
+    settings.forEach(s => settingsMap[s.key] = parseInt(s.value) || 0);
+
+    res.json({
+      today: todayStats,
+      last7Days,
+      topTeachers,
+      settings: settingsMap,
+      date: today
+    });
+  } catch (error) {
+    console.error('获取Token看板失败:', error);
+    res.status(500).json({ error: '获取Token看板失败' });
+  }
+});
+
+router.get('/token-usage/records', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    ensureSettingsTable();
+    const { user_id, date, page = 1, pageSize = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(pageSize);
+
+    let sql = `
+      SELECT tu.*, u.username
+      FROM token_usage tu
+      JOIN users u ON tu.user_id = u.id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (user_id) {
+      sql += ` AND tu.user_id = ?`;
+      params.push(user_id);
+    }
+    if (date) {
+      sql += ` AND tu.date = ?`;
+      params.push(date);
+    }
+
+    const countResult = db.prepare(`SELECT COUNT(*) as total FROM token_usage tu JOIN users u ON tu.user_id = u.id WHERE 1=1${user_id ? ' AND tu.user_id = ?' : ''}${date ? ' AND tu.date = ?' : ''}`).get(...params);
+    
+    sql += ` ORDER BY tu.created_at DESC LIMIT ? OFFSET ?`;
+    params.push(parseInt(pageSize), offset);
+
+    const records = db.prepare(sql).all(...params);
+
+    res.json({
+      records,
+      total: countResult.total,
+      page: parseInt(page),
+      pageSize: parseInt(pageSize)
+    });
+  } catch (error) {
+    console.error('获取Token记录失败:', error);
+    res.status(500).json({ error: '获取Token记录失败' });
+  }
+});
+
+// 教师查询自己今日生成次数和限制（教师可用）
+router.get('/token-usage/my-limit', authenticateToken, (req, res) => {
+  try {
+    if (req.user.role !== 'teacher' && req.user.role !== 'admin') {
+      return res.status(403).json({ error: '仅教师可查看' });
+    }
+    ensureSettingsTable();
+    const { getChinaDate } = require('../config/timezone');
+    const today = getChinaDate();
+
+    const dailyLimit = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'daily_teacher_gen_limit'`).get()?.value || '5');
+    const todayCount = db.prepare(`SELECT COUNT(*) as count FROM token_usage WHERE user_id = ? AND date = ?`).get(req.user.userId, today)?.count || 0;
+
+    const globalTokenLimit = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'daily_global_token_limit'`).get()?.value || '2000000');
+    const todayGlobalTokens = db.prepare(`SELECT COALESCE(SUM(completion_tokens), 0) as total FROM token_usage WHERE date = ?`).get(today)?.total || 0;
+
+    res.json({
+      daily_limit: dailyLimit,
+      daily_used: todayCount,
+      daily_remaining: Math.max(0, dailyLimit - todayCount),
+      global_token_limit: globalTokenLimit,
+      global_tokens_used: todayGlobalTokens,
+      global_tokens_remaining: Math.max(0, globalTokenLimit - todayGlobalTokens),
+      date: today
+    });
+  } catch (error) {
+    console.error('查询生成限制失败:', error);
+    res.status(500).json({ error: '查询生成限制失败' });
+  }
+});

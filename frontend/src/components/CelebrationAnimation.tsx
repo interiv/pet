@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { usePetStore } from '../store/authStore';
-import { getPetImageUrl } from '../utils/petImage';
+import { getPetThumbUrl } from '../utils/petImage';
 
 interface CelebrationProps {
   show: boolean;
@@ -113,7 +113,7 @@ const CelebrationAnimation: React.FC<CelebrationProps> = ({
         <div style={{ fontSize: 80 }}>
           {pet ? (
             <img
-              src={getPetImageUrl(pet)}
+              src={getPetThumbUrl(pet)}
               alt="宠物"
               style={{
                 width: 120,

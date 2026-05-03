@@ -16,9 +16,10 @@ import {
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
 import CreatePet from '../components/CreatePet';
-import { getPetImageUrl, getPetThumbUrl } from '../utils/petImage';
+import { getPetThumbUrl } from '../utils/petImage';
 
 const Admin = lazy(() => import('../components/Admin'));
+const AdminHome = lazy(() => import('../components/AdminHome'));
 const Profile = lazy(() => import('../components/Profile'));
 const Notifications = lazy(() => import('../components/Notifications'));
 const ClassDashboard = lazy(() => import('../components/ClassDashboard'));
@@ -484,11 +485,24 @@ const Home: React.FC = () => {
     if (activeMenu === 'social') return wrap(<SocialHub />);
     if (activeMenu === 'notifications') return wrap(<Notifications />);
     if (activeMenu === 'class-dashboard') return wrap(<ClassDashboard />);
-    if (activeMenu === 'admin') return wrap(<Admin />);
+    if (activeMenu === 'admin') return wrap(<Admin defaultTab={searchParams.get('tab') || undefined} />);
     if (activeMenu === 'profile') return wrap(<Profile />);
 
     if (isAuthenticated && user?.role === 'admin') {
-      return wrap(<Admin defaultTab="dashboard" />);
+      return wrap(<AdminHome onNavigate={(menu: string, tab?: string) => {
+        if (menu === 'admin') {
+          setSearchParams(prev => {
+            prev.set('menu', 'admin');
+            if (tab) prev.set('tab', tab);
+            else prev.delete('tab');
+            prev.delete('sub');
+            return prev;
+          }, { replace: true });
+          setActiveMenu('admin');
+        } else {
+          handleMenuChange(menu);
+        }
+      }} />);
     }
 
     if (isAuthenticated && isTeacher) {
@@ -714,7 +728,7 @@ const Home: React.FC = () => {
                   }}>
                     <img 
                       alt={selectedPet.name} 
-                      src={getPetImageUrl(selectedPet)} 
+                      src={getPetThumbUrl(selectedPet)} 
                       style={{ 
                         maxHeight: '100%', 
                         maxWidth: '100%', 
@@ -883,7 +897,7 @@ const Home: React.FC = () => {
               <Card size="small" style={{ marginBottom: 16 }}>
                 <div style={{ textAlign: 'center' }}>
                   <img 
-                    src={getPetImageUrl(guidePetData, '宠物蛋')} 
+                    src={getPetThumbUrl(guidePetData, '宠物蛋')} 
                     alt={guidePetData.name} 
                     style={{ width: 100, height: 100, objectFit: 'contain' }} 
                   />

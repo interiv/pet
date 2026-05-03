@@ -100,8 +100,43 @@ const typeLabels = {
   composition: '作文'
 };
 
+function getSystemSetting(key, defaultVal) {
+  try {
+    const row = db.prepare(`SELECT value FROM settings WHERE key = ?`).get(key);
+    return row ? parseInt(row.value) : defaultVal;
+  } catch {
+    return defaultVal;
+  }
+}
+
+function ensureTokenUsageTable() {
+  const hasTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'`).get();
+  if (!hasTable) {
+    db.prepare(`
+      CREATE TABLE token_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        prompt_tokens INTEGER DEFAULT 0,
+        completion_tokens INTEGER DEFAULT 0,
+        total_tokens INTEGER DEFAULT 0,
+        model TEXT DEFAULT '',
+        subject TEXT DEFAULT '',
+        topic TEXT DEFAULT '',
+        question_type TEXT DEFAULT '',
+        question_count INTEGER DEFAULT 0,
+        duration_ms INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now'))
+      )
+    `).run();
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_token_usage_user_date ON token_usage(user_id, date)`).run();
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_token_usage_date ON token_usage(date)`).run();
+  }
+}
+
 router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), async (req, res) => {
   try {
+    ensureTokenUsageTable();
     const { subject, topic, difficulty = 'medium', question_type, count = 10, grade_level = '' } = req.body;
     
     console.log('\n========== AI 生成作业请求 ==========');
@@ -111,6 +146,26 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     if (!subject || !topic || !question_type) {
       console.log('❌ 参数验证失败');
       return res.status(400).json({ error: '请填写科目、主题和题型' });
+    }
+
+    const maxQuestionsPerGen = getSystemSetting('max_questions_per_generation', 20);
+    if (count > maxQuestionsPerGen) {
+      return res.status(400).json({ error: `单次最多生成 ${maxQuestionsPerGen} 道题目` });
+    }
+
+    const { getChinaDate } = require('../config/timezone');
+    const today = getChinaDate();
+
+    const dailyTeacherLimit = getSystemSetting('daily_teacher_gen_limit', 5);
+    const todayTeacherCount = db.prepare(`SELECT COUNT(*) as count FROM token_usage WHERE user_id = ? AND date = ?`).get(req.user.userId, today)?.count || 0;
+    if (todayTeacherCount >= dailyTeacherLimit) {
+      return res.status(429).json({ error: `今日生成次数已达上限（${dailyTeacherLimit}次），请明日0点后再试` });
+    }
+
+    const dailyGlobalTokenLimit = getSystemSetting('daily_global_token_limit', 2000000);
+    const todayGlobalTokens = db.prepare(`SELECT COALESCE(SUM(completion_tokens), 0) as total FROM token_usage WHERE date = ?`).get(today)?.total || 0;
+    if (todayGlobalTokens >= dailyGlobalTokenLimit) {
+      return res.status(429).json({ error: '今日网站Token用量已达上限，请联系管理员或明日再试' });
     }
 
     const config = getAIConfig();
@@ -205,10 +260,13 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     console.log('📝 Prompt 长度:', prompt.length, '字符');
     console.log('⏱️ 超时设置:', timeoutMs / 1000, '秒');
     
+    const maxTokensPerGen = getSystemSetting('max_tokens_per_generation', 18000);
+
     const startTime = Date.now();
     const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
       model: config.ai_model,
-      messages: [{ role: 'user', content: prompt }]
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: maxTokensPerGen
     }, {
       headers: {
         'Authorization': `Bearer ${config.ai_api_key}`,
@@ -218,10 +276,32 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     });
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
+    const usageData = response.data.usage || {};
+    const promptTokens = usageData.prompt_tokens || 0;
+    const completionTokens = usageData.completion_tokens || 0;
+    const totalTokens = usageData.total_tokens || 0;
+
+    try {
+      db.prepare(`
+        INSERT INTO token_usage (user_id, date, prompt_tokens, completion_tokens, total_tokens, model, subject, topic, question_type, question_count, duration_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(req.user.userId, today, promptTokens, completionTokens, totalTokens, config.ai_model, subject, topic, question_type, count, Date.now() - startTime);
+    } catch (logErr) {
+      console.error('⚠️ Token使用记录写入失败:', logErr.message);
+    }
+
+    if (completionTokens > 0) {
+      const updatedGlobalTokens = db.prepare(`SELECT COALESCE(SUM(completion_tokens), 0) as total FROM token_usage WHERE date = ?`).get(today)?.total || 0;
+      if (updatedGlobalTokens > dailyGlobalTokenLimit) {
+        console.log('⚠️ 生成完成后，全局Token已超限，本次结果仍返回，但后续生成将被阻止');
+      }
+    }
+
     console.log('\n✅ LLM 服务器响应成功');
     console.log('⏱️ 耗时:', elapsed, '秒');
     console.log('📊 HTTP 状态码:', response.status);
     console.log('📦 响应数据大小:', JSON.stringify(response.data).length, '字节');
+    console.log('📊 Token 使用: prompt=' + promptTokens + ', completion=' + completionTokens + ', total=' + totalTokens);
 
     const aiContent = response.data.choices[0].message.content;
     console.log('\n📄 AI 返回内容预览 (前500字符):');

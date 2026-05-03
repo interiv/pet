@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Card, Button, Input, List, Avatar, message, Modal, Form, Spin, Row, Col, Statistic, Popconfirm, Select, Tabs, Badge, Empty } from 'antd';
 import { UserAddOutlined, TeamOutlined, HeartFilled, DeleteOutlined, GiftOutlined, FireOutlined, EyeOutlined, SearchOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import { friendAPI, petAPI, itemAPI } from '../utils/api';
-import { getPetImageUrl } from '../utils/petImage';
+import { getPetThumbUrl } from '../utils/petImage';
 
 import { useAuthStore, usePetStore } from '../store/authStore';
 
@@ -399,7 +399,7 @@ const Friends: React.FC = () => {
                   }}>
                     <img 
                       alt={selectedPet.name} 
-                      src={getPetImageUrl(selectedPet)} 
+                      src={getPetThumbUrl(selectedPet)} 
                       style={{ 
                         maxHeight: '100%', 
                         maxWidth: '100%', 
