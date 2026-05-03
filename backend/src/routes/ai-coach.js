@@ -89,6 +89,13 @@ async function callAI(prompt) {
   if (!config.ai_api_key || !config.ai_base_url || !config.ai_model) {
     throw new Error('AI 配置未完成，请联系管理员');
   }
+  
+  console.log('\n🤖 调用 AI 服务...');
+  console.log('🎯 地址:', `${config.ai_base_url}/chat/completions`);
+  console.log('🤖 模型:', config.ai_model);
+  console.log('📝 Prompt 长度:', prompt.length, '字符');
+  
+  const startTime = Date.now();
   const resp = await axios.post(`${config.ai_base_url}/chat/completions`, {
     model: config.ai_model,
     messages: [{ role: 'user', content: prompt }]
@@ -97,9 +104,19 @@ async function callAI(prompt) {
       'Authorization': `Bearer ${config.ai_api_key}`,
       'Content-Type': 'application/json'
     },
-    timeout: 120000
+    timeout: 300000
   });
-  return resp.data.choices[0].message.content;
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+  
+  console.log('✅ AI 响应成功, 耗时:', elapsed, '秒');
+  console.log('📦 响应大小:', JSON.stringify(resp.data).length, '字节');
+  
+  const content = resp.data.choices[0].message.content;
+  console.log('📄 AI 返回内容预览 (前300字符):');
+  console.log(content.slice(0, 300));
+  console.log('📄 总长度:', content.length, '字符');
+  
+  return content;
 }
 
 function parseJSON(text) {

@@ -1722,6 +1722,8 @@ const SiteSettings: React.FC = () => {
 const AISettings: React.FC = () => {
   const [settingsForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string; ai_reply?: string; elapsed?: string; detail?: string } | null>(null);
 
   useEffect(() => {
     loadSettings();
@@ -1747,10 +1749,41 @@ const AISettings: React.FC = () => {
     try {
       await adminAPI.saveSiteSettings(values);
       message.success('大模型设置已保存');
+      setTestResult(null);
     } catch (error) {
       message.error('保存设置失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleTest = async () => {
+    try {
+      const values = settingsForm.getFieldsValue();
+      if (!values.ai_model || !values.ai_base_url || !values.ai_api_key) {
+        message.warning('请先填写完整的 AI 配置（模型、地址、API Key）');
+        return;
+      }
+      setTesting(true);
+      setTestResult(null);
+      const res = await adminAPI.testAIConnection(values);
+      setTestResult({
+        success: true,
+        message: res.data.message,
+        ai_reply: res.data.ai_reply,
+        elapsed: res.data.elapsed,
+      });
+      message.success('连接测试成功！');
+    } catch (error: any) {
+      const errData = error.response?.data || {};
+      setTestResult({
+        success: false,
+        message: errData.error || '连接失败',
+        detail: errData.detail || error.message,
+      });
+      message.error('连接测试失败');
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -1776,8 +1809,35 @@ const AISettings: React.FC = () => {
         <Form.Item name="ai_report_interval_days" label="AI报告重新生成间隔（天）" rules={[{ required: true, message: '请输入间隔天数' }]} extra="学生生成学习规划或诊断报告后，需间隔多少天才可重新生成。默认3天。">
           <Input type="number" min={1} max={30} placeholder="3" />
         </Form.Item>
+
+        {testResult && (
+          <Alert
+            message={testResult.message}
+            description={
+              testResult.success ? (
+                <div>
+                  <div>AI 回复：{testResult.ai_reply}</div>
+                  <div style={{ marginTop: 4 }}>耗时：{testResult.elapsed}</div>
+                </div>
+              ) : (
+                <div>
+                  <div>{testResult.detail}</div>
+                </div>
+              )
+            }
+            type={testResult.success ? 'success' : 'error'}
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )}
+
         <Form.Item>
-          <Button type="primary" htmlType="submit" loading={loading}>保存设置</Button>
+          <Space>
+            <Button type="primary" htmlType="submit" loading={loading}>保存设置</Button>
+            <Button onClick={handleTest} loading={testing} icon={<ThunderboltOutlined />}>
+              {testing ? '测试中...' : '测试连接'}
+            </Button>
+          </Space>
         </Form.Item>
       </Form>
     </Card>

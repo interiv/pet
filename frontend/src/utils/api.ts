@@ -318,6 +318,7 @@ export const adminAPI = {
   // AI设置
   getAISettings: () => api.get('/admin/settings/ai'),
   saveAISettings: (settings: any) => api.post('/admin/settings/ai', settings),
+  testAIConnection: (settings: any) => api.post('/admin/settings/ai/test', settings),
 
   // 网站设置
   getSiteSettings: () => api.get('/admin/settings/site'),

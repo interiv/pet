@@ -104,14 +104,26 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
   try {
     const { subject, topic, difficulty = 'medium', question_type, count = 10, grade_level = '' } = req.body;
     
+    console.log('\n========== AI 生成作业请求 ==========');
+    console.log('📥 请求参数:', JSON.stringify({ subject, topic, difficulty, question_type, count, grade_level }, null, 2));
+    console.log('👤 用户ID:', req.user.userId, '| 角色:', req.user.role);
+    
     if (!subject || !topic || !question_type) {
+      console.log('❌ 参数验证失败');
       return res.status(400).json({ error: '请填写科目、主题和题型' });
     }
 
     const config = getAIConfig();
     if (!config.ai_api_key || !config.ai_base_url || !config.ai_model) {
+      console.log('❌ AI 配置未完成');
       return res.status(500).json({ error: 'AI 配置未完成，请联系管理员' });
     }
+
+    console.log('🔧 AI 配置:', {
+      base_url: config.ai_base_url,
+      model: config.ai_model,
+      api_key: config.ai_api_key ? `${config.ai_api_key.slice(0, 8)}...${config.ai_api_key.slice(-4)}` : '未配置'
+    });
 
     const typeLabel = typeLabels[question_type] || question_type;
     const actualCount = count * 3;
@@ -184,6 +196,13 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
 3. 只返回JSON，不要任何其他内容`;
     }
 
+    console.log('\n📤 发送请求到 LLM 服务器...');
+    console.log('🎯 目标地址:', `${config.ai_base_url}/chat/completions`);
+    console.log('🤖 使用模型:', config.ai_model);
+    console.log('📝 Prompt 长度:', prompt.length, '字符');
+    console.log('⏱️ 超时设置: 120秒');
+    
+    const startTime = Date.now();
     const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
       model: config.ai_model,
       messages: [{ role: 'user', content: prompt }]
@@ -192,30 +211,52 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
         'Authorization': `Bearer ${config.ai_api_key}`,
         'Content-Type': 'application/json'
       },
-      timeout: 120000
+      timeout: 300000
     });
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+
+    console.log('\n✅ LLM 服务器响应成功');
+    console.log('⏱️ 耗时:', elapsed, '秒');
+    console.log('📊 HTTP 状态码:', response.status);
+    console.log('📦 响应数据大小:', JSON.stringify(response.data).length, '字节');
 
     const aiContent = response.data.choices[0].message.content;
+    console.log('\n📄 AI 返回内容预览 (前500字符):');
+    console.log(aiContent.slice(0, 500));
+    console.log('📄 AI 返回内容总长度:', aiContent.length, '字符');
     let parsed;
     try {
       // 尝试直接解析
       parsed = JSON.parse(aiContent);
+      console.log('✅ JSON 解析成功（直接解析）');
     } catch (e) {
       // 尝试提取JSON对象（支持嵌套大括号）
+      console.log('⚠️ 直接解析失败，尝试提取JSON对象...');
       const jsonMatch = aiContent.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
       if (jsonMatch) {
         try {
           parsed = JSON.parse(jsonMatch[0]);
+          console.log('✅ JSON 解析成功（从文本中提取）');
         } catch (e2) {
+          console.log('❌ JSON 解析失败');
           throw new Error('AI返回的JSON格式无效');
         }
       } else {
+        console.log('❌ 未找到有效的JSON');
         throw new Error('AI返回格式错误，未找到有效的JSON');
       }
     }
 
     const questions = parsed.questions || [];
+    console.log('\n📊 解析结果:');
+    console.log('  - 题目数量:', questions.length);
+    if (questions.length > 0) {
+      console.log('  - 第一题预览:', questions[0].content?.slice(0, 50) + '...');
+      console.log('  - 知识点分布:', [...new Set(questions.map(q => q.knowledge_point))].slice(0, 5).join(', '));
+    }
+    
     if (questions.length === 0) {
+      console.log('❌ AI未能生成有效题目');
       return res.status(500).json({ error: 'AI未能生成有效题目，请调整提示词后重试' });
     }
 
@@ -265,6 +306,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
+    console.log('\n💾 正在将题目保存到数据库...');
     const transaction = db.transaction((qs) => {
       const ids = [];
       for (const q of qs) {
@@ -280,6 +322,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     });
 
     const insertedIds = transaction(processedQuestions);
+    console.log('✅ 数据库写入成功，共', insertedIds.length, '条记录');
 
     const displayQuestions = isSubjective
       ? insertedIds.map((id, idx) => ({
@@ -327,6 +370,9 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       }
     }
 
+    console.log('\n📤 返回结果给客户端...');
+    console.log('========================================\n');
+    
     res.json({
       message: '生成成功',
       title: parsed.title || `${topic} - ${typeLabel}练习`,
@@ -340,10 +386,18 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     });
 
   } catch (error) {
-    console.error('AI 生成作业错误:', error);
-    if (error.code === 'ECONNABORTED') {
+    console.error('\n❌ AI 生成作业错误:', error.message);
+    if (error.response) {
+      console.error('📡 LLM 服务器响应状态:', error.response.status);
+      console.error('📡 LLM 服务器响应数据:', JSON.stringify(error.response.data, null, 2));
+    } else if (error.code === 'ECONNABORTED') {
+      console.error('⏱️ 请求超时');
       return res.status(500).json({ error: 'AI请求超时，请稍后重试' });
+    } else if (error.code === 'ECONNREFUSED') {
+      console.error('🚫 无法连接到 LLM 服务器');
+      return res.status(500).json({ error: '无法连接到 AI 服务器，请检查配置' });
     }
+    console.error('========================================\n');
     res.status(500).json({ error: 'AI 生成作业失败: ' + (error.message || '未知错误') });
   }
 });

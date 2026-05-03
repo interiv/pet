@@ -1377,6 +1377,68 @@ router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
   }
 });
 
+// 测试 AI 连接
+router.post('/settings/ai/test', authenticateToken, requireAdmin, async (req, res) => {
+  const axios = require('axios');
+  try {
+    const { ai_model, ai_api_key, ai_base_url } = req.body;
+    
+    if (!ai_model || !ai_api_key || !ai_base_url) {
+      return res.status(400).json({ error: '请填写完整的 AI 配置' });
+    }
+
+    console.log('\n========== AI 连接测试 ==========');
+    console.log('🎯 目标地址:', `${ai_base_url}/chat/completions`);
+    console.log('🤖 使用模型:', ai_model);
+    console.log('🔑 API Key:', `${ai_api_key.slice(0, 8)}...${ai_api_key.slice(-4)}`);
+
+    const startTime = Date.now();
+    const response = await axios.post(`${ai_base_url}/chat/completions`, {
+      model: ai_model,
+      messages: [{ role: 'user', content: '你好，请回复"连接成功"四个字。' }]
+    }, {
+      headers: {
+        'Authorization': `Bearer ${ai_api_key}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 30000
+    });
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+
+    const aiReply = response.data.choices?.[0]?.message?.content || '';
+    console.log('✅ AI 响应成功, 耗时:', elapsed, '秒');
+    console.log('📄 AI 回复内容:', aiReply);
+    console.log('========================================\n');
+
+    res.json({
+      success: true,
+      message: '连接测试成功',
+      ai_reply: aiReply,
+      elapsed: `${elapsed}秒`,
+      model: ai_model
+    });
+  } catch (error) {
+    console.error('\n❌ AI 连接测试失败:', error.message);
+    if (error.response) {
+      console.error('📡 响应状态:', error.response.status);
+      console.error('📡 响应数据:', JSON.stringify(error.response.data));
+      res.status(500).json({
+        error: `连接失败 (HTTP ${error.response.status})`,
+        detail: error.response.data?.error?.message || JSON.stringify(error.response.data)
+      });
+    } else if (error.code === 'ECONNABORTED') {
+      console.error('⏱️ 请求超时');
+      res.status(500).json({ error: '请求超时 (30秒)', detail: '请检查网络连接或 API 地址是否正确' });
+    } else if (error.code === 'ECONNREFUSED') {
+      console.error('🚫 连接被拒绝');
+      res.status(500).json({ error: '连接被拒绝', detail: '请检查 API 地址是否正确' });
+    } else {
+      console.error('❌ 未知错误:', error);
+      res.status(500).json({ error: '连接失败', detail: error.message });
+    }
+  }
+});
+
 function checkDataPermission(permKey, userId, userRole) {
   if (userRole === 'admin') return { allowed: true, classIds: null };
 
