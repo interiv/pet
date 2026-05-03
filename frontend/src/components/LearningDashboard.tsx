@@ -14,7 +14,7 @@ import axios from 'axios';
 import { aiCoachAPI, knowledgePointAPI } from '../utils/api';
 import { MasteryRing, AccuracyColumn, CountColumn, WeakPointBar, LearningHeatmap, TrendLine } from './charts/ChartKit';
 
-const API_BASE_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
+const API_BASE_URL = (import.meta as any).env.VITE_API_URL || '/api';
 
 interface KnowledgePointStat {
   knowledge_point: string;
