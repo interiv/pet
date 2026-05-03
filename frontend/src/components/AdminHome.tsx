@@ -6,19 +6,13 @@ import {
   FolderOutlined,
   NotificationOutlined,
   SettingOutlined,
-  SafetyOutlined,
   DatabaseOutlined,
-  GlobalOutlined,
   RobotOutlined,
-  BankOutlined,
   TrophyOutlined,
   LineChartOutlined,
-  ThunderboltOutlined,
   RightOutlined,
-  CheckCircleOutlined,
   ClockCircleOutlined,
   FireOutlined,
-  CrownOutlined,
 } from '@ant-design/icons';
 import { adminAPI, leaderboardAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
