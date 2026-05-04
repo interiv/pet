@@ -56,6 +56,12 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
     let myRewards = [];
     let bossStatus = boss ? 'active' : null;
 
+    if (boss && boss.expires_at && new Date() > new Date(boss.expires_at)) {
+      db.prepare('UPDATE boss_battles SET status = ? WHERE id = ?').run('expired', boss.id);
+      boss = null;
+      bossStatus = null;
+    }
+
     if (!boss) {
       boss = db.prepare(`
         SELECT * FROM boss_battles 
@@ -88,8 +94,7 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
         bbp.*,
         u.username,
         p.name as pet_name,
-        p.level as pet_level,
-        p.image_urls as pet_image_urls
+        p.level as pet_level
       FROM boss_battle_participants bbp
       JOIN users u ON bbp.user_id = u.id
       LEFT JOIN pets p ON bbp.pet_id = p.id
@@ -100,6 +105,13 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
     const totalDamage = participants.reduce((sum, p) => sum + p.damage_dealt, 0);
     const progress = Math.round((totalDamage / boss.boss_max_hp) * 100);
 
+    const myAnswerCount = db.prepare(`
+      SELECT COUNT(*) as count FROM boss_battle_answers
+      WHERE boss_battle_id = ? AND user_id = ?
+    `).get(boss.id, req.user.userId).count;
+
+    const maxQuestions = boss.max_questions_per_user || 20;
+
     res.json({
       boss: {
         ...boss,
@@ -107,6 +119,7 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
         progress: Math.min(100, progress),
         participant_count: participants.length,
         status: bossStatus,
+        max_questions_per_user: maxQuestions,
       },
       participants,
       leaderboard: participants.slice(0, 10),
@@ -116,10 +129,80 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
         value: r.reward_value,
         claimed: !!r.claimed,
       })),
+      myAnswerStats: {
+        answered: myAnswerCount,
+        max: maxQuestions,
+        remaining: Math.max(0, maxQuestions - myAnswerCount),
+      },
     });
   } catch (error) {
     console.error('获取BOSS信息失败:', error);
     res.status(500).json({ error: '获取BOSS信息失败' });
+  }
+});
+
+router.get('/history/:classId', authenticateToken, (req, res) => {
+  try {
+    const bosses = db.prepare(`
+      SELECT * FROM boss_battles 
+      WHERE class_id = ? AND status IN ('defeated', 'expired')
+      ORDER BY COALESCE(completed_at, expires_at) DESC
+    `).all(req.params.classId);
+
+    const result = bosses.map((boss) => {
+      const participants = db.prepare(`
+        SELECT 
+          bbp.*,
+          u.username,
+          p.name as pet_name,
+          p.level as pet_level
+        FROM boss_battle_participants bbp
+        JOIN users u ON bbp.user_id = u.id
+        LEFT JOIN pets p ON bbp.pet_id = p.id
+        WHERE bbp.boss_battle_id = ?
+        ORDER BY bbp.damage_dealt DESC
+      `).all(boss.id);
+
+      const participantsWithRewards = participants.map((p) => {
+        const rewards = db.prepare(`
+          SELECT reward_type, reward_value, claimed FROM boss_battle_rewards 
+          WHERE boss_battle_id = ? AND user_id = ?
+        `).all(boss.id, p.user_id);
+        return { ...p, rewards };
+      });
+
+      const totalDamage = participants.reduce((sum, p) => sum + p.damage_dealt, 0);
+
+      const myRewards = db.prepare(`
+        SELECT * FROM boss_battle_rewards 
+        WHERE boss_battle_id = ? AND user_id = ?
+      `).all(boss.id, req.user.userId);
+
+      const rewardConfig = db.prepare(`
+        SELECT * FROM boss_battle_reward_config WHERE boss_battle_id = ?
+      `).all(boss.id);
+
+      return {
+        ...boss,
+        current_hp: Math.max(0, boss.boss_max_hp - totalDamage),
+        progress: Math.min(100, Math.round((totalDamage / boss.boss_max_hp) * 100)),
+        participant_count: participants.length,
+        total_damage: totalDamage,
+        participants: participantsWithRewards.slice(0, 20),
+        myRewards: myRewards.map((r) => ({
+          id: r.id,
+          type: r.reward_type,
+          value: r.reward_value,
+          claimed: !!r.claimed,
+        })),
+        rewardConfig,
+      };
+    });
+
+    res.json({ bosses: result });
+  } catch (error) {
+    console.error('获取BOSS历史失败:', error);
+    res.status(500).json({ error: '获取BOSS历史失败' });
   }
 });
 
@@ -130,7 +213,51 @@ router.get('/wrong-questions/:classId', authenticateToken, authorizeRole('teache
       return res.status(403).json({ error: '只有班主任才能查看班级错题' });
     }
 
-    const wrongQuestions = db.prepare(`
+    const {
+      page = 1,
+      pageSize = 20,
+      subject,
+      type,
+      difficulty,
+      keyword,
+    } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page));
+    const pageSizeNum = Math.min(100, Math.max(1, parseInt(pageSize)));
+    const offset = (pageNum - 1) * pageSizeNum;
+
+    const conditions = ['u.class_id = ?'];
+    const params = [classId];
+
+    if (subject) {
+      conditions.push('qb.subject = ?');
+      params.push(subject);
+    }
+    if (type) {
+      conditions.push('qb.type = ?');
+      params.push(type);
+    }
+    if (difficulty) {
+      conditions.push('qb.difficulty = ?');
+      params.push(difficulty);
+    }
+    if (keyword) {
+      conditions.push('(qb.content LIKE ? OR qb.knowledge_point LIKE ? OR qb.topic LIKE ?)');
+      params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+    }
+
+    const whereClause = conditions.join(' AND ');
+
+    const countSql = `
+      SELECT COUNT(DISTINCT wq.question_id) as total
+      FROM wrong_questions wq
+      JOIN users u ON wq.user_id = u.id
+      JOIN question_bank qb ON wq.question_id = qb.id
+      WHERE ${whereClause}
+    `;
+    const { total } = db.prepare(countSql).get(...params);
+
+    const dataSql = `
       SELECT 
         wq.id as wrong_id,
         wq.question_id,
@@ -147,15 +274,102 @@ router.get('/wrong-questions/:classId', authenticateToken, authorizeRole('teache
       FROM wrong_questions wq
       JOIN users u ON wq.user_id = u.id
       JOIN question_bank qb ON wq.question_id = qb.id
-      WHERE u.class_id = ?
+      WHERE ${whereClause}
       GROUP BY wq.question_id
       ORDER BY error_student_count DESC, wq.wrong_count DESC
-    `).all(classId);
+      LIMIT ? OFFSET ?
+    `;
 
-    res.json({ wrongQuestions });
+    const wrongQuestions = db.prepare(dataSql).all(...params, pageSizeNum, offset);
+
+    const subjects = db.prepare(`
+      SELECT DISTINCT qb.subject FROM wrong_questions wq
+      JOIN users u ON wq.user_id = u.id
+      JOIN question_bank qb ON wq.question_id = qb.id
+      WHERE u.class_id = ? ORDER BY qb.subject
+    `).all(classId).map(r => r.subject);
+
+    const types = db.prepare(`
+      SELECT DISTINCT qb.type FROM wrong_questions wq
+      JOIN users u ON wq.user_id = u.id
+      JOIN question_bank qb ON wq.question_id = qb.id
+      WHERE u.class_id = ? ORDER BY qb.type
+    `).all(classId).map(r => r.type);
+
+    res.json({
+      wrongQuestions,
+      total,
+      page: pageNum,
+      pageSize: pageSizeNum,
+      totalPages: Math.ceil(total / pageSizeNum),
+      filters: { subjects, types },
+    });
   } catch (error) {
     console.error('获取错题列表失败:', error);
     res.status(500).json({ error: '获取错题列表失败' });
+  }
+});
+
+router.get('/questions', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  try {
+    const {
+      page = 1,
+      pageSize = 20,
+      subject,
+      type,
+      difficulty,
+      keyword,
+    } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page));
+    const pageSizeNum = Math.min(100, Math.max(1, parseInt(pageSize)));
+    const offset = (pageNum - 1) * pageSizeNum;
+
+    const conditions = [];
+    const params = [];
+
+    if (subject) {
+      conditions.push('subject = ?');
+      params.push(subject);
+    }
+    if (type) {
+      conditions.push('type = ?');
+      params.push(type);
+    }
+    if (difficulty) {
+      conditions.push('difficulty = ?');
+      params.push(difficulty);
+    }
+    if (keyword) {
+      conditions.push('(content LIKE ? OR knowledge_point LIKE ? OR topic LIKE ?)');
+      params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+    }
+
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    const { total } = db.prepare(`SELECT COUNT(*) as total FROM question_bank ${whereClause}`).get(...params);
+
+    const questions = db.prepare(`
+      SELECT id, subject, topic, difficulty, type, content, knowledge_point, created_at
+      FROM question_bank ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, pageSizeNum, offset);
+
+    const subjects = db.prepare('SELECT DISTINCT subject FROM question_bank ORDER BY subject').all().map(r => r.subject);
+    const types = db.prepare('SELECT DISTINCT type FROM question_bank ORDER BY type').all().map(r => r.type);
+
+    res.json({
+      questions,
+      total,
+      page: pageNum,
+      pageSize: pageSizeNum,
+      totalPages: Math.ceil(total / pageSizeNum),
+      filters: { subjects, types },
+    });
+  } catch (error) {
+    console.error('获取题库列表失败:', error);
+    res.status(500).json({ error: '获取题库列表失败' });
   }
 });
 
@@ -163,10 +377,11 @@ router.post('/create', authenticateToken, authorizeRole('teacher', 'admin'), (re
   try {
     const {
       class_id, boss_name, boss_level, boss_icon, boss_description,
-      knowledge_point, duration_hours = 24,
+      knowledge_point, duration_hours = 168,
       boss_hp, reward_gold, reward_exp, reward_equipment_id,
       question_source = 'knowledge',
       question_ids,
+      max_questions_per_user = 20,
     } = req.body;
 
     if (!class_id || !boss_name || !boss_level) {
@@ -196,8 +411,8 @@ router.post('/create', authenticateToken, authorizeRole('teacher', 'admin'), (re
       INSERT INTO boss_battles (
         class_id, boss_name, boss_description, boss_icon,
         boss_hp, boss_max_hp, boss_level, knowledge_point,
-        created_by, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_by, expires_at, max_questions_per_user
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       class_id,
       boss_name,
@@ -208,12 +423,14 @@ router.post('/create', authenticateToken, authorizeRole('teacher', 'admin'), (re
       boss_level,
       knowledge_point || null,
       req.user.userId,
-      expiresAt.toISOString()
+      expiresAt.toISOString(),
+      max_questions_per_user
     );
 
     const bossId = result.lastInsertRowid;
 
-    if (question_source === 'selected' && question_ids && question_ids.length > 0) {
+    const isSelectedSource = question_source === 'wrong_questions' || question_source === 'question_bank' || question_source === 'selected';
+    if (isSelectedSource && question_ids && question_ids.length > 0) {
       for (const qId of question_ids) {
         db.prepare(`
           INSERT OR IGNORE INTO boss_battle_questions (boss_battle_id, question_id) VALUES (?, ?)
@@ -221,22 +438,28 @@ router.post('/create', authenticateToken, authorizeRole('teacher', 'admin'), (re
       }
     }
 
-    if (reward_gold || reward_exp || reward_equipment_id) {
-      if (reward_gold) {
-        db.prepare(`
-          INSERT INTO boss_battle_reward_config (boss_battle_id, reward_type, reward_value) VALUES (?, 'gold', ?)
-        `).run(bossId, reward_gold);
+    if (reward_gold) {
+      db.prepare(`
+        INSERT INTO boss_battle_reward_config (boss_battle_id, reward_type, reward_value) VALUES (?, 'gold', ?)
+      `).run(bossId, reward_gold);
+    }
+    if (reward_exp) {
+      db.prepare(`
+        INSERT INTO boss_battle_reward_config (boss_battle_id, reward_type, reward_value) VALUES (?, 'exp', ?)
+      `).run(bossId, reward_exp);
+    }
+
+    let finalEquipmentId = reward_equipment_id;
+    if (!finalEquipmentId) {
+      const randomEquip = db.prepare('SELECT id FROM equipment ORDER BY RANDOM() LIMIT 1').get();
+      if (randomEquip) {
+        finalEquipmentId = randomEquip.id;
       }
-      if (reward_exp) {
-        db.prepare(`
-          INSERT INTO boss_battle_reward_config (boss_battle_id, reward_type, reward_value) VALUES (?, 'exp', ?)
-        `).run(bossId, reward_exp);
-      }
-      if (reward_equipment_id) {
-        db.prepare(`
-          INSERT INTO boss_battle_reward_config (boss_battle_id, reward_type, reward_value) VALUES (?, 'equipment', ?)
-        `).run(bossId, reward_equipment_id);
-      }
+    }
+    if (finalEquipmentId) {
+      db.prepare(`
+        INSERT INTO boss_battle_reward_config (boss_battle_id, reward_type, reward_value) VALUES (?, 'equipment', ?)
+      `).run(bossId, finalEquipmentId);
     }
 
     res.json({
@@ -251,7 +474,7 @@ router.post('/create', authenticateToken, authorizeRole('teacher', 'admin'), (re
 
 router.post('/auto-generate', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
   try {
-    const { class_id, duration_hours = 48 } = req.body;
+    const { class_id, duration_hours = 168, max_questions_per_user = 20 } = req.body;
     if (!class_id) {
       return res.status(400).json({ error: '请提供班级ID' });
     }
@@ -302,8 +525,8 @@ router.post('/auto-generate', authenticateToken, authorizeRole('teacher', 'admin
       INSERT INTO boss_battles (
         class_id, boss_name, boss_description, boss_icon,
         boss_hp, boss_max_hp, boss_level, knowledge_point,
-        source_question_id, created_by, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        source_question_id, created_by, expires_at, max_questions_per_user
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       class_id,
       `${bossNamePrefix}${knowledgePoint}之王`,
@@ -315,7 +538,8 @@ router.post('/auto-generate', authenticateToken, authorizeRole('teacher', 'admin
       knowledgePoint,
       topWeakPoint.question_id,
       req.user.userId,
-      expiresAt.toISOString()
+      expiresAt.toISOString(),
+      max_questions_per_user
     );
 
     const bossId = result.lastInsertRowid;
@@ -368,14 +592,29 @@ router.get('/:bossId/detail', authenticateToken, (req, res) => {
       SELECT * FROM boss_battle_rewards WHERE boss_battle_id = ?
     `).all(boss.id);
 
+    const classStudents = db.prepare(`
+      SELECT id, username FROM users WHERE class_id = ? AND role = 'student' AND status = 'active'
+    `).all(boss.class_id);
+
+    const participantUserIds = new Set(participants.map(p => p.user_id));
+    const nonParticipants = classStudents.filter(s => !participantUserIds.has(s.id));
+
+    const totalAttempts = participants.reduce((sum, p) => sum + p.total_attempts, 0);
+    const totalCorrect = participants.reduce((sum, p) => sum + p.correct_answers, 0);
+    const avgAccuracy = totalAttempts > 0 ? Math.round((totalCorrect / totalAttempts) * 100) : 0;
+
     res.json({
       boss: {
         ...boss,
         current_hp: Math.max(0, boss.boss_max_hp - totalDamage),
         total_damage: totalDamage,
         participant_count: participants.length,
+        class_student_count: classStudents.length,
+        participation_rate: classStudents.length > 0 ? Math.round((participants.length / classStudents.length) * 100) : 0,
+        avg_accuracy: avgAccuracy,
       },
       participants,
+      non_participants: nonParticipants,
       reward_config: rewardConfig,
       rewards,
     });
@@ -461,46 +700,107 @@ router.get('/:bossId/question', authenticateToken, (req, res) => {
       return res.status(400).json({ error: 'BOSS已过期' });
     }
 
-    let question;
+    const userId = req.user.userId;
+    const maxQuestions = boss.max_questions_per_user || 20;
+
+    const answeredCount = db.prepare(`
+      SELECT COUNT(*) as count FROM boss_battle_answers
+      WHERE boss_battle_id = ? AND user_id = ?
+    `).get(boss.id, userId).count;
+
+    if (answeredCount >= maxQuestions) {
+      return res.status(400).json({
+        error: `已达到答题上限（${maxQuestions}题）`,
+        answered_count: answeredCount,
+        max_questions: maxQuestions,
+      });
+    }
+
+    const answeredIds = db.prepare(`
+      SELECT question_id FROM boss_battle_answers
+      WHERE boss_battle_id = ? AND user_id = ?
+    `).all(boss.id, userId).map(r => r.question_id);
+
+    let question = null;
+
+    const lastAnswer = db.prepare(`
+      SELECT ba.question_id, ba.is_correct, qb.knowledge_point, qb.topic
+      FROM boss_battle_answers ba
+      JOIN question_bank qb ON ba.question_id = qb.id
+      WHERE ba.boss_battle_id = ? AND ba.user_id = ?
+      ORDER BY ba.answered_at DESC LIMIT 1
+    `).get(boss.id, userId);
 
     const bossQuestions = db.prepare(`
       SELECT question_id FROM boss_battle_questions WHERE boss_battle_id = ?
     `).all(boss.id);
 
-    if (bossQuestions.length > 0) {
-      const qIds = bossQuestions.map((bq) => bq.question_id);
-      const placeholders = qIds.map(() => '?').join(',');
-      question = db.prepare(`
-        SELECT id, subject, topic, difficulty, type, content, options, hint
-        FROM question_bank
-        WHERE id IN (${placeholders}) AND type IN ('choice_single', 'choice_multi', 'judgment', 'fill_blank')
-        ORDER BY RANDOM()
-        LIMIT 1
-      `).get(...qIds);
-    }
+    const buildExcludeClause = (excludeIds) => {
+      if (excludeIds.length === 0) return '';
+      return `AND id NOT IN (${excludeIds.map(() => '?').join(',')})`;
+    };
 
-    if (!question && boss.knowledge_point) {
-      question = db.prepare(`
-        SELECT id, subject, topic, difficulty, type, content, options, hint
-        FROM question_bank
-        WHERE topic = ? AND type IN ('choice_single', 'choice_multi', 'judgment', 'fill_blank')
-        ORDER BY RANDOM()
-        LIMIT 1
-      `).get(boss.knowledge_point);
-    }
+    const tryGetQuestion = (whereExtra, params) => {
+      const excludeClause = buildExcludeClause(answeredIds);
+      const allParams = [...params, ...answeredIds];
 
-    if (!question) {
-      question = db.prepare(`
-        SELECT id, subject, topic, difficulty, type, content, options, hint
+      if (bossQuestions.length > 0) {
+        const qIds = bossQuestions.map(bq => bq.question_id);
+        const inClause = qIds.map(() => '?').join(',');
+        return db.prepare(`
+          SELECT id, subject, topic, difficulty, type, content, options, hint, knowledge_point
+          FROM question_bank
+          WHERE id IN (${inClause})
+            AND type IN ('choice_single', 'choice_multi', 'judgment', 'fill_blank')
+            ${whereExtra}
+            ${excludeClause}
+          ORDER BY RANDOM()
+          LIMIT 1
+        `).get(...qIds, ...allParams);
+      }
+
+      if (boss.knowledge_point) {
+        return db.prepare(`
+          SELECT id, subject, topic, difficulty, type, content, options, hint, knowledge_point
+          FROM question_bank
+          WHERE topic = ?
+            AND type IN ('choice_single', 'choice_multi', 'judgment', 'fill_blank')
+            ${whereExtra}
+            ${excludeClause}
+          ORDER BY RANDOM()
+          LIMIT 1
+        `).get(boss.knowledge_point, ...allParams);
+      }
+
+      return db.prepare(`
+        SELECT id, subject, topic, difficulty, type, content, options, hint, knowledge_point
         FROM question_bank
         WHERE type IN ('choice_single', 'choice_multi', 'judgment', 'fill_blank')
+          ${whereExtra}
+          ${excludeClause}
         ORDER BY RANDOM()
         LIMIT 1
-      `).get();
+      `).get(...allParams);
+    };
+
+    if (lastAnswer && !lastAnswer.is_correct && lastAnswer.knowledge_point) {
+      question = tryGetQuestion('AND knowledge_point = ?', [lastAnswer.knowledge_point]);
+    }
+
+    if (!question && lastAnswer && !lastAnswer.is_correct && lastAnswer.topic) {
+      question = tryGetQuestion('AND topic = ?', [lastAnswer.topic]);
     }
 
     if (!question) {
-      return res.status(404).json({ error: '题库中没有可用的题目' });
+      question = tryGetQuestion('', []);
+    }
+
+    if (!question) {
+      return res.status(404).json({
+        error: '题库中没有更多可用的题目',
+        answered_count: answeredCount,
+        max_questions: maxQuestions,
+      });
     }
 
     let options = null;
@@ -518,7 +818,10 @@ router.get('/:bossId/question', authenticateToken, (req, res) => {
       type: question.type,
       difficulty: question.difficulty,
       options,
-      hint: question.hint
+      hint: question.hint,
+      answered_count: answeredCount,
+      max_questions: maxQuestions,
+      remaining: maxQuestions - answeredCount,
     });
   } catch (error) {
     console.error('获取Boss题目失败:', error);
@@ -593,6 +896,11 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
     const baseDamage = pet.level * 10;
     const multiplier = difficultyMultiplier[question.difficulty] || 1.0;
     const totalDamage = isCorrect ? Math.round(baseDamage * multiplier) : 0;
+
+    db.prepare(`
+      INSERT OR IGNORE INTO boss_battle_answers (boss_battle_id, user_id, question_id, is_correct)
+      VALUES (?, ?, ?, ?)
+    `).run(boss.id, req.user.userId, question_id, isCorrect ? 1 : 0);
 
     if (!participant) {
       db.prepare(`
@@ -742,19 +1050,20 @@ function distributeRewards(bossId, classId) {
     SELECT * FROM boss_battle_reward_config WHERE boss_battle_id = ?
   `).all(bossId);
 
-  let goldPool, expPool, equipmentRewardId = null;
+  let goldPool, expPool;
 
   if (customRewards.length > 0) {
     const goldConfig = customRewards.find(r => r.reward_type === 'gold');
     const expConfig = customRewards.find(r => r.reward_type === 'exp');
-    const equipConfig = customRewards.find(r => r.reward_type === 'equipment');
     goldPool = goldConfig ? goldConfig.reward_value : boss.boss_level * 100;
     expPool = expConfig ? expConfig.reward_value : boss.boss_level * 50;
-    equipmentRewardId = equipConfig ? equipConfig.reward_value : null;
   } else {
     goldPool = boss.boss_level * 100;
     expPool = boss.boss_level * 50;
   }
+
+  const allEquipment = db.prepare('SELECT id FROM equipment').all();
+  const equipmentIds = allEquipment.map(e => e.id);
 
   for (const participant of participants) {
     const damageRatio = totalDamage > 0 ? participant.damage_dealt / totalDamage : 1 / participants.length;
@@ -771,11 +1080,12 @@ function distributeRewards(bossId, classId) {
       VALUES (?, ?, 'exp', ?)
     `).run(bossId, participant.user_id, Math.max(5, expReward));
 
-    if (equipmentRewardId && damageRatio >= 0.15) {
+    if (equipmentIds.length > 0) {
+      const randomEquipId = equipmentIds[Math.floor(Math.random() * equipmentIds.length)];
       db.prepare(`
         INSERT OR IGNORE INTO boss_battle_rewards (boss_battle_id, user_id, reward_type, reward_value)
         VALUES (?, ?, 'equipment', ?)
-      `).run(bossId, participant.user_id, equipmentRewardId);
+      `).run(bossId, participant.user_id, randomEquipId);
     }
   }
 }

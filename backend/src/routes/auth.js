@@ -221,6 +221,7 @@ router.post('/login', async (req, res) => {
         class_slug: classInfo?.slug || null,
         status: user.status,
         avatar: user.avatar,
+        gold: user.gold || 0,
         teacher_classes
       }
     });

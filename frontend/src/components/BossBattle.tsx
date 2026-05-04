@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { Card, Progress, Button, List, Avatar, Tag, message, Statistic, Row, Col, Badge, Empty, Spin, Modal, Radio, Input, Alert } from 'antd';
+import { Card, Progress, Button, List, Avatar, Tag, message, Statistic, Row, Col, Badge, Empty, Spin, Modal, Radio, Input, Alert, Tabs, Table } from 'antd';
 import {
   ThunderboltOutlined,
   TeamOutlined,
@@ -46,6 +46,7 @@ const BossBattle: React.FC = () => {
   const isMobile = useMobile();
   const [loading, setLoading] = useState(false);
   const [bossData, setBossData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // 答题Modal状态
   const [quizModalVisible, setQuizModalVisible] = useState(false);
@@ -65,11 +66,53 @@ const BossBattle: React.FC = () => {
   const [myRewards, setMyRewards] = useState<any[]>([]);
   const [claimingReward, setClaimingReward] = useState(false);
 
+  const [activeTab, setActiveTab] = useState<string>('active');
+  const [historyBosses, setHistoryBosses] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [expandedBossId, setExpandedBossId] = useState<number | null>(null);
+
+  const loadBoss = useCallback(async () => {
+    if (!user?.class_id) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await bossBattleAPI.getCurrentBoss(user.class_id);
+      setBossData(response.data);
+      setMyRewards(response.data.myRewards || []);
+    } catch (error: any) {
+      console.error('加载BOSS失败:', error);
+      const errMsg = error.response?.data?.error || error.message || '加载BOSS信息失败';
+      setError(errMsg);
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.class_id]);
+
+  const loadHistory = useCallback(async () => {
+    if (!user?.class_id) return;
+    setHistoryLoading(true);
+    try {
+      const response = await bossBattleAPI.getHistory(user.class_id);
+      setHistoryBosses(response.data.bosses || []);
+    } catch (error: any) {
+      console.error('加载BOSS历史失败:', error);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [user?.class_id]);
+
   useEffect(() => {
     if (user?.class_id) {
       loadBoss();
     }
-  }, [user]);
+  }, [user?.class_id, loadBoss]);
+
+  useEffect(() => {
+    if (activeTab === 'history' && user?.class_id) {
+      loadHistory();
+    }
+  }, [activeTab, user?.class_id, loadHistory]);
 
   useEffect(() => {
     return () => {
@@ -98,24 +141,15 @@ const BossBattle: React.FC = () => {
     }, 1000);
   }, []);
 
-  const loadBoss = async () => {
-    if (!user?.class_id) return;
-
-    try {
-      setLoading(true);
-      const response = await bossBattleAPI.getCurrentBoss(user.class_id);
-      setBossData(response.data);
-      setMyRewards(response.data.myRewards || []);
-    } catch (error: any) {
-      console.error('加载BOSS失败:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // 点击攻击 -> 先获取题目
   const handleAttackClick = async () => {
     if (!bossData?.boss || cooldown > 0) return;
+
+    const stats = bossData?.myAnswerStats;
+    if (stats && stats.remaining <= 0 && stats.max > 0) {
+      message.warning(`已达到答题上限（${stats.max}题），无法继续攻击`);
+      return;
+    }
 
     try {
       setQuestionLoading(true);
@@ -274,33 +308,465 @@ const BossBattle: React.FC = () => {
     return <Tag>{config[type] || type}</Tag>;
   };
 
-  if (loading) {
-    return (
-      <div style={{ textAlign: 'center', padding: 40 }}>
-        <Spin size="large" />
-        <div style={{ marginTop: 16, color: '#999' }}>加载BOSS信息中...</div>
-      </div>
-    );
-  }
+  const renderActiveTab = () => {
+    if (loading) {
+      return (
+        <div style={{ textAlign: 'center', padding: 40 }}>
+          <Spin size="large" />
+          <div style={{ marginTop: 16, color: '#999' }}>加载BOSS信息中...</div>
+        </div>
+      );
+    }
 
-  if (!bossData?.boss) {
-    return (
-      <div>
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <FireOutlined style={{ color: '#f5222d', fontSize: 28 }} />
-          班级BOSS战
-        </h2>
+    if (error) {
+      return (
+        <Alert
+          type="error"
+          message="加载失败"
+          description={error}
+          showIcon
+          style={{ marginTop: 16 }}
+          action={
+            <Button size="small" onClick={loadBoss}>
+              重试
+            </Button>
+          }
+        />
+      );
+    }
+
+    if (!bossData?.boss) {
+      return (
         <Empty
           description="当前没有活跃的BOSS，等待教师创建或从错题生成"
           image={Empty.PRESENTED_IMAGE_SIMPLE}
           style={{ marginTop: 40 }}
-        />
+        >
+          <Button onClick={loadBoss}>刷新</Button>
+        </Empty>
+      );
+    }
+
+    const boss = bossData.boss;
+    const timeLeft = Math.max(0, Math.floor((new Date(boss.expires_at).getTime() - Date.now()) / (1000 * 60 * 60)));
+
+    return (
+      <div>
+        <Card
+          style={{
+            marginBottom: 20,
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: '#fff',
+            borderRadius: 12
+          }}
+        >
+          <Row gutter={[24, 24]} align="middle">
+            <Col xs={24} md={8} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 120, marginBottom: 16, animation: 'boss-float 3s ease-in-out infinite' }}>
+                {boss.boss_icon || '👹'}
+              </div>
+              <h2 style={{ color: '#fff', margin: '0 0 8px' }}>{boss.boss_name}</h2>
+              <Tag color="red">Lv.{boss.boss_level}</Tag>
+              {boss.knowledge_point && (
+                <Tag color="blue" style={{ marginLeft: 8 }}>{boss.knowledge_point}</Tag>
+              )}
+            </Col>
+
+            <Col xs={24} md={16}>
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
+                  <span>BOSS血量</span>
+                  <span>{boss.current_hp} / {boss.boss_max_hp}</span>
+                </div>
+                <Progress
+                  percent={boss.progress}
+                  strokeColor={{ from: '#f5222d', to: '#fa8c16' }}
+                  trailColor="rgba(255,255,255,0.2)"
+                  size={24}
+                  format={() => `${boss.progress}%`}
+                />
+              </div>
+
+              <Row gutter={16}>
+                <Col xs={12} sm={8}>
+                  <Statistic
+                    title="参与人数"
+                    value={boss.participant_count}
+                    prefix={<TeamOutlined />}
+                    valueStyle={{ color: '#fff' }}
+                  />
+                </Col>
+                <Col xs={12} sm={8}>
+                  <Statistic
+                    title="剩余时间"
+                    value={timeLeft}
+                    suffix="小时"
+                    prefix={<ClockCircleOutlined />}
+                    valueStyle={{ color: '#fff' }}
+                  />
+                </Col>
+                <Col xs={12} sm={8}>
+                  <Statistic
+                    title="BOSS等级"
+                    value={boss.boss_level}
+                    prefix={<ThunderboltOutlined />}
+                    valueStyle={{ color: '#fff' }}
+                  />
+                </Col>
+              </Row>
+
+              {boss.status === 'defeated' ? (
+                <div style={{ marginTop: 24 }}>
+                  <Alert
+                    type="success"
+                    message="BOSS已被击败！"
+                    description="恭喜！全班同学合力击败了BOSS，快来领取你的奖励吧！"
+                    showIcon
+                    icon={<CheckCircleOutlined />}
+                    style={{ marginBottom: 16 }}
+                  />
+                  {myRewards.length > 0 ? (
+                    <div>
+                      <div style={{ marginBottom: 12, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                        {myRewards.map((r: any) => (
+                          <Tag
+                            key={r.id}
+                            color={r.claimed ? 'default' : 'gold'}
+                            icon={r.claimed ? <CheckCircleOutlined /> : <GiftOutlined />}
+                            style={{ fontSize: 14, padding: '4px 12px' }}
+                          >
+                            {r.type === 'gold' ? '💰' : '⭐'} {r.value} {r.type === 'gold' ? '金币' : '经验'}
+                            {r.claimed ? ' (已领取)' : ''}
+                          </Tag>
+                        ))}
+                      </div>
+                      <Button
+                        type="primary"
+                        size="large"
+                        block
+                        icon={<GiftOutlined />}
+                        loading={claimingReward}
+                        onClick={handleClaimReward}
+                        disabled={myRewards.every((r: any) => r.claimed)}
+                        style={{
+                          height: 56,
+                          fontSize: 20,
+                          background: myRewards.every((r: any) => r.claimed) ? '#d9d9d9' : '#faad14',
+                          color: '#fff',
+                          border: 'none',
+                          fontWeight: 'bold',
+                        }}
+                      >
+                        {myRewards.every((r: any) => r.claimed) ? '奖励已全部领取' : '🎁 领取奖励'}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.7)', padding: 16 }}>
+                      你没有参与本次BOSS战，无法领取奖励
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  {bossData?.myAnswerStats && bossData.myAnswerStats.max > 0 && (
+                    <div style={{
+                      marginTop: 16,
+                      padding: '8px 12px',
+                      background: 'rgba(255,255,255,0.15)',
+                      borderRadius: 8,
+                      display: 'flex',
+                      justifyContent: 'center',
+                      gap: 16,
+                      flexWrap: 'wrap',
+                    }}>
+                      <span style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13 }}>
+                        已答：<b>{bossData.myAnswerStats.answered}</b> / <b>{bossData.myAnswerStats.max}</b> 题
+                      </span>
+                      <span style={{
+                        color: bossData.myAnswerStats.remaining > 0 ? '#a0ffa0' : '#ffa0a0',
+                        fontSize: 13,
+                      }}>
+                        剩余：<b>{bossData.myAnswerStats.remaining}</b> 题
+                      </span>
+                    </div>
+                  )}
+                  <Button
+                    type="primary"
+                    size="large"
+                    block
+                    icon={<FireOutlined />}
+                    loading={questionLoading}
+                    disabled={cooldown > 0 || (bossData?.myAnswerStats && bossData.myAnswerStats.remaining <= 0 && bossData.myAnswerStats.max > 0)}
+                    onClick={handleAttackClick}
+                    style={{
+                      marginTop: 16,
+                      height: 56,
+                      fontSize: 20,
+                      background: cooldown > 0 ? 'rgba(255,255,255,0.5)' : '#fff',
+                      color: '#764ba2',
+                      border: 'none',
+                      fontWeight: 'bold'
+                    }}
+                  >
+                    {cooldown > 0 ? `冷却中... ${cooldown}秒` :
+                      (bossData?.myAnswerStats && bossData.myAnswerStats.remaining <= 0 && bossData.myAnswerStats.max > 0) ? '已达答题上限' :
+                      '⚔️ 攻击BOSS'}
+                  </Button>
+                </div>
+              )}
+            </Col>
+          </Row>
+        </Card>
+
+        <Card title="🏆 伤害排行榜" size="small">
+          <List
+            dataSource={bossData.leaderboard || []}
+            renderItem={(item: LeaderboardItem, index: number) => {
+              const accuracy = item.total_attempts > 0
+                ? Math.round((item.correct_answers / item.total_attempts) * 100)
+                : 0;
+              return (
+                <List.Item>
+                  <List.Item.Meta
+                    avatar={
+                      <Badge count={index + 1} offset={[-5, 5]}>
+                        <Avatar
+                          size={48}
+                          style={{ backgroundColor: index < 3 ? '#f5222d' : '#d9d9d9' }}
+                        >
+                          {item.username?.charAt(0)}
+                        </Avatar>
+                      </Badge>
+                    }
+                    title={
+                      <div>
+                        <span style={{ fontWeight: 'bold' }}>{item.username}</span>
+                        {item.pet_name && (
+                          <span style={{ marginLeft: 8, color: '#999', fontSize: 12 }}>
+                            ({item.pet_name} Lv.{item.pet_level})
+                          </span>
+                        )}
+                      </div>
+                    }
+                    description={
+                      <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#999' }}>
+                        <span>答题: {item.total_attempts}次</span>
+                        <span>正确: {item.correct_answers}次</span>
+                        <span>正确率: {accuracy}%</span>
+                      </div>
+                    }
+                  />
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 20, fontWeight: 'bold', color: '#f5222d' }}>
+                      {item.damage_dealt}
+                    </div>
+                    <div style={{ color: '#999', fontSize: 12 }}>伤害值</div>
+                  </div>
+                </List.Item>
+              );
+            }}
+          />
+        </Card>
       </div>
     );
-  }
+  };
 
-  const boss = bossData.boss;
-  const timeLeft = Math.max(0, Math.floor((new Date(boss.expires_at).getTime() - Date.now()) / (1000 * 60 * 60)));
+  const renderHistoryTab = () => {
+    if (historyLoading) {
+      return (
+        <div style={{ textAlign: 'center', padding: 40 }}>
+          <Spin size="large" />
+          <div style={{ marginTop: 16, color: '#999' }}>加载历史记录中...</div>
+        </div>
+      );
+    }
+
+    if (historyBosses.length === 0) {
+      return (
+        <Empty
+          description="暂无已结束的BOSS战记录"
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          style={{ marginTop: 40 }}
+        />
+      );
+    }
+
+    return (
+      <div>
+        {historyBosses.map((boss: any) => {
+          const isExpanded = expandedBossId === boss.id;
+          const endTime = boss.completed_at || boss.expires_at;
+          const endDate = endTime ? new Date(endTime).toLocaleDateString('zh-CN') : '-';
+
+          return (
+            <Card
+              key={boss.id}
+              style={{ marginBottom: 16 }}
+              title={
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 24 }}>{boss.boss_icon || '👹'}</span>
+                  <span style={{ fontWeight: 'bold' }}>{boss.boss_name}</span>
+                  <Tag color="red">Lv.{boss.boss_level}</Tag>
+                  <Tag color={boss.status === 'defeated' ? 'green' : 'default'}>
+                    {boss.status === 'defeated' ? '已击败' : '已过期'}
+                  </Tag>
+                </div>
+              }
+              extra={
+                <Button
+                  type="link"
+                  onClick={() => setExpandedBossId(isExpanded ? null : boss.id)}
+                >
+                  {isExpanded ? '收起' : '查看详情'}
+                </Button>
+              }
+            >
+              <Row gutter={[16, 8]}>
+                <Col xs={12} sm={6}>
+                  <Statistic title="参与人数" value={boss.participant_count} prefix={<TeamOutlined />} />
+                </Col>
+                <Col xs={12} sm={6}>
+                  <Statistic title="总伤害" value={boss.total_damage} prefix={<FireOutlined />} />
+                </Col>
+                <Col xs={12} sm={6}>
+                  <Statistic
+                    title="进度"
+                    value={boss.progress}
+                    suffix="%"
+                    prefix={boss.status === 'defeated' ? <CheckCircleOutlined /> : <ClockCircleOutlined />}
+                  />
+                </Col>
+                <Col xs={12} sm={6}>
+                  <Statistic title="结束日期" value={endDate} />
+                </Col>
+              </Row>
+
+              {boss.knowledge_point && (
+                <div style={{ marginTop: 8 }}>
+                  <Tag color="blue">知识点: {boss.knowledge_point}</Tag>
+                </div>
+              )}
+
+              {boss.boss_description && (
+                <div style={{ marginTop: 8, color: '#666', fontSize: 13 }}>
+                  {boss.boss_description}
+                </div>
+              )}
+
+              {boss.myRewards && boss.myRewards.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: 4 }}>🎁 我的奖励:</div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {boss.myRewards.map((r: any) => (
+                      <Tag
+                        key={r.id}
+                        color={r.claimed ? 'default' : 'gold'}
+                        icon={r.claimed ? <CheckCircleOutlined /> : <GiftOutlined />}
+                      >
+                        {r.type === 'gold' ? '💰' : '⭐'} {r.value} {r.type === 'gold' ? '金币' : '经验'}
+                        {r.claimed ? ' (已领取)' : ' (未领取)'}
+                      </Tag>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {isExpanded && (
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: 8 }}>
+                    📊 参赛者排名
+                  </div>
+                  <Table
+                    dataSource={(boss.participants || []).map((p: any, idx: number) => ({
+                      ...p,
+                      key: p.user_id,
+                      rank: idx + 1,
+                      accuracy: p.total_attempts > 0
+                        ? Math.round((p.correct_answers / p.total_attempts) * 100)
+                        : 0,
+                    }))}
+                    columns={[
+                      {
+                        title: '排名',
+                        dataIndex: 'rank',
+                        key: 'rank',
+                        width: 60,
+                        render: (rank: number) => (
+                          <span style={{
+                            fontWeight: 'bold',
+                            color: rank <= 3 ? '#f5222d' : '#666',
+                            fontSize: rank <= 3 ? 18 : 14,
+                          }}>
+                            {rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : rank}
+                          </span>
+                        ),
+                      },
+                      { title: '学生', dataIndex: 'username', key: 'username' },
+                      {
+                        title: '宠物',
+                        key: 'pet',
+                        render: (_: any, r: any) => r.pet_name ? `${r.pet_name} Lv.${r.pet_level}` : '-',
+                      },
+                      {
+                        title: '伤害值',
+                        dataIndex: 'damage_dealt',
+                        key: 'damage_dealt',
+                        sorter: (a: any, b: any) => b.damage_dealt - a.damage_dealt,
+                        render: (v: number) => (
+                          <span style={{ fontWeight: 'bold', color: '#f5222d' }}>{v}</span>
+                        ),
+                      },
+                      {
+                        title: '答题次数',
+                        dataIndex: 'total_attempts',
+                        key: 'total_attempts',
+                      },
+                      {
+                        title: '正确数',
+                        dataIndex: 'correct_answers',
+                        key: 'correct_answers',
+                      },
+                      {
+                        title: '正确率',
+                        dataIndex: 'accuracy',
+                        key: 'accuracy',
+                        render: (v: number) => (
+                          <span style={{ color: v >= 80 ? '#52c41a' : v >= 60 ? '#faad14' : '#ff4d4f' }}>
+                            {v}%
+                          </span>
+                        ),
+                      },
+                      {
+                        title: '获得奖励',
+                        key: 'rewards',
+                        render: (_: any, r: any) => {
+                          if (!r.rewards || r.rewards.length === 0) return <span style={{ color: '#ccc' }}>-</span>;
+                          return (
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                              {r.rewards.map((rw: any, i: number) => (
+                                <Tag key={i} color={rw.claimed ? 'green' : 'gold'} style={{ fontSize: 11, margin: 0 }}>
+                                  {rw.reward_type === 'gold' ? '💰' : rw.reward_type === 'exp' ? '⭐' : '⚔️'}
+                                  {rw.reward_value}
+                                  {rw.reward_type === 'gold' ? '金' : rw.reward_type === 'exp' ? '经验' : '装备'}
+                                </Tag>
+                              ))}
+                            </div>
+                          );
+                        },
+                      },
+                    ]}
+                    size="small"
+                    pagination={false}
+                    scroll={{ x: isMobile ? 500 : undefined }}
+                  />
+                </div>
+              )}
+            </Card>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -314,197 +780,22 @@ const BossBattle: React.FC = () => {
         </p>
       </div>
 
-      {/* BOSS信息 */}
-      <Card
-        style={{
-          marginBottom: 20,
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          color: '#fff',
-          borderRadius: 12
-        }}
-      >
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} md={8} style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 120, marginBottom: 16, animation: 'boss-float 3s ease-in-out infinite' }}>
-              {boss.boss_icon || '👹'}
-            </div>
-            <h2 style={{ color: '#fff', margin: '0 0 8px' }}>{boss.boss_name}</h2>
-            <Tag color="red">Lv.{boss.boss_level}</Tag>
-            {boss.knowledge_point && (
-              <Tag color="blue" style={{ marginLeft: 8 }}>{boss.knowledge_point}</Tag>
-            )}
-          </Col>
-
-          <Col xs={24} md={16}>
-            <div style={{ marginBottom: 24 }}>
-              <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
-                <span>BOSS血量</span>
-                <span>{boss.current_hp} / {boss.boss_max_hp}</span>
-              </div>
-              <Progress
-                percent={boss.progress}
-                strokeColor={{ from: '#f5222d', to: '#fa8c16' }}
-                trailColor="rgba(255,255,255,0.2)"
-                strokeWidth={24}
-                format={() => `${boss.progress}%`}
-              />
-            </div>
-
-            <Row gutter={16}>
-              <Col xs={12} sm={8}>
-                <Statistic
-                  title="参与人数"
-                  value={boss.participant_count}
-                  prefix={<TeamOutlined />}
-                  valueStyle={{ color: '#fff' }}
-                />
-              </Col>
-              <Col xs={12} sm={8}>
-                <Statistic
-                  title="剩余时间"
-                  value={timeLeft}
-                  suffix="小时"
-                  prefix={<ClockCircleOutlined />}
-                  valueStyle={{ color: '#fff' }}
-                />
-              </Col>
-              <Col xs={12} sm={8}>
-                <Statistic
-                  title="BOSS等级"
-                  value={boss.boss_level}
-                  prefix={<ThunderboltOutlined />}
-                  valueStyle={{ color: '#fff' }}
-                />
-              </Col>
-            </Row>
-
-            {boss.status === 'defeated' ? (
-              <div style={{ marginTop: 24 }}>
-                <Alert
-                  type="success"
-                  message="BOSS已被击败！"
-                  description="恭喜！全班同学合力击败了BOSS，快来领取你的奖励吧！"
-                  showIcon
-                  icon={<CheckCircleOutlined />}
-                  style={{ marginBottom: 16 }}
-                />
-                {myRewards.length > 0 ? (
-                  <div>
-                    <div style={{ marginBottom: 12, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                      {myRewards.map((r: any) => (
-                        <Tag
-                          key={r.id}
-                          color={r.claimed ? 'default' : 'gold'}
-                          icon={r.claimed ? <CheckCircleOutlined /> : <GiftOutlined />}
-                          style={{ fontSize: 14, padding: '4px 12px' }}
-                        >
-                          {r.type === 'gold' ? '💰' : '⭐'} {r.value} {r.type === 'gold' ? '金币' : '经验'}
-                          {r.claimed ? ' (已领取)' : ''}
-                        </Tag>
-                      ))}
-                    </div>
-                    <Button
-                      type="primary"
-                      size="large"
-                      block
-                      icon={<GiftOutlined />}
-                      loading={claimingReward}
-                      onClick={handleClaimReward}
-                      disabled={myRewards.every((r: any) => r.claimed)}
-                      style={{
-                        height: 56,
-                        fontSize: 20,
-                        background: myRewards.every((r: any) => r.claimed) ? '#d9d9d9' : '#faad14',
-                        color: '#fff',
-                        border: 'none',
-                        fontWeight: 'bold',
-                      }}
-                    >
-                      {myRewards.every((r: any) => r.claimed) ? '奖励已全部领取' : '🎁 领取奖励'}
-                    </Button>
-                  </div>
-                ) : (
-                  <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.7)', padding: 16 }}>
-                    你没有参与本次BOSS战，无法领取奖励
-                  </div>
-                )}
-              </div>
-            ) : (
-              <Button
-                type="primary"
-                size="large"
-                block
-                icon={<FireOutlined />}
-                loading={questionLoading}
-                disabled={cooldown > 0}
-                onClick={handleAttackClick}
-                style={{
-                  marginTop: 24,
-                  height: 56,
-                  fontSize: 20,
-                  background: cooldown > 0 ? 'rgba(255,255,255,0.5)' : '#fff',
-                  color: '#764ba2',
-                  border: 'none',
-                  fontWeight: 'bold'
-                }}
-              >
-                {cooldown > 0 ? `冷却中... ${cooldown}秒` : '⚔️ 攻击BOSS'}
-              </Button>
-            )}
-          </Col>
-        </Row>
-      </Card>
-
-      {/* 伤害排行榜 */}
-      <Card title="🏆 伤害排行榜" size="small">
-        <List
-          dataSource={bossData.leaderboard || []}
-          renderItem={(item: LeaderboardItem, index: number) => {
-            const accuracy = item.total_attempts > 0
-              ? Math.round((item.correct_answers / item.total_attempts) * 100)
-              : 0;
-            return (
-              <List.Item>
-                <List.Item.Meta
-                  avatar={
-                    <Badge count={index + 1} offset={[-5, 5]}>
-                      <Avatar
-                        size={48}
-                        style={{ backgroundColor: index < 3 ? '#f5222d' : '#d9d9d9' }}
-                      >
-                        {item.username?.charAt(0)}
-                      </Avatar>
-                    </Badge>
-                  }
-                  title={
-                    <div>
-                      <span style={{ fontWeight: 'bold' }}>{item.username}</span>
-                      {item.pet_name && (
-                        <span style={{ marginLeft: 8, color: '#999', fontSize: 12 }}>
-                          ({item.pet_name} Lv.{item.pet_level})
-                        </span>
-                      )}
-                    </div>
-                  }
-                  description={
-                    <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#999' }}>
-                      <span>答题: {item.total_attempts}次</span>
-                      <span>正确: {item.correct_answers}次</span>
-                      <span>正确率: {accuracy}%</span>
-                    </div>
-                  }
-                />
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 20, fontWeight: 'bold', color: '#f5222d' }}>
-                    {item.damage_dealt}
-                  </div>
-                  <div style={{ color: '#999', fontSize: 12 }}>伤害值</div>
-                </div>
-              </List.Item>
-            );
-          }}
-        />
-      </Card>
+      <Tabs
+        activeKey={activeTab}
+        onChange={(key) => setActiveTab(key)}
+        items={[
+          {
+            key: 'active',
+            label: '⚔️ 进行中',
+            children: renderActiveTab(),
+          },
+          {
+            key: 'history',
+            label: '📋 已结束',
+            children: renderHistoryTab(),
+          },
+        ]}
+      />
 
       {/* 答题Modal */}
       <Modal
@@ -513,16 +804,21 @@ const BossBattle: React.FC = () => {
         onCancel={() => setQuizModalVisible(false)}
         footer={null}
         width={isMobile ? '95vw' : 600}
-        destroyOnClose
+        destroyOnHidden
       >
         {currentQuestion && (
           <div>
-            <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
+            <div style={{ marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               {renderTypeTag(currentQuestion.type)}
               {renderDifficultyTag(currentQuestion.difficulty)}
               <Tag color="purple">
                 伤害: ×{currentQuestion.difficulty === 'easy' ? '0.5' : currentQuestion.difficulty === 'hard' ? '1.5' : '1.0'}
               </Tag>
+              {(currentQuestion as any).max_questions > 0 && (
+                <Tag color="blue">
+                  剩余 {(currentQuestion as any).remaining} / {(currentQuestion as any).max_questions} 题
+                </Tag>
+              )}
             </div>
 
             <div style={{

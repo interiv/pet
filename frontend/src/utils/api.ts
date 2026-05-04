@@ -533,8 +533,16 @@ export const bossBattleAPI = {
     api.post(`/boss-battles/${bossId}/terminate`),
   deleteBoss: (bossId: number) =>
     api.delete(`/boss-battles/${bossId}`),
-  getWrongQuestions: (classId: number) =>
-    api.get(`/boss-battles/wrong-questions/${classId}`),
+  getWrongQuestions: (classId: number, params?: {
+    page?: number; pageSize?: number;
+    subject?: string; type?: string; difficulty?: string; keyword?: string;
+  }) => api.get(`/boss-battles/wrong-questions/${classId}`, { params }),
+  getQuestions: (params?: {
+    page?: number; pageSize?: number;
+    subject?: string; type?: string; difficulty?: string; keyword?: string;
+  }) => api.get('/boss-battles/questions', { params }),
+  getHistory: (classId: number) =>
+    api.get(`/boss-battles/history/${classId}`),
 };
 
 export default api;

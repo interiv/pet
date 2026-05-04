@@ -37,7 +37,7 @@ const Arena: React.FC = () => {
       activeKey={activeTab}
       onChange={handleTabChange}
       items={items}
-      destroyInactiveTabPane
+      destroyOnHidden
     />
   );
 };

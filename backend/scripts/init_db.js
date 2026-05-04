@@ -761,6 +761,7 @@ db.exec(`
     started_at TEXT DEFAULT CURRENT_TIMESTAMP,
     completed_at TEXT,
     expires_at TEXT,
+    max_questions_per_user INTEGER DEFAULT 20,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -796,6 +797,19 @@ db.exec(`
     boss_battle_id INTEGER NOT NULL,
     question_id INTEGER NOT NULL,
     UNIQUE(boss_battle_id, question_id),
+    FOREIGN KEY (boss_battle_id) REFERENCES boss_battles(id),
+    FOREIGN KEY (question_id) REFERENCES question_bank(id)
+  );
+
+  -- ==================== Boss战斗答题记录 ====================
+  CREATE TABLE IF NOT EXISTS boss_battle_answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    boss_battle_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    question_id INTEGER NOT NULL,
+    is_correct INTEGER DEFAULT 0,
+    answered_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(boss_battle_id, user_id, question_id),
     FOREIGN KEY (boss_battle_id) REFERENCES boss_battles(id),
     FOREIGN KEY (question_id) REFERENCES question_bank(id)
   );

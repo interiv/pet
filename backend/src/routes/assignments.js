@@ -696,7 +696,9 @@ router.get('/', authenticateToken, (req, res) => {
     if (req.user.role === 'admin') {
       let sql = `
         SELECT a.*, u.username as teacher_name, c.name as class_name,
-          (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count
+          (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count,
+          (SELECT COUNT(*) FROM users WHERE class_id = a.class_id AND role = 'student' AND status = 'active') as class_student_count,
+          (SELECT COUNT(DISTINCT user_id) FROM submissions WHERE assignment_id = a.id) as submitted_count
         FROM assignments a
         JOIN users u ON a.teacher_id = u.id
         LEFT JOIN classes c ON a.class_id = c.id
@@ -717,7 +719,9 @@ router.get('/', authenticateToken, (req, res) => {
 
       let sql = `
         SELECT a.*, u.username as teacher_name, c.name as class_name,
-          (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count
+          (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count,
+          (SELECT COUNT(*) FROM users WHERE class_id = a.class_id AND role = 'student' AND status = 'active') as class_student_count,
+          (SELECT COUNT(DISTINCT user_id) FROM submissions WHERE assignment_id = a.id) as submitted_count
         FROM assignments a
         JOIN users u ON a.teacher_id = u.id
         LEFT JOIN classes c ON a.class_id = c.id

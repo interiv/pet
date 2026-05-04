@@ -94,7 +94,7 @@ const PetCenter: React.FC<PetCenterProps> = ({ onNavigate: _onNavigate }) => {
       activeKey={activeTab}
       onChange={handleTabChange}
       items={items}
-      destroyInactiveTabPane
+      destroyOnHidden
     />
   );
 };

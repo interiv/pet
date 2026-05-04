@@ -236,7 +236,7 @@ const AchievementManagement: React.FC = () => {
         onCancel={() => setModalVisible(false)}
         onOk={handleSubmit}
         width={640}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical">
           <Form.Item name="name" label="成就名称" rules={[{ required: true, message: '请输入名称' }]}>

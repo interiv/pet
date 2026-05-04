@@ -1013,6 +1013,23 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     { title: '科目', dataIndex: 'subject', key: 'subject', render: (subject: string) => <Tag color="blue">{subject}</Tag> },
     { title: '题型', dataIndex: 'question_type', key: 'question_type', responsive: ['md'] as any, render: (type: string) => <Tag color="purple">{typeOptions.find(t => t.value === type)?.label || type}</Tag> },
     { title: '题目数', dataIndex: 'question_count', key: 'question_count', responsive: ['md'] as any, render: (count: number) => count ?? '-' },
+    { title: '班级人数', dataIndex: 'class_student_count', key: 'class_student_count', responsive: ['md'] as any, render: (count: number) => count ?? '-' },
+    { title: '已作答', dataIndex: 'submitted_count', key: 'submitted_count', responsive: ['md'] as any, render: (count: number, r: any) => {
+      const total = r.class_student_count || 0;
+      const submitted = count || 0;
+      const unsubmitted = total - submitted;
+      return (
+        <span>
+          <span style={{ color: '#52c41a', fontWeight: 'bold' }}>{submitted}</span>
+          {total > 0 && unsubmitted > 0 && (
+            <span style={{ color: '#ff4d4f', marginLeft: 4 }}>（{unsubmitted}人未做）</span>
+          )}
+          {total > 0 && unsubmitted === 0 && (
+            <span style={{ color: '#52c41a', marginLeft: 4 }}>（全部完成）</span>
+          )}
+        </span>
+      );
+    }},
     { title: '金币奖励', dataIndex: 'max_exp', key: 'max_exp', responsive: ['md'] as any, render: (exp: number) => <span style={{ color: '#faad14', fontWeight: 'bold' }}>+{exp} 金币</span> },
     { 
       title: '截止日期', dataIndex: 'due_date', key: 'due_date', responsive: ['sm'] as any,
@@ -1153,6 +1170,14 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 {record.question_count}道题 · 截止 {dayjs(record.due_date).format('MM-DD HH:mm')}
                 {isOverdue(record.due_date) && <span style={{ color: '#ff4d4f', marginLeft: 4 }}>已过期</span>}
               </div>
+              {isTeacher && record.class_student_count !== undefined && (
+                <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
+                  班级人数：{record.class_student_count} · 已作答：<span style={{ color: '#52c41a', fontWeight: 'bold' }}>{record.submitted_count || 0}</span>
+                  {record.class_student_count > 0 && (record.class_student_count - (record.submitted_count || 0)) > 0 && (
+                    <span style={{ color: '#ff4d4f', marginLeft: 4 }}>（{record.class_student_count - (record.submitted_count || 0)}人未做）</span>
+                  )}
+                </div>
+              )}
               {record.my_submission_id && (
                 <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
                   最高得分：<span style={{ color: '#52c41a', fontWeight: 'bold' }}>{record.my_score || 0}</span> 分
