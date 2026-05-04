@@ -1,30 +1,27 @@
 # Docker 部署教程
 
-> 从零开始，10 分钟内部署班级宠物养成系统。
+> 从零开始，5 分钟内部署班级宠物养成系统。前后端合并为一个镜像，一个容器搞定。
 
 ---
 
 ## 概述
 
-本系统由两个 Docker 容器组成：
-
-| 容器 | 作用 | 端口 |
-|------|------|------|
-| **pet-backend** | 后端 API + 数据库 | 3000（内部） |
-| **pet-frontend** | Nginx + React 前端页面 | 80 / 443 |
+只有一个容器，Express 同时提供 API 和前端页面：
 
 ```
-用户浏览器 ──▶ 前端容器 (Nginx) ──▶ 后端容器 (Express API)
-                   │                        │
-                   │  静态页面               │  SQLite 数据库
-                   │  /api/* 转发给后端       │  AI 大模型调用
+用户浏览器 ──▶ Express (端口 3000)
+                   │
+                   │  /api/*  后端接口
+                   │  其他    前端页面 (React SPA)
+                   │
+                   └── SQLite 数据库 + AI 大模型
 ```
 
 镜像托管在阿里云容器镜像服务，已公开，无需登录即可拉取。
 
-两个容器启动时都会自动检测环境：
-- **后端**：数据库不存在或缺少表结构时，自动初始化
-- **前端**：没有 SSL 证书时，自动生成自签名证书（HTTPS 立即可用）
+启动时自动检测环境：
+- 数据库不存在或缺少表结构 → 自动初始化
+- 无需额外配置，开箱即用
 
 ---
 
@@ -33,7 +30,6 @@
 你需要准备：
 
 - **一台 Linux 服务器**（Ubuntu / Debian / CentOS 均可）
-- **一个域名**（可选，没有的话用 IP 访问也行）
 - **AI API Key**（用于作业生成和批改功能）
 
 ---
@@ -93,45 +89,25 @@ EOF
 ```bash
 cat > docker-compose.yml << 'EOF'
 services:
-  backend:
-    image: registry.cn-hangzhou.aliyuncs.com/myfdocker/pet-backend:latest
-    container_name: class-pet-backend
+  pet:
+    image: registry.cn-hangzhou.aliyuncs.com/myfdocker/pet:latest
+    container_name: class-pet
     restart: unless-stopped
+    ports:
+      - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
       - JWT_SECRET=${JWT_SECRET:-class-pet-game-secret-key-2024}
       - JWT_EXPIRES_IN=7d
-      - FRONTEND_URL=${FRONTEND_URL:-http://localhost}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
       - AI_API_KEY=${AI_API_KEY}
       - AI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
       - AI_MODEL=doubao-seed-2-0-pro-260215
     volumes:
       - ./data:/app/data
-    networks:
-      - app-network
-
-  frontend:
-    image: registry.cn-hangzhou.aliyuncs.com/myfdocker/pet-frontend:latest
-    container_name: class-pet-frontend
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /opt/pet/certs:/etc/nginx/certs:ro
-    depends_on:
-      - backend
-    networks:
-      - app-network
-
-networks:
-  app-network:
-    driver: bridge
 EOF
 ```
-
-> 首次启动时还没有证书，前端容器会自动生成自签名证书，保证 HTTPS 正常运行。后面拿到正式证书替换即可。
 
 ---
 
@@ -142,7 +118,7 @@ docker compose pull      # 拉取最新镜像
 docker compose up -d     # 后台启动
 ```
 
-首次启动会自动初始化数据库（创建表结构、种子数据），日志中会看到：
+首次启动会自动初始化数据库，日志中会看到：
 
 ```
 数据库文件不存在，执行初始化...
@@ -158,12 +134,11 @@ docker compose up -d     # 后台启动
 docker compose ps
 ```
 
-应该看到两个容器都是 `Up` 状态：
+应该看到容器是 `Up` 状态：
 
 ```
-NAME                 STATUS
-class-pet-backend    Up
-class-pet-frontend   Up
+NAME        STATUS
+class-pet   Up
 ```
 
 ---
@@ -173,11 +148,8 @@ class-pet-frontend   Up
 打开浏览器，访问：
 
 ```
-https://你的服务器IP    （自签名证书，浏览器会提示不安全，点"继续访问"即可）
-http://你的服务器IP     （会自动跳转到 HTTPS）
+http://你的服务器IP:3000
 ```
-
-有域名后替换正式证书就不会有安全提示了（见第六步）。
 
 ### 首次使用
 
@@ -187,55 +159,89 @@ http://你的服务器IP     （会自动跳转到 HTTPS）
 
 ---
 
-## 第六步：替换为正式 SSL 证书（可选）
+## 第六步：配置 HTTPS（推荐）
 
-系统启动后 HTTPS 已经可用，但用的是自签名证书，浏览器会提示"不安全"。有域名后替换为免费正式证书：
-
-### 6.1 安装证书工具
+### 6.1 安装 Nginx 和证书工具
 
 ```bash
-apt update && apt install -y certbot
+apt update && apt install -y nginx certbot
 ```
 
 ### 6.2 申请 Let's Encrypt 免费证书
 
 ```bash
-# 先停掉前端容器（释放 80 端口给 certbot 验证用）
-docker compose stop frontend
-
 # 申请证书（把 your-domain.com 换成你的域名）
 certbot certonly --standalone -d your-domain.com
 ```
 
 按提示输入邮箱、同意条款。
 
-### 6.3 复制证书到部署目录
-
-> Let's Encrypt 的证书是软链接，需要 `-L` 复制实际文件。
+### 6.3 配置 Nginx 反向代理
 
 ```bash
-cp -L /etc/letsencrypt/live/your-domain.com/fullchain.pem /opt/pet/certs/
-cp -L /etc/letsencrypt/live/your-domain.com/privkey.pem /opt/pet/certs/
+cat > /etc/nginx/sites-available/pet << 'EOF'
+server {
+    listen 80;
+    server_name your-domain.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name your-domain.com;
+
+    ssl_certificate     /etc/letsencrypt/live/your-domain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }
+
+    location /socket.io {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }
+}
+EOF
+
+ln -sf /etc/nginx/sites-available/pet /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl reload nginx
 ```
 
 ### 6.4 修改 FRONTEND_URL
 
-编辑 `/opt/pet/docker-compose.yml`，把 `FRONTEND_URL` 从 `http://localhost` 改为 `https://your-domain.com`。
-
-### 6.5 重启
+编辑 `/opt/pet/docker-compose.yml`，把 `FRONTEND_URL` 从 `http://localhost:3000` 改为 `https://your-domain.com`，然后重启：
 
 ```bash
 docker compose up -d
 ```
 
-现在访问 `https://your-domain.com` 就能看到安全锁图标了。
-
-### 6.6 设置证书自动续期
-
-Let's Encrypt 证书有效期 90 天，设置定时任务自动续期：
+### 6.5 设置证书自动续期
 
 ```bash
-(crontab -l 2>/dev/null; echo '0 3 * * * certbot renew --quiet && cp -L /etc/letsencrypt/live/your-domain.com/fullchain.pem /opt/pet/certs/ && cp -L /etc/letsencrypt/live/your-domain.com/privkey.pem /opt/pet/certs/ && docker restart class-pet-frontend') | crontab -
+(crontab -l 2>/dev/null; echo '0 3 * * * certbot renew --quiet && systemctl reload nginx') | crontab -
 ```
 
 ---
@@ -245,7 +251,7 @@ Let's Encrypt 证书有效期 90 天，设置定时任务自动续期：
 | 变量 | 必填 | 默认值 | 说明 |
 |------|:--:|------|------|
 | `AI_API_KEY` | ✅ | 无 | AI 大模型 API 密钥 |
-| `FRONTEND_URL` | ✅ | `http://localhost` | 前端访问地址，影响 CORS 和邀请链接 |
+| `FRONTEND_URL` | ✅ | `http://localhost:3000` | 前端访问地址，影响 CORS 和邀请链接 |
 | `JWT_SECRET` | ❌ | 内置默认值 | JWT 签名密钥，生产环境建议修改 |
 | `JWT_EXPIRES_IN` | ❌ | `7d` | 登录有效期 |
 | `AI_BASE_URL` | ❌ | `https://ark.cn-beijing.volces.com/api/v3` | AI API 地址 |
@@ -280,9 +286,7 @@ docker compose start
 ### 查看日志
 
 ```bash
-docker compose logs -f          # 实时查看所有日志
-docker compose logs backend     # 只看后端
-docker compose logs frontend    # 只看前端
+docker compose logs -f
 ```
 
 ### 重启系统
@@ -305,49 +309,33 @@ docker compose down             # 停止并删除容器
 如果以后换域名，需要改 3 处：
 
 1. **重新申请证书**：`certbot certonly --standalone -d 新域名`
-2. **复制新证书**：`cp -L /etc/letsencrypt/live/新域名/*.pem /opt/pet/certs/`
-3. **修改 docker-compose.yml**：`FRONTEND_URL` 改为新域名
-
-然后 `docker compose up -d` 重启。
+2. **更新 Nginx 配置**：修改 `/etc/nginx/sites-available/pet` 中的域名和证书路径，`systemctl reload nginx`
+3. **修改 docker-compose.yml**：`FRONTEND_URL` 改为新域名，`docker compose up -d`
 
 ---
 
 ## 常见问题
 
-### Q: 前端容器一直重启？
-
-```bash
-docker logs class-pet-frontend --tail 20
-```
-
-常见原因：`/opt/pet/certs/` 下的证书文件损坏或格式错误。重新复制证书即可：
-
-```bash
-cp -L /etc/letsencrypt/live/your-domain.com/fullchain.pem /opt/pet/certs/
-cp -L /etc/letsencrypt/live/your-domain.com/privkey.pem /opt/pet/certs/
-docker restart class-pet-frontend
-```
-
 ### Q: 页面打开了但 API 报 500 错误？
 
 ```bash
-docker logs class-pet-backend --tail 30
+docker logs class-pet --tail 30
 ```
 
 常见原因：数据库未初始化。删除数据库文件让容器重新初始化：
 
 ```bash
 rm -f /opt/pet/data/database.sqlite
-docker compose restart backend
+docker compose restart
 ```
 
 ### Q: 端口被占用？
 
 ```bash
-# 查看谁占用了 80 端口
-lsof -i :80
+# 查看谁占用了 3000 端口
+lsof -i :3000
 
-# 修改 docker-compose.yml 中的端口映射，比如改成 8080:80
+# 修改 docker-compose.yml 中的端口映射，比如改成 8080:3000
 ```
 
 ### Q: 如何重置所有数据？
@@ -362,7 +350,6 @@ docker compose up -d
 
 ## 镜像地址
 
-| 服务 | 镜像 |
+| 镜像 | 地址 |
 |------|------|
-| 后端 | `registry.cn-hangzhou.aliyuncs.com/myfdocker/pet-backend:latest` |
-| 前端 | `registry.cn-hangzhou.aliyuncs.com/myfdocker/pet-frontend:latest` |
+| pet | `registry.cn-hangzhou.aliyuncs.com/myfdocker/pet:latest` |

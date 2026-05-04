@@ -110,9 +110,15 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: '班级宠物养成系统运行中' });
 });
 
-// 404 处理
-app.use((req, res) => {
-  res.status(404).json({ error: '未找到请求的资源' });
+// 前端静态文件（生产环境）
+app.use(express.static(path.join(__dirname, '../public')));
+
+// SPA fallback：非 API 请求都返回 index.html
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: '未找到请求的资源' });
+  }
+  res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 // 错误处理
