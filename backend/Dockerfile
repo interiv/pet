@@ -13,11 +13,14 @@ WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
 COPY package*.json ./
 COPY src ./src
+COPY scripts ./scripts
 
 RUN mkdir -p /app/data
 
 COPY .env* ./
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 3000
 
-CMD ["npm", "start"]
+ENTRYPOINT ["/docker-entrypoint.sh"]

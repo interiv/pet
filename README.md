@@ -119,53 +119,45 @@ pet/
 
 ## 快速开始
 
-### 环境要求
+### 方式一：Docker 部署（推荐）
 
-- Node.js >= 16.x
-- npm >= 8.x
+详见 [docker.md](./docker.md)
 
-### 安装步骤
+```bash
+# 1. 创建部署目录
+mkdir -p /opt/pet && cd /opt/pet
+
+# 2. 下载 docker-compose.yml（或从项目复制）
+# 3. 拉取镜像并启动
+docker compose pull
+docker compose up -d
+
+# 4. 访问 http://localhost
+```
+
+### 方式二：本地开发
+
+#### 环境要求
+
+- Node.js >= 18.x
+- npm >= 9.x
 
 #### 后端
 
 ```bash
 cd backend
-
-# 安装依赖
 npm install
-
-# 配置环境变量
 cp .env.example .env
-# 编辑 .env 文件，填入 AI API 密钥等配置
-
-# 初始化数据库
-node scripts/init_db.js
-
-# 启动开发服务器
-npm run dev
+# 编辑 .env 填入 AI_API_KEY 等配置
+npm run dev        # http://localhost:3000
 ```
 
 #### 前端
 
 ```bash
 cd frontend
-
-# 安装依赖
 npm install
-
-# 启动开发服务器
-npm run dev
-```
-
-### Docker 部署
-
-```bash
-# 使用 docker-compose 启动
-docker-compose up -d
-
-# 访问系统
-# 前端：http://localhost
-# 后端 API：http://localhost/api
+npm run dev        # http://localhost:5173
 ```
 
 ## 环境变量
@@ -173,19 +165,19 @@ docker-compose up -d
 ```bash
 # 服务器配置
 PORT=3000
-NODE_ENV=development
+NODE_ENV=production
 
 # JWT 配置
 JWT_SECRET=your-secret-key
 JWT_EXPIRES_IN=7d
 
 # AI 服务配置
-AI_API_ENDPOINT=https://api.example.com/v1
-AI_API_KEY=your-ai-api-key
-AI_MODEL=gpt-3.5-turbo
+AI_API_KEY=your-api-key
+AI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+AI_MODEL=doubao-seed-2-0-pro-260215
 
-# 前端地址
-FRONTEND_URL=http://localhost:5173
+# 前端地址（用于 CORS 和邀请链接）
+FRONTEND_URL=https://your-domain.com
 ```
 
 ## 游戏说明
