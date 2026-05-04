@@ -103,7 +103,7 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
     `).all(boss.id);
 
     const totalDamage = participants.reduce((sum, p) => sum + p.damage_dealt, 0);
-    const progress = Math.round((totalDamage / boss.boss_max_hp) * 100);
+    const progress = Math.round((totalDamage / boss.boss_max_hp) * 1000) / 10;
 
     const myAnswerCount = db.prepare(`
       SELECT COUNT(*) as count FROM boss_battle_answers
@@ -185,7 +185,7 @@ router.get('/history/:classId', authenticateToken, (req, res) => {
       return {
         ...boss,
         current_hp: Math.max(0, boss.boss_max_hp - totalDamage),
-        progress: Math.min(100, Math.round((totalDamage / boss.boss_max_hp) * 100)),
+        progress: Math.min(100, Math.round((totalDamage / boss.boss_max_hp) * 1000) / 10),
         participant_count: participants.length,
         total_damage: totalDamage,
         participants: participantsWithRewards.slice(0, 20),

@@ -1,12 +1,12 @@
-FROM docker.m.daocloud.io/library/node:20-slim AS builder
+FROM docker.m.daocloud.io/library/node:25.9-slim AS builder
 
 WORKDIR /app
 
 COPY package*.json ./
 
-RUN npm ci --registry=https://registry.npmmirror.com --build-from-source=false || npm install --registry=https://registry.npmmirror.com --build-from-source=false
+RUN npm ci --registry=https://registry.npmmirror.com || npm install --registry=https://registry.npmmirror.com
 
-FROM docker.m.daocloud.io/library/node:20-slim AS production
+FROM docker.m.daocloud.io/library/node:25.9-slim AS production
 
 WORKDIR /app
 
