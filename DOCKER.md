@@ -4,6 +4,24 @@
 
 ---
 
+## 最快部署：一键脚本
+
+```bash
+curl -O https://raw.githubusercontent.com/interiv/pet/main/deploy.sh
+chmod +x deploy.sh
+./deploy.sh
+```
+
+脚本会引导你输入域名、API Key 等信息，然后自动完成：安装 Docker → 创建配置 → 拉取镜像 → 启动服务 → 配置 HTTPS。
+
+---
+
+## 手动部署
+
+如果你想了解每一步在做什么，或者脚本无法使用，按以下步骤操作。
+
+---
+
 ## 概述
 
 只有一个容器，Express 同时提供 API 和前端页面：
@@ -75,10 +93,10 @@ mkdir -p /opt/pet && cd /opt/pet
 ```bash
 cat > .env << 'EOF'
 # 必填：AI API 密钥（用于作业生成和批改）
-AI_API_KEY=你的AI密钥
+AI_API_KEY=你的豆包大模型API密钥
 
 # 可选：JWT 签名密钥（建议改成随机字符串）
-JWT_SECRET=改成你自己的随机字符串
+JWT_SECRET=class-pet-game-secret-key-2024
 EOF
 ```
 
@@ -94,7 +112,7 @@ services:
     container_name: class-pet
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000

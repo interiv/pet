@@ -50,6 +50,10 @@
 
 ```
 pet/
+├── Dockerfile              # Docker 镜像构建
+├── docker-compose.yml      # 本地开发编排
+├── deploy.sh               # 一键部署脚本
+├── DOCKER.md               # 部署文档
 ├── backend/
 │   ├── src/
 │   │   ├── config/          # 数据库配置
@@ -119,21 +123,17 @@ pet/
 
 ## 快速开始
 
-### 方式一：Docker 部署（推荐）
-
-详见 [docker.md](./docker.md)
+### 方式一：Docker 一键部署（推荐）
 
 ```bash
-# 1. 创建部署目录
-mkdir -p /opt/pet && cd /opt/pet
-
-# 2. 下载 docker-compose.yml（或从项目复制）
-# 3. 拉取镜像并启动
-docker compose pull
-docker compose up -d
-
-# 4. 访问 http://localhost
+curl -O https://raw.githubusercontent.com/interiv/pet/main/deploy.sh
+chmod +x deploy.sh
+./deploy.sh
 ```
+
+脚本会引导你输入域名、API Key 等信息，自动完成安装 Docker → 拉取镜像 → 启动服务 → 配置 HTTPS。
+
+详细说明见 [DOCKER.md](./DOCKER.md)
 
 ### 方式二：本地开发
 
