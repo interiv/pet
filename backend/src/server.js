@@ -31,6 +31,7 @@ const skillRoutes = require('./routes/skills');
 const bossBattleRoutes = require('./routes/boss-battles');
 const schoolRoutes = require('./routes/schools');
 const aiCoachRoutes = require('./routes/ai-coach');
+const questionBankRoutes = require('./routes/question-bank');
 
 // 初始化数据库
 initDatabase();
@@ -102,6 +103,7 @@ app.use('/api/skills', skillRoutes);
 app.use('/api/boss-battles', bossBattleRoutes);
 app.use('/api/schools', schoolRoutes);
 app.use('/api/ai-coach', aiCoachRoutes);
+app.use('/api/question-bank', questionBankRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {

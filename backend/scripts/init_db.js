@@ -310,8 +310,15 @@ db.exec(`
     source TEXT DEFAULT 'ai',
     usage_count INTEGER DEFAULT 0,
     knowledge_point TEXT,
+    grade_level TEXT,
+    tags TEXT,
+    estimated_time INTEGER DEFAULT 60,
+    default_score REAL DEFAULT 5,
+    is_public INTEGER DEFAULT 1,
+    review_status TEXT DEFAULT 'approved',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    created_by INTEGER
+    created_by INTEGER,
+    updated_at DATETIME
   );
 
   -- ==================== 作业 ====================
@@ -832,6 +839,12 @@ db.exec(`
   -- 题库索引
   CREATE INDEX idx_qb_variant_group ON question_bank(variant_group_id);
   CREATE INDEX idx_qb_subject ON question_bank(subject);
+  CREATE INDEX idx_qb_type ON question_bank(type);
+  CREATE INDEX idx_qb_difficulty ON question_bank(difficulty);
+  CREATE INDEX idx_qb_knowledge_point ON question_bank(knowledge_point);
+  CREATE INDEX idx_qb_grade_level ON question_bank(grade_level);
+  CREATE INDEX idx_qb_is_public ON question_bank(is_public);
+  CREATE INDEX idx_qb_created_by ON question_bank(created_by);
 
   -- 作业题目索引
   CREATE INDEX idx_aq_assignment ON assignment_questions(assignment_id);

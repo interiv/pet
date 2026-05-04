@@ -139,6 +139,26 @@ export const assignmentAPI = {
     api.get(`/assignments/${id}/retry-questions`),
 };
 
+// 题库相关 API
+export const questionBankAPI = {
+  getQuestions: (params?: {
+    page?: number;
+    pageSize?: number;
+    subject?: string;
+    type?: string;
+    difficulty?: string;
+    knowledge_point?: string;
+    grade_level?: string;
+    source?: string;
+    is_public?: number;
+    keyword?: string;
+    sortBy?: string;
+    sortOrder?: string;
+  }) => api.get('/question-bank', { params }),
+
+  getQuestion: (id: number) => api.get(`/question-bank/${id}`),
+};
+
 // 知识点相关 API
 export const knowledgePointAPI = {
   getStats: (params?: { date?: string; days?: number }) => api.get('/knowledge-points', { params }),

@@ -10,6 +10,7 @@ import { ClassTeachingOverview } from './Admin';
 import BossBattleManager from './BossBattleManager';
 import Achievements from './Achievements';
 import LearningDashboard from './LearningDashboard';
+import QuestionBank from './QuestionBank';
 import { useAuthStore } from '../store/authStore';
 
 interface StudyCenterProps {
@@ -83,6 +84,12 @@ const StudyCenter: React.FC<StudyCenterProps> = ({ onNavigate }) => {
       label: 'BOSS战管理',
       icon: <CrownOutlined />,
       children: <BossBattleManager />,
+    },
+    {
+      key: 'question-bank',
+      label: '题库',
+      icon: <BookOutlined />,
+      children: <QuestionBank />,
     },
     {
       key: 'dashboard',
