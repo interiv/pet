@@ -125,6 +125,14 @@ pet/
 
 ### 方式一：Docker 一键部署（推荐）
 
+#### 国内用户（Gitee）
+```bash
+curl -L -O https://gitee.com/interim/pet/raw/main/deploy.sh
+chmod +x deploy.sh
+./deploy.sh
+```
+
+#### 海外用户（GitHub）
 ```bash
 curl -O https://raw.githubusercontent.com/interiv/pet/main/deploy.sh
 chmod +x deploy.sh

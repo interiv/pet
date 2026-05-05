@@ -69,8 +69,60 @@ echo ""
 info "检查 Docker..."
 
 if ! command -v docker &> /dev/null; then
-  warn "Docker 未安装，正在安装..."
-  curl -fsSL https://get.docker.com | bash
+  warn "Docker 未安装，正在使用国内镜像源安装..."
+  
+  # 检测操作系统
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    
+    case "$ID" in
+      ubuntu|debian)
+        info "检测到 Debian/Ubuntu 系统，使用阿里云镜像源安装 Docker..."
+        
+        # 更新包管理器（使用阿里云镜像）
+        apt update -qq
+        
+        # 安装依赖
+        apt install -y -qq apt-transport-https ca-certificates curl gnupg lsb-release
+        
+        # 添加 Docker 官方 GPG 密钥（使用阿里云镜像）
+        mkdir -p /etc/apt/keyrings
+        curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null || \
+        curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        
+        # 添加 Docker 仓库（使用阿里云镜像）
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://mirrors.aliyun.com/docker-ce/linux/$(. /etc/os-release && echo "$ID") $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+        
+        # 更新包索引
+        apt update -qq
+        
+        # 安装 Docker
+        apt install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
+        ;;
+        
+      centos|rhel|fedora)
+        info "检测到 RHEL/CentOS 系统，使用阿里云镜像源安装 Docker..."
+        
+        # 安装依赖
+        yum install -y -q yum-utils
+        
+        # 添加 Docker 仓库（使用阿里云镜像）
+        yum-config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
+        
+        # 安装 Docker
+        yum install -y -q docker-ce docker-ce-cli containerd.io docker-compose-plugin
+        ;;
+        
+      *)
+        warn "未识别的系统，尝试使用官方脚本安装（使用国内镜像加速）..."
+        curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun
+        ;;
+    esac
+  else
+    warn "无法检测系统类型，使用官方脚本安装..."
+    curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun
+  fi
+  
   log "Docker 安装完成"
 else
   log "Docker 已安装: $(docker --version)"
@@ -80,6 +132,15 @@ if ! docker info &> /dev/null; then
   warn "Docker 未运行，正在启动..."
   systemctl enable docker
   systemctl start docker
+  
+  # 等待 Docker 完全启动
+  info "等待 Docker 服务启动..."
+  for i in $(seq 1 30); do
+    if docker info &> /dev/null; then
+      break
+    fi
+    sleep 1
+  done
 fi
 
 if docker info &> /dev/null; then
