@@ -995,11 +995,13 @@ petsData.forEach((p) => {
 
   if (fs.existsSync(speciesDir)) {
     for (const stage of stages) {
-      let imgPath = path.join(speciesDir, `${stage}.png`);
       let thumbPath = path.join(speciesDir, `${stage}_thumb.png`);
-      if (fs.existsSync(imgPath)) {
-        imageUrls[stage] = `/images/pets/${p.name}/${stage}.png`;
-      } else if (fs.existsSync(thumbPath)) {
+      let imgPath = path.join(speciesDir, `${stage}.png`);
+      if (fs.existsSync(thumbPath)) {
+        // 优先使用缩略图
+        imageUrls[stage] = `/images/pets/${p.name}/${stage}_thumb.png`;
+      } else if (fs.existsSync(imgPath)) {
+        // 兼容旧数据，支持大图
         imageUrls[stage] = `/images/pets/${p.name}/${stage}.png`;
       }
     }

@@ -78,6 +78,8 @@ app.use(express.urlencoded({ extended: true }));
 
 // 静态文件目录（上传的文件和前端图片）
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// 优先从 public/images 读取图片（生产环境），如果不存在则从原路径读取
+app.use('/images', express.static(path.join(__dirname, '../public/images')));
 app.use('/images', express.static(path.join(__dirname, '../../frontend/public/images')));
 
 // API 路由

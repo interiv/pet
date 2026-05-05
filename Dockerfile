@@ -28,6 +28,8 @@ COPY backend/src ./src
 COPY backend/scripts ./scripts
 COPY --from=frontend-builder /app/frontend/dist ./public
 
+# 复制图片文件到正确的位置，同时满足两种静态文件服务路径
+COPY frontend/public/images ./public/images
 COPY frontend/public/images ./frontend/public/images
 
 RUN mkdir -p /app/data
