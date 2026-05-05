@@ -294,6 +294,8 @@ export const adminAPI = {
   updateStudent: (id: number, data: any) => api.put(`/admin/students/${id}`, data),
   adjustStudentGold: (id: number, amount: number, reason?: string) => api.post(`/admin/students/${id}/gold`, { amount, reason }),
   deleteStudent: (id: number, action: 'delete' | 'disable') => api.delete(`/admin/students/${id}`, { data: { action } }),
+  importStudents: (classId: number, students: any[]) => api.post('/admin/students/import', { class_id: classId, students }),
+  getImportTemplate: (format?: 'json' | 'csv') => api.get('/admin/students/import-template', { params: { format } }),
 
   // 班级管理
   getClasses: () => api.get('/admin/classes'),

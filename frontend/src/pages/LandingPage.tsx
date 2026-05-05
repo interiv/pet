@@ -29,13 +29,22 @@ const elementColors: Record<string, string> = {
   '风系': '#52c41a', '土系': '#d48806', '光系': '#faad14', '暗系': '#722ed1',
 };
 
-const getSpeciesImage = (imageUrls: string | object | null): string => {
+const getSpeciesImage = (imageUrls: string | object | null, speciesName: string = ''): string => {
   try {
     const urls = typeof imageUrls === 'string' ? JSON.parse(imageUrls) : imageUrls;
-    if (!urls || typeof urls !== 'object') return '';
-    const values = Object.values(urls) as string[];
-    return (values[0] || '').replace(/\.png$/, '_thumb.png');
-  } catch { return ''; }
+    if (urls && typeof urls === 'object' && Object.keys(urls).length > 0) {
+      const values = Object.values(urls) as string[];
+      const img = (values[0] || '');
+      if (img && !img.includes('_thumb.png')) {
+        return img.replace(/\.png$/, '_thumb.png');
+      }
+      if (img) return img;
+    }
+  } catch { }
+  if (speciesName) {
+    return `/images/pets/${speciesName}/成年期_thumb.png`;
+  }
+  return '';
 };
 
 const LandingPage: React.FC = () => {
@@ -250,7 +259,7 @@ const LandingPage: React.FC = () => {
                     <Card hoverable style={{ borderRadius: 12, overflow: 'hidden', height: '100%' }}
                       cover={
                         <div style={{ height: isMobile ? 100 : 160, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(135deg, #f5f7fa 0%, #e8ecf1 100%)', padding: isMobile ? 10 : 16 }}>
-                          <img alt={sp.name} src={getSpeciesImage(sp.image_urls)} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                          <img alt={sp.name} src={getSpeciesImage(sp.image_urls, sp.name)} style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                         </div>
                       }
                       styles={{ body: { padding: isMobile ? '8px 10px' : '12px 16px' } }}

@@ -1636,6 +1636,145 @@ router.get('/shop-records', authenticateToken, (req, res) => {
   }
 });
 
+// ==================== 教师端一键导入学生 ====================
+
+// 教师批量导入学生（班主任或管理员）
+router.post('/students/import', authenticateToken, async (req, res) => {
+  try {
+    const bcrypt = require('bcryptjs');
+    const { class_id, students } = req.body;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    // 验证班级 ID
+    const classId = parseInt(class_id, 10);
+    if (!classId) return res.status(400).json({ error: '班级 ID 无效' });
+
+    // 验证班级是否存在
+    const cls = db.prepare('SELECT * FROM classes WHERE id = ?').get(classId);
+    if (!cls) return res.status(404).json({ error: '班级不存在' });
+
+    // 权限检查：班主任或管理员
+    if (userRole === 'teacher') {
+      const isHeadTeacher = db.prepare(`
+        SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'
+      `).get(userId, classId);
+      if (!isHeadTeacher) {
+        return res.status(403).json({ error: '需要班主任权限才能导入学生' });
+      }
+    } else if (userRole !== 'admin') {
+      return res.status(403).json({ error: '权限不足' });
+    }
+
+    // 验证学生列表
+    if (!Array.isArray(students) || students.length === 0) {
+      return res.status(400).json({ error: '学生列表不能为空' });
+    }
+
+    const results = {
+      success: [],
+      failed: [],
+      skipped: []
+    };
+
+    const importStudent = db.transaction((student) => {
+      const { username, password, email, real_name } = student;
+
+      // 验证必填字段
+      if (!username || !password) {
+        results.failed.push({ ...student, error: '用户名和密码不能为空' });
+        return;
+      }
+
+      // 检查用户名是否已存在
+      const existingUser = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+      if (existingUser) {
+        results.skipped.push({ ...student, error: '用户名已存在' });
+        return;
+      }
+
+      // 密码加密
+      const passwordHash = bcrypt.hashSync(password, 10);
+
+      // 创建用户
+      const result = db.prepare(`
+        INSERT INTO users (username, password_hash, email, role, class_id, status, created_at)
+        VALUES (?, ?, ?, 'student', ?, 'active', datetime('now'))
+      `).run(username, passwordHash, email || null, classId);
+
+      // 如果有真实姓名字段，可以保存到某个地方
+      // 这里可以扩展
+
+      results.success.push({
+        id: result.lastInsertRowid,
+        username,
+        email: email || null,
+        real_name: real_name || null
+      });
+    });
+
+    // 导入学生
+    students.forEach((student) => {
+      try {
+        importStudent(student);
+      } catch (e) {
+        results.failed.push({ ...student, error: e.message });
+      }
+    });
+
+    // 更新班级学生数
+    const studentCount = db.prepare('SELECT COUNT(*) as count FROM users WHERE role = ? AND class_id = ?').get('student', classId);
+    db.prepare('UPDATE classes SET student_count = ? WHERE id = ?').run(studentCount.count, classId);
+
+    res.json({
+      message: `导入完成：成功 ${results.success.length} 个，失败 ${results.failed.length} 个，跳过 ${results.skipped.length} 个`,
+      results
+    });
+  } catch (error) {
+    console.error('批量导入学生失败:', error);
+    res.status(500).json({ error: '导入失败: ' + error.message });
+  }
+});
+
+// 教师下载导入模板（班主任或管理员）
+router.get('/students/import-template', authenticateToken, (req, res) => {
+  try {
+    const { format = 'json' } = req.query;
+
+    if (format === 'json') {
+      const template = [
+        {
+          username: 'student1',
+          password: '123456',
+          email: 'student1@example.com',
+          real_name: '张三'
+        },
+        {
+          username: 'student2',
+          password: '123456',
+          email: 'student2@example.com',
+          real_name: '李四'
+        }
+      ];
+      res.json({ template });
+    } else if (format === 'csv') {
+      const header = 'username,password,email,real_name\n';
+      const rows = [
+        'student1,123456,student1@example.com,张三',
+        'student2,123456,student2@example.com,李四'
+      ].join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename=student_import_template.csv');
+      res.send(header + rows);
+    } else {
+      res.status(400).json({ error: '不支持的格式，请使用 json 或 csv' });
+    }
+  } catch (error) {
+    console.error('获取导入模板失败:', error);
+    res.status(500).json({ error: '获取模板失败' });
+  }
+});
+
 // ==================== 网站设置 ====================
 
 function ensureSettingsTable() {

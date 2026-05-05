@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge, Switch, Alert, Empty, Spin, Divider, Progress } from 'antd';
-import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined, LineChartOutlined, FireOutlined, ClearOutlined } from '@ant-design/icons';
+import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined, LineChartOutlined, FireOutlined, ClearOutlined, UploadOutlined, DownloadOutlined } from '@ant-design/icons';
 import { adminAPI, schoolAPI, assignmentAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import ClassInvitationManager from './ClassInvitationManager';
@@ -800,10 +800,12 @@ const StudentManagement: React.FC = () => {
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [goldModalVisible, setGoldModalVisible] = useState(false);
+  const [importModalVisible, setImportModalVisible] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [studentDetail, setStudentDetail] = useState<any>(null);
   const [form] = Form.useForm();
   const [goldForm] = Form.useForm();
+  const [importForm] = Form.useForm();
 
   useEffect(() => {
     loadClasses();
@@ -828,6 +830,92 @@ const StudentManagement: React.FC = () => {
       message.error('加载学生列表失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const getManageableClasses = () => {
+    if (isAdmin) return classes;
+    const myClassIds = (user as any)?.teacher_classes?.filter((c: any) => c.class_role === 'head_teacher').map((c: any) => c.class_id) || [];
+    return classes.filter(c => myClassIds.includes(c.id));
+  };
+
+  const handleDownloadTemplate = async (format: 'json' | 'csv') => {
+    try {
+      if (format === 'csv') {
+        const res = await adminAPI.getImportTemplate('csv');
+        const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'student_import_template.csv';
+        link.click();
+      } else {
+        const res = await adminAPI.getImportTemplate('json');
+        const dataStr = JSON.stringify(res.data.template, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'student_import_template.json';
+        link.click();
+      }
+      message.success('模板下载成功');
+    } catch (error) {
+      message.error('下载模板失败');
+    }
+  };
+
+  const handleFileUpload = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        let students;
+        if (file.name.endsWith('.json')) {
+          students = JSON.parse(e.target?.result as string);
+        } else if (file.name.endsWith('.csv')) {
+          const csv = e.target?.result as string;
+          const lines = csv.split('\n');
+          const headers = lines[0].split(',').map(h => h.trim());
+          students = lines.slice(1).filter(line => line.trim()).map(line => {
+            const values = line.split(',').map(v => v.trim());
+            const student: any = {};
+            headers.forEach((header, index) => {
+              student[header] = values[index] || '';
+            });
+            return student;
+          });
+        } else {
+          throw new Error('不支持的文件格式');
+        }
+        importForm.setFieldValue('students', JSON.stringify(students, null, 2));
+        message.success(`成功解析 ${students.length} 个学生`);
+      } catch (error) {
+        message.error('解析文件失败，请检查文件格式');
+      }
+    };
+    reader.readAsText(file);
+    return false;
+  };
+
+  const handleImport = async () => {
+    try {
+      const values = await importForm.validateFields();
+      const classId = values.class_id;
+      let students;
+      try {
+        students = JSON.parse(values.students);
+      } catch {
+        throw new Error('学生数据格式错误');
+      }
+      
+      if (!Array.isArray(students) || students.length === 0) {
+        throw new Error('请至少添加一个学生');
+      }
+
+      const res = await adminAPI.importStudents(classId, students);
+      message.success(`导入完成：成功 ${res.data.success} 个，失败 ${res.data.failed} 个，跳过 ${res.data.skipped} 个`);
+      setImportModalVisible(false);
+      loadStudents();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || error.message || '导入失败');
     }
   };
 
@@ -936,7 +1024,7 @@ const StudentManagement: React.FC = () => {
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
-        <Space>
+        <Space wrap>
           <Input.Search placeholder="搜索学生" onSearch={setSearchText} style={{ width: 200 }} allowClear />
           <Select placeholder="筛选班级" style={{ width: 150 }} allowClear value={classFilter} onChange={setClassFilter}>
             {classes.map(c => <Select.Option key={c.id} value={c.id}>{c.name}</Select.Option>)}
@@ -946,6 +1034,9 @@ const StudentManagement: React.FC = () => {
             <Select.Option value="disabled">已禁用</Select.Option>
           </Select>
           <Button onClick={loadStudents}>刷新</Button>
+          {getManageableClasses().length > 0 && (
+            <Button type="primary" icon={<UploadOutlined />} onClick={() => setImportModalVisible(true)}>导入学生</Button>
+          )}
         </Space>
       </div>
       <Table columns={columns} dataSource={students} rowKey="id" loading={loading} pagination={pagination} scroll={{ x: true }} />
@@ -1018,6 +1109,55 @@ const StudentManagement: React.FC = () => {
             <InputNumber style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="reason" label="原因（可选）"><Input.TextArea /></Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal 
+        title="批量导入学生" 
+        open={importModalVisible} 
+        onOk={handleImport} 
+        onCancel={() => { setImportModalVisible(false); importForm.resetFields(); }}
+        width={isMobile ? '95vw' : 700}
+      >
+        <Form form={importForm} layout="vertical">
+          <Form.Item 
+            name="class_id" 
+            label="选择班级" 
+            rules={[{ required: true, message: '请选择班级' }]}
+          >
+            <Select placeholder="请选择班级">
+              {getManageableClasses().map(c => <Select.Option key={c.id} value={c.id}>{c.name}</Select.Option>)}
+            </Select>
+          </Form.Item>
+          
+          <div style={{ marginBottom: 16 }}>
+            <Divider orientation="left">下载模板</Divider>
+            <Space>
+              <Button icon={<DownloadOutlined />} onClick={() => handleDownloadTemplate('json')}>JSON模板</Button>
+              <Button icon={<DownloadOutlined />} onClick={() => handleDownloadTemplate('csv')}>CSV模板</Button>
+            </Space>
+          </div>
+          
+          <Form.Item 
+            name="students" 
+            label="学生数据" 
+            rules={[{ required: true, message: '请输入学生数据' }]}
+            extra="支持 JSON 数组或 CSV 文件导入。每行一个学生，字段包括：username, password, email, real_name"
+          >
+            <Input.TextArea 
+              rows={10} 
+              placeholder='[{"username": "student1", "password": "123456", "email": "student1@example.com", "real_name": "张三"}]'
+            />
+          </Form.Item>
+          
+          <div style={{ marginBottom: 16 }}>
+            <Divider orientation="left">或上传文件</Divider>
+            <input 
+              type="file" 
+              accept=".json,.csv" 
+              onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+            />
+          </div>
         </Form>
       </Modal>
     </div>
