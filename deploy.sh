@@ -255,10 +255,38 @@ if [ -n "$DOMAIN" ]; then
 
     if ! systemctl is-active --quiet nginx; then
       warn "Nginx 未运行，正在启动..."
+      
+      # 先测试配置是否有问题
+      if nginx -t 2>&1; then
+        log "Nginx 配置正常"
+      else
+        warn "Nginx 配置有错误，尝试修复..."
+        # 移除默认站点配置（可能冲突）
+        rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+        # 再次测试
+        nginx -t 2>&1 || {
+          err "Nginx 配置仍有错误，请手动检查"
+          nginx -t 2>&1
+        }
+      fi
+      
       systemctl enable nginx
-      systemctl start nginx
+      if systemctl start nginx; then
+        log "Nginx 启动成功"
+      else
+        err "Nginx 启动失败，查看详细信息："
+        systemctl status nginx.service --no-pager -l || true
+        journalctl -xeu nginx.service --no-pager -n 20 || true
+        echo ""
+        warn "你可以尝试手动修复后继续执行脚本"
+        read -p "是否继续执行证书申请？(y/n) " CONTINUE_HTTPS
+        if [ "$CONTINUE_HTTPS" != "y" ] && [ "$CONTINUE_HTTPS" != "Y" ]; then
+          exit 1
+        fi
+      fi
+    else
+      log "Nginx 运行正常"
     fi
-    log "Nginx 运行正常"
 
     info "申请 SSL 证书（需要 80 端口可用）..."
     
