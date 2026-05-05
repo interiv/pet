@@ -840,9 +840,21 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  -- ==================== AI 报告缓存 ====================
+  CREATE TABLE ai_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    report_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    context TEXT,
+    generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, report_type),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
 `);
 
-console.log('   ✓ 表结构创建成功 (50张表)\n');
+console.log('   ✓ 表结构创建成功 (51张表)\n');
 
 // ============================================================
 // 4. 创建索引

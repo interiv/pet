@@ -28,6 +28,8 @@ COPY backend/src ./src
 COPY backend/scripts ./scripts
 COPY --from=frontend-builder /app/frontend/dist ./public
 
+COPY frontend/public/images ./frontend/public/images
+
 RUN mkdir -p /app/data
 
 COPY backend/.env* ./

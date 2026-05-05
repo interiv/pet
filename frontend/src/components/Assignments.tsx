@@ -178,13 +178,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   };
 
   const loadAISettings = async () => {
-    try {
-      const res = await adminAPI.getSiteSettings();
-      const timeout = parseInt(res.data.settings?.ai_timeout) || 300;
-      setAiTimeout(timeout);
-    } catch (e) {
-      // 静默失败，使用默认值
-    }
+    setAiTimeout(300);
   };
 
   const loadGenLimit = async () => {
