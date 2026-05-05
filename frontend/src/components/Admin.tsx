@@ -1034,7 +1034,7 @@ const StudentManagement: React.FC = () => {
             <Select.Option value="disabled">已禁用</Select.Option>
           </Select>
           <Button onClick={loadStudents}>刷新</Button>
-          {getManageableClasses().length > 0 && (
+          {(isAdmin || (user?.role === 'teacher' && (user as any)?.teacher_classes?.some((c: any) => c.class_role === 'head_teacher'))) && (
             <Button type="primary" icon={<UploadOutlined />} onClick={() => setImportModalVisible(true)}>导入学生</Button>
           )}
         </Space>
