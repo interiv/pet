@@ -224,6 +224,19 @@ if [ -n "$DOMAIN" ]; then
   if [ "$SETUP_HTTPS" = "y" ] || [ "$SETUP_HTTPS" = "Y" ]; then
     info "检查 Nginx 和 Certbot..."
 
+    # 先停止容器，释放端口（支持二次执行）
+    if docker ps | grep -q "class-pet"; then
+      warn "检测到运行中的容器，正在停止以释放端口..."
+      docker compose stop
+      log "容器已停止"
+    fi
+
+    # 停止可能占用 80 端口的 Nginx
+    if systemctl is-active --quiet nginx; then
+      info "暂时停止 Nginx 以释放 80 端口..."
+      systemctl stop nginx
+    fi
+
     if ! command -v nginx &> /dev/null; then
       warn "Nginx 未安装，正在安装..."
       apt update -qq && apt install -y -qq nginx
@@ -248,7 +261,18 @@ if [ -n "$DOMAIN" ]; then
     log "Nginx 运行正常"
 
     info "申请 SSL 证书（需要 80 端口可用）..."
-    docker compose stop
+    
+    # 确保 80 端口空闲
+    systemctl stop nginx 2>/dev/null || true
+    sleep 2
+    
+    # 检查 80 端口是否被占用
+    if ss -tlnp | grep -q ':80 '; then
+      err "80 端口仍被占用，请手动关闭占用 80 端口的程序"
+      ss -tlnp | grep ':80 '
+      exit 1
+    fi
+    
     certbot certonly --standalone -d "${DOMAIN}" --agree-tos --email admin@${DOMAIN} --non-interactive || {
       warn "自动申请失败，请手动执行: certbot certonly --standalone -d ${DOMAIN}"
     }
