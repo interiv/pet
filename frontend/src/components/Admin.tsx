@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge, Switch, Alert, Empty, Spin, Divider, Progress } from 'antd';
-import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined, LineChartOutlined, FireOutlined, ClearOutlined, UploadOutlined, DownloadOutlined } from '@ant-design/icons';
+import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined, LineChartOutlined, FireOutlined, ClearOutlined, UploadOutlined, DownloadOutlined } from '@ant-design/icons';
 import { adminAPI, schoolAPI, assignmentAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import ClassInvitationManager from './ClassInvitationManager';
