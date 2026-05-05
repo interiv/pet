@@ -256,18 +256,27 @@ if [ -n "$DOMAIN" ]; then
     if ! systemctl is-active --quiet nginx; then
       warn "Nginx 未运行，正在启动..."
       
-      # 先测试配置是否有问题
+      # 先移除可能存在的旧 HTTPS 配置（证书可能不存在）
+      rm -f /etc/nginx/sites-enabled/pet 2>/dev/null || true
+      rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+      
+      # 测试配置
       if nginx -t 2>&1; then
         log "Nginx 配置正常"
       else
         warn "Nginx 配置有错误，尝试修复..."
-        # 移除默认站点配置（可能冲突）
-        rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+        # 显示错误详情
+        nginx -t 2>&1
+        echo ""
+        warn "尝试清理所有站点配置..."
+        rm -f /etc/nginx/sites-enabled/* 2>/dev/null || true
         # 再次测试
-        nginx -t 2>&1 || {
+        if nginx -t 2>&1; then
+          log "Nginx 配置修复成功"
+        else
           err "Nginx 配置仍有错误，请手动检查"
           nginx -t 2>&1
-        }
+        fi
       fi
       
       systemctl enable nginx
