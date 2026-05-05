@@ -995,8 +995,11 @@ petsData.forEach((p) => {
 
   if (fs.existsSync(speciesDir)) {
     for (const stage of stages) {
-      const imgPath = path.join(speciesDir, `${stage}.png`);
+      let imgPath = path.join(speciesDir, `${stage}.png`);
+      let thumbPath = path.join(speciesDir, `${stage}_thumb.png`);
       if (fs.existsSync(imgPath)) {
+        imageUrls[stage] = `/images/pets/${p.name}/${stage}.png`;
+      } else if (fs.existsSync(thumbPath)) {
         imageUrls[stage] = `/images/pets/${p.name}/${stage}.png`;
       }
     }
