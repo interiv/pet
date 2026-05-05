@@ -363,7 +363,23 @@ NGINX_EOF
 
     ln -sf /etc/nginx/sites-available/pet /etc/nginx/sites-enabled/
     rm -f /etc/nginx/sites-enabled/default
-    nginx -t && systemctl reload nginx
+    
+    # 测试配置
+    if nginx -t; then
+      log "Nginx 配置测试通过"
+      
+      # 确保 Nginx 运行（申请证书前停止了）
+      if systemctl is-active --quiet nginx; then
+        systemctl reload nginx
+        log "Nginx 配置已重载"
+      else
+        systemctl start nginx
+        log "Nginx 已启动"
+      fi
+    else
+      err "Nginx 配置测试失败"
+      nginx -t 2>&1
+    fi
 
     # 更新 FRONTEND_URL
     sed -i "s|FRONTEND_URL=.*|FRONTEND_URL=https://${DOMAIN}|" docker-compose.yml
