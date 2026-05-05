@@ -357,6 +357,8 @@ export const adminAPI = {
   getTokenUsageDashboard: () => api.get('/admin/token-usage/dashboard'),
   getTokenUsageRecords: (params?: { user_id?: number; date?: string; page?: number; pageSize?: number }) => api.get('/admin/token-usage/records', { params }),
   getMyGenLimit: () => api.get('/admin/token-usage/my-limit'),
+
+  cleanAllData: () => api.post('/admin/clean-all-data'),
 };
 
 // 装备部件相关 API

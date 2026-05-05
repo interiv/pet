@@ -4,9 +4,8 @@
  * 数据库统一初始化脚本
  * 
  * 用法:
- *   node scripts/setup.js                    完整初始化（数据库+班级+成就）
+ *   node scripts/setup.js                    完整初始化（数据库+成就）
  *   node scripts/setup.js --db               仅初始化数据库
- *   node scripts/setup.js --classes          仅设置班级
  *   node scripts/setup.js --achievements     仅初始化成就
  *   node scripts/setup.js --db --test-data   初始化数据库并创建丰富测试数据
  *   node scripts/setup.js --achievements --force  强制覆盖成就数据
@@ -21,7 +20,6 @@ const scriptsDir = __dirname;
 const args = process.argv.slice(2);
 
 const runDb = args.includes('--db') || args.length === 0;
-const runClasses = args.includes('--classes') || args.length === 0;
 const runAchievements = args.includes('--achievements') || args.length === 0;
 const runClean = args.includes('--clean');
 
@@ -40,7 +38,6 @@ if (runClean || runDb) {
         console.log(`⚠  无法删除 ${f}，可能被其他进程占用`);
       }
     });
-    // Also delete WAL and SHM files
     ['-wal', '-shm'].forEach(ext => {
       const walPath = path.join(dataDir, `database.sqlite${ext}`);
       if (fs.existsSync(walPath)) {
@@ -51,28 +48,21 @@ if (runClean || runDb) {
   }
 }
 
-if (runClean && !runDb && !runClasses && !runAchievements) {
+if (runClean && !runDb && !runAchievements) {
   process.exit(0);
 }
 
 if (runDb) {
   console.log('\n========================================');
-  console.log('步骤 1: 初始化数据库');
+  console.log('步骤 1: 初始化数据库（含班级和师生分配）');
   console.log('========================================\n');
   const dbArgs = args.includes('--test-data') ? ['--test-data'] : [];
   execSync(`node "${path.join(scriptsDir, 'init_db.js')}" ${dbArgs.join(' ')}`, { stdio: 'inherit', cwd: path.join(scriptsDir, '..') });
 }
 
-if (runClasses) {
-  console.log('\n========================================');
-  console.log('步骤 2: 设置班级');
-  console.log('========================================\n');
-  execSync(`node "${path.join(scriptsDir, 'setup_classes.js')}"`, { stdio: 'inherit', cwd: path.join(scriptsDir, '..') });
-}
-
 if (runAchievements) {
   console.log('\n========================================');
-  console.log('步骤 3: 初始化成就');
+  console.log('步骤 2: 初始化成就');
   console.log('========================================\n');
   const achArgs = args.includes('--force') ? ['--force'] : [];
   execSync(`node "${path.join(scriptsDir, 'seed_achievements.js')}" ${achArgs.join(' ')}`, { stdio: 'inherit', cwd: path.join(scriptsDir, '..') });

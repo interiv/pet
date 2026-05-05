@@ -1152,6 +1152,108 @@ async function createBasicUsers() {
     db.prepare('INSERT INTO users (username, password_hash, email, role, status) VALUES (?, ?, ?, ?, ?)').run(username, hashedPassword, `${username}@school.com`, 'student', 'active');
     console.log(`   ✓ ${username} 创建成功`);
   }
+
+  // ============================================================
+  // 8. 创建班级并分配师生
+  // ============================================================
+  console.log('\n8. 创建班级并分配师生...\n');
+
+  const crypto = require('crypto');
+  const usedSlugs = new Set();
+
+  function generateSlug(name) {
+    const base = name
+      .toLowerCase()
+      .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    const suffix = crypto.randomBytes(3).toString('hex');
+    return `${base || 'class'}-${suffix}`;
+  }
+
+  function uniqueSlug(name) {
+    let slug;
+    do {
+      slug = generateSlug(name);
+    } while (usedSlugs.has(slug));
+    usedSlugs.add(slug);
+    return slug;
+  }
+
+  // 班级1班
+  const slug1 = uniqueSlug('1班');
+  const class1Result = db.prepare(`
+    INSERT INTO classes (name, grade, slug, head_teacher_id, student_count, total_exp, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+  `).run('1班', null, slug1, null, 0, 0);
+  const class1Id = class1Result.lastInsertRowid;
+  console.log(`   ✓ 班级"1班"创建成功 (id=${class1Id})`);
+
+  const teacher1 = db.prepare(`SELECT id FROM users WHERE username = 'teacher1'`).get();
+  db.prepare(`UPDATE classes SET head_teacher_id = ? WHERE id = ?`).run(teacher1.id, class1Id);
+  db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'head_teacher')`).run(class1Id, teacher1.id);
+  console.log(`   ✓ teacher1 设为1班班主任`);
+
+  for (let i = 2; i <= 7; i++) {
+    const t = db.prepare(`SELECT id FROM users WHERE username = ?`).get(`teacher${i}`);
+    db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'teacher')`).run(class1Id, t.id);
+  }
+  console.log('   ✓ teacher2~7 加入1班');
+
+  let class1StudentCount = 0;
+  for (let i = 1; i <= 30; i++) {
+    const s = db.prepare(`SELECT id FROM users WHERE username = ?`).get(`student${i}`);
+    db.prepare(`UPDATE users SET class_id = ?, status = 'active' WHERE id = ?`).run(class1Id, s.id);
+    class1StudentCount++;
+  }
+  db.prepare(`UPDATE classes SET student_count = ? WHERE id = ?`).run(class1StudentCount, class1Id);
+  console.log(`   ✓ student1~30 (${class1StudentCount}人) 加入1班`);
+
+  const invite1 = crypto.randomBytes(4).toString('hex').toUpperCase();
+  db.prepare(`
+    INSERT INTO class_invitations (class_id, invitation_code, created_by, role_filter, is_active)
+    VALUES (?, ?, ?, 'any', 1)
+  `).run(class1Id, invite1, teacher1.id);
+  console.log(`   ✓ 1班邀请码: ${invite1}`);
+
+  // 班级2班
+  const slug2 = uniqueSlug('2班');
+  const class2Result = db.prepare(`
+    INSERT INTO classes (name, grade, slug, head_teacher_id, student_count, total_exp, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+  `).run('2班', null, slug2, null, 0, 0);
+  const class2Id = class2Result.lastInsertRowid;
+  console.log(`\n   ✓ 班级"2班"创建成功 (id=${class2Id})`);
+
+  const teacher2 = db.prepare(`SELECT id FROM users WHERE username = 'teacher2'`).get();
+  db.prepare(`UPDATE classes SET head_teacher_id = ? WHERE id = ?`).run(teacher2.id, class2Id);
+  db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'head_teacher')`).run(class2Id, teacher2.id);
+  console.log(`   ✓ teacher2 设为2班班主任`);
+
+  const class2TeacherUsernames = ['teacher1', 'teacher5', 'teacher6', 'teacher7', 'teacher8', 'teacher9'];
+  class2TeacherUsernames.forEach(username => {
+    const t = db.prepare(`SELECT id FROM users WHERE username = ?`).get(username);
+    const existing = db.prepare(`SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ?`).get(class2Id, t.id);
+    if (!existing) {
+      db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'teacher')`).run(class2Id, t.id);
+    }
+  });
+  console.log('   ✓ teacher1,5,6,7,8,9 加入2班');
+
+  let class2StudentCount = 0;
+  for (let i = 31; i <= 50; i++) {
+    const s = db.prepare(`SELECT id FROM users WHERE username = ?`).get(`student${i}`);
+    db.prepare(`UPDATE users SET class_id = ?, status = 'active' WHERE id = ?`).run(class2Id, s.id);
+    class2StudentCount++;
+  }
+  db.prepare(`UPDATE classes SET student_count = ? WHERE id = ?`).run(class2StudentCount, class2Id);
+  console.log(`   ✓ student31~50 (${class2StudentCount}人) 加入2班`);
+
+  const invite2 = crypto.randomBytes(4).toString('hex').toUpperCase();
+  db.prepare(`
+    INSERT INTO class_invitations (class_id, invitation_code, created_by, role_filter, is_active)
+    VALUES (?, ?, ?, 'any', 1)
+  `).run(class2Id, invite2, teacher2.id);
+  console.log(`   ✓ 2班邀请码: ${invite2}`);
 }
 
 async function createRichTestData() {
@@ -1338,10 +1440,14 @@ if (useTestData) {
     console.log('\n✅ 数据库初始化完成！');
     console.log(`   共创建 ${db.prepare("SELECT COUNT(*) as cnt FROM sqlite_master WHERE type='table' AND name != 'sqlite_sequence'").get().cnt} 张表`);
     console.log('\n========================================');
-    console.log('基础账号信息：');
-    console.log('管理员: admin (密码: 111111)');
-    console.log('教师: teacher1 ~ teacher10 (密码: 111111)');
-    console.log('学生: student1 ~ student50 (密码: 111111)');
+    console.log('基础账号信息（密码均为 111111）：');
+    console.log('  管理员: admin');
+    console.log('  教师:   teacher1 ~ teacher10');
+    console.log('  学生:   student1 ~ student50');
+    console.log('');
+    console.log('班级信息：');
+    console.log('  1班: teacher1(班主任), teacher2~7(科任), student1~30');
+    console.log('  2班: teacher2(班主任), teacher1,5,6,7,8,9(科任), student31~50');
     console.log('========================================');
     console.log('\n提示: 使用 --test-data 参数可创建丰富测试数据');
     db.close();
