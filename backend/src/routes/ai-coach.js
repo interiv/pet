@@ -89,6 +89,14 @@ async function callAI(prompt) {
   if (!config.ai_api_key || !config.ai_base_url || !config.ai_model) {
     throw new Error('AI 配置未完成，请联系管理员');
   }
+
+  if (/[\u4e00-\u9fff]/.test(config.ai_api_key)) {
+    throw new Error('AI API Key 包含中文字符，请在后台管理页面配置正确的 API Key');
+  }
+
+  if (!/^https?:\/\//.test(config.ai_base_url)) {
+    throw new Error('AI Base URL 格式不正确，请在后台管理页面配置正确的地址');
+  }
   
   const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
   

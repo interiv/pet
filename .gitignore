@@ -53,3 +53,8 @@ backend/uploads/
 .qoder/
 .trae/
 .claude/
+
+# 模板材料和备用图片
+创AI模板材料/
+备用图片/
+temp/

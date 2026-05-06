@@ -101,7 +101,7 @@ router.get('/heatmap', authenticateToken, (req, res) => {
         knowledge_point,
         total_attempts,
         correct_attempts,
-        accuracy
+        ROUND(CAST(correct_attempts AS REAL) / NULLIF(total_attempts, 0) * 100, 2) as accuracy
       FROM knowledge_point_stats
       WHERE user_id = ? AND date >= ?
       ORDER BY date, knowledge_point

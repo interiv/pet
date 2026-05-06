@@ -1213,12 +1213,15 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
       try {
         const today = getChinaDate();
         const insertKnowledgePoint = db.prepare(`
-          INSERT OR IGNORE INTO knowledge_point_stats (user_id, knowledge_point, date, total_attempts, correct_attempts)
-          VALUES (?, ?, ?, 1, ?)
+          INSERT OR IGNORE INTO knowledge_point_stats (user_id, knowledge_point, date, total_attempts, correct_attempts, accuracy)
+          VALUES (?, ?, ?, 1, ?, ?)
         `);
         const updateKnowledgePoint = db.prepare(`
           UPDATE knowledge_point_stats 
-          SET total_attempts = total_attempts + 1, correct_attempts = correct_attempts + ?
+          SET total_attempts = total_attempts + 1,
+              correct_attempts = correct_attempts + ?,
+              accuracy = ROUND(CAST(correct_attempts + ? AS REAL) / (total_attempts + 1) * 100, 2),
+              updated_at = CURRENT_TIMESTAMP
           WHERE user_id = ? AND knowledge_point = ? AND date = ?
         `);
         
@@ -1231,9 +1234,9 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
             ).get(req.user.userId, question.knowledge_point, today);
             
             if (existing) {
-              updateKnowledgePoint.run(r.is_correct ? 1 : 0, req.user.userId, question.knowledge_point, today);
+              updateKnowledgePoint.run(r.is_correct ? 1 : 0, r.is_correct ? 1 : 0, req.user.userId, question.knowledge_point, today);
             } else {
-              insertKnowledgePoint.run(req.user.userId, question.knowledge_point, today, r.is_correct ? 1 : 0);
+              insertKnowledgePoint.run(req.user.userId, question.knowledge_point, today, r.is_correct ? 1 : 0, r.is_correct ? 100 : 0);
             }
           }
         }
