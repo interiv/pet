@@ -852,9 +852,105 @@ db.exec(`
     UNIQUE(user_id, report_type),
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
+
+  -- ==================== 卡系统 ====================
+  CREATE TABLE cards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    type TEXT NOT NULL CHECK(type IN ('gold', 'item', 'equipment', 'exp', 'mystery')),
+    reward_type TEXT NOT NULL,
+    reward_value TEXT NOT NULL,
+    reward_name TEXT,
+    batch_id INTEGER,
+    class_id INTEGER,
+    created_by INTEGER NOT NULL,
+    is_used INTEGER DEFAULT 0,
+    used_by INTEGER,
+    used_at DATETIME,
+    expires_at DATETIME,
+    is_active INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (batch_id) REFERENCES card_batches(id),
+    FOREIGN KEY (class_id) REFERENCES classes(id),
+    FOREIGN KEY (created_by) REFERENCES users(id),
+    FOREIGN KEY (used_by) REFERENCES users(id)
+  );
+
+  CREATE TABLE card_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('gold', 'item', 'equipment', 'exp', 'mystery')),
+    reward_type TEXT NOT NULL,
+    reward_value TEXT NOT NULL,
+    reward_name TEXT,
+    quantity INTEGER NOT NULL,
+    class_id INTEGER,
+    created_by INTEGER NOT NULL,
+    note TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (class_id) REFERENCES classes(id),
+    FOREIGN KEY (created_by) REFERENCES users(id)
+  );
+
+  CREATE TABLE card_redemption_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    reward_type TEXT NOT NULL,
+    reward_value TEXT NOT NULL,
+    reward_name TEXT,
+    redeemed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (card_id) REFERENCES cards(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  -- ==================== 课堂做题 ====================
+  CREATE TABLE classroom_quizzes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT,
+    subject TEXT,
+    class_id INTEGER NOT NULL,
+    created_by INTEGER NOT NULL,
+    status TEXT DEFAULT 'active' CHECK(status IN ('active', 'completed', 'cancelled')),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    completed_at DATETIME,
+    FOREIGN KEY (class_id) REFERENCES classes(id),
+    FOREIGN KEY (created_by) REFERENCES users(id)
+  );
+
+  CREATE TABLE classroom_quiz_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    quiz_id INTEGER NOT NULL,
+    question_text TEXT NOT NULL,
+    sort_order INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (quiz_id) REFERENCES classroom_quizzes(id)
+  );
+
+  CREATE TABLE classroom_quiz_rewards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    quiz_id INTEGER NOT NULL,
+    question_id INTEGER,
+    student_id INTEGER NOT NULL,
+    pet_id INTEGER,
+    reward_type TEXT NOT NULL CHECK(reward_type IN ('gold', 'item', 'equipment', 'exp')),
+    reward_value TEXT NOT NULL,
+    reward_name TEXT,
+    reason TEXT,
+    awarded_by INTEGER NOT NULL,
+    awarded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (quiz_id) REFERENCES classroom_quizzes(id),
+    FOREIGN KEY (question_id) REFERENCES classroom_quiz_questions(id),
+    FOREIGN KEY (student_id) REFERENCES users(id),
+    FOREIGN KEY (pet_id) REFERENCES pets(id),
+    FOREIGN KEY (awarded_by) REFERENCES users(id)
+  );
 `);
 
-console.log('   ✓ 表结构创建成功 (51张表)\n');
+console.log('   ✓ 表结构创建成功 (57张表)\n');
 
 // ============================================================
 // 4. 创建索引
@@ -921,6 +1017,19 @@ db.exec(`
   -- 班级索引
   CREATE UNIQUE INDEX idx_classes_slug ON classes(slug);
   CREATE INDEX idx_posts_class_id ON posts(class_id);
+
+  -- 卡系统索引
+  CREATE INDEX idx_cards_code ON cards(code);
+  CREATE INDEX idx_cards_batch ON cards(batch_id);
+  CREATE INDEX idx_cards_created_by ON cards(created_by);
+  CREATE INDEX idx_cards_class ON cards(class_id);
+  CREATE INDEX idx_card_batches_created ON card_batches(created_by);
+  CREATE INDEX idx_card_redemption_user ON card_redemption_logs(user_id);
+
+  -- 课堂做题索引
+  CREATE INDEX idx_classroom_quizzes_class ON classroom_quizzes(class_id);
+  CREATE INDEX idx_classroom_quiz_rewards_quiz ON classroom_quiz_rewards(quiz_id);
+  CREATE INDEX idx_classroom_quiz_rewards_student ON classroom_quiz_rewards(student_id);
 `);
 
 console.log('   ✓ 索引创建成功\n');

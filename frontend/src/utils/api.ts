@@ -549,4 +549,41 @@ export const bossBattleAPI = {
     api.get(`/boss-battles/history/${classId}`),
 };
 
+// 卡系统相关 API
+export const cardAPI = {
+  getBatches: (params?: { class_id?: number }) => api.get('/cards/batches', { params }),
+  createBatch: (data: {
+    name: string; type: string; reward_type: string;
+    reward_value: string | number; reward_name?: string;
+    quantity: number; class_id?: number; note?: string; expires_at?: string;
+  }) => api.post('/cards/batches', data),
+  getBatchCards: (batchId: number, params?: { page?: number; pageSize?: number; status?: string }) =>
+    api.get(`/cards/batches/${batchId}/cards`, { params }),
+  deleteBatch: (batchId: number) => api.delete(`/cards/batches/${batchId}`),
+  invalidateCard: (cardId: number) => api.put(`/cards/${cardId}/invalidate`),
+  redeemCard: (code: string) => api.post('/cards/redeem', { code }),
+  getRedemptionLogs: (params?: { page?: number; pageSize?: number; user_id?: number }) =>
+    api.get('/cards/redemption-logs', { params }),
+};
+
+// 课堂做题相关 API
+export const classroomQuizAPI = {
+  createQuiz: (data: {
+    title: string; description?: string; subject?: string;
+    class_id: number; questions: { question_text: string }[];
+  }) => api.post('/cards/classroom-quiz', data),
+  getQuizzes: (params?: { class_id?: number; status?: string }) =>
+    api.get('/cards/classroom-quiz', { params }),
+  getQuizDetail: (quizId: number) => api.get(`/cards/classroom-quiz/${quizId}`),
+  updateQuizStatus: (quizId: number, status: string) =>
+    api.put(`/cards/classroom-quiz/${quizId}`, { status }),
+  rewardStudent: (quizId: number, data: {
+    student_id: number; pet_id?: number; reward_type: string;
+    reward_value: string | number; reward_name?: string;
+    question_id?: number; reason?: string;
+  }) => api.post(`/cards/classroom-quiz/${quizId}/reward`, data),
+  getClassStudents: (classId: number) =>
+    api.get(`/cards/classroom-quiz/students/${classId}`),
+};
+
 export default api;

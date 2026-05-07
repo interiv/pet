@@ -12,6 +12,9 @@ import {
   NotificationOutlined,
   MenuOutlined,
   HeartOutlined,
+  GiftOutlined,
+  PlayCircleOutlined,
+  CreditCardOutlined,
 } from '@ant-design/icons';
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
@@ -28,6 +31,9 @@ const PetCenter = lazy(() => import('../components/PetCenter'));
 const SocialHub = lazy(() => import('../components/SocialHub'));
 const StudentDashboard = lazy(() => import('../components/StudentDashboard'));
 const TeacherDashboard = lazy(() => import('../components/TeacherDashboard'));
+const CardManager = lazy(() => import('../components/CardManager'));
+const CardRedeem = lazy(() => import('../components/CardRedeem'));
+const ClassroomQuiz = lazy(() => import('../components/ClassroomQuiz'));
 
 const { Header, Content, Sider, Footer } = Layout;
 
@@ -231,12 +237,15 @@ const Home: React.FC = () => {
       { key: 'study', icon: <BookOutlined />, label: '学习中心' },
       { key: 'pet', icon: <HomeOutlined />, label: '我的宠物' },
       { key: 'social', icon: <MessageOutlined />, label: '班级' },
+      { key: 'card-redeem', icon: <GiftOutlined />, label: '卡兑换' },
       { key: 'notifications', icon: <BellOutlined />, label: '通知' },
     );
   } else if (isTeacher) {
     menuItems.push(
       { key: 'study', icon: <BookOutlined />, label: '教学管理' },
       { key: 'social', icon: <MessageOutlined />, label: '沟通' },
+      { key: 'card-manager', icon: <CreditCardOutlined />, label: '卡管理' },
+      { key: 'classroom-quiz', icon: <PlayCircleOutlined />, label: '课堂做题' },
       { key: 'notifications', icon: <BellOutlined />, label: '通知' },
     );
     if (user?.role === 'admin') {
@@ -484,6 +493,9 @@ const Home: React.FC = () => {
     if (activeMenu === 'achievement') return wrap(<StudyCenter onNavigate={handleMenuChange} />);
     if (activeMenu === 'social') return wrap(<SocialHub />);
     if (activeMenu === 'notifications') return wrap(<Notifications />);
+    if (activeMenu === 'card-redeem') return wrap(<CardRedeem />);
+    if (activeMenu === 'card-manager') return wrap(<CardManager />);
+    if (activeMenu === 'classroom-quiz') return wrap(<ClassroomQuiz />);
     if (activeMenu === 'class-dashboard') return wrap(<ClassDashboard />);
     if (activeMenu === 'admin') return wrap(<Admin defaultTab={searchParams.get('tab') || undefined} />);
     if (activeMenu === 'profile') return wrap(<Profile />);
