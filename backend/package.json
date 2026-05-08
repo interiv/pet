@@ -12,7 +12,13 @@
     "setup:db:test": "node scripts/setup.js --db --test-data",
     "setup:achievements": "node scripts/setup.js --achievements",
     "setup:full": "node scripts/setup.js",
-    "setup:clean": "node scripts/setup.js --clean"
+    "setup:clean": "node scripts/setup.js --clean",
+    "migrate": "knex migrate:latest",
+    "migrate:rollback": "knex migrate:rollback",
+    "migrate:make": "knex migrate:make",
+    "seed": "knex seed:run",
+    "seed:make": "knex seed:make",
+    "db:reset": "knex migrate:rollback --all && knex migrate:latest && knex seed:run"
   },
   "keywords": [
     "pet",
@@ -31,6 +37,7 @@
     "express-validator": "^7.0.1",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
+    "knex": "^3.2.10",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
     "socket.io": "^4.6.1"

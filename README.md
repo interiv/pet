@@ -33,7 +33,8 @@
 ### 后端
 
 - Node.js + Express
-- SQLite 数据库
+- SQLite 数据库（better-sqlite3）
+- Knex.js（数据库迁移管理）
 - Socket.IO（实时通信）
 - JWT 认证
 - AI API 集成
@@ -55,6 +56,8 @@ pet/
 ├── deploy.sh               # 一键部署脚本
 ├── DOCKER.md               # 部署文档
 ├── backend/
+│   ├── migrations/        # 数据库迁移文件
+│   ├── seeds/             # 种子数据文件
 │   ├── src/
 │   │   ├── config/          # 数据库配置
 │   │   ├── middleware/      # 认证中间件
@@ -157,6 +160,11 @@ cd backend
 npm install
 cp .env.example .env
 # 编辑 .env 填入 AI_API_KEY 等配置
+
+# 初始化数据库（创建表结构 + 填充种子数据）
+npm run db:reset
+
+# 启动开发服务器
 npm run dev        # http://localhost:3000
 ```
 
@@ -167,6 +175,57 @@ cd frontend
 npm install
 npm run dev        # http://localhost:5173
 ```
+
+## 数据库管理
+
+项目使用 **Knex.js** 管理数据库迁移，确保数据库结构变更时不会丢失已有数据。
+
+### 迁移 vs 种子数据
+
+| 概念 | 作用 | 执行时机 |
+|------|------|----------|
+| **迁移（Migration）** | 创建/修改表结构（建表、加列、加索引等） | 每次部署自动执行，只运行未执行过的迁移 |
+| **种子（Seed）** | 填充初始数据（默认用户、宠物种类、道具等） | 仅在数据库为空时执行一次 |
+
+### 常用命令
+
+```bash
+npm run migrate           # 执行所有待处理的迁移
+npm run migrate:rollback  # 回滚最近一批迁移
+npm run seed              # 运行种子数据填充
+npm run db:reset          # 回滚全部 → 重新迁移 → 重新填充种子（重置数据库）
+npm run migrate:make -- 迁移名称   # 创建新的迁移文件
+npm run seed:make -- 种子名称      # 创建新的种子文件
+```
+
+### 新增表或字段（开发流程）
+
+当你需要新增表或修改表结构时，**不要直接改原来的迁移文件**，而是创建新的迁移：
+
+```bash
+# 1. 创建新迁移文件
+npm run migrate:make -- add_new_feature_table
+
+# 2. 编辑生成的 migrations/002_add_new_feature_table.js
+#    exports.up   → 写 CREATE TABLE / ALTER TABLE
+#    exports.down → 写 DROP TABLE / ALTER TABLE 回滚
+
+# 3. 执行迁移
+npm run migrate
+```
+
+这样已有数据不会丢失，只有新结构会被应用。
+
+### Docker 部署时的数据库更新
+
+Docker 容器启动时会自动执行 `knex migrate:latest`，所以更新镜像后只需：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+新的迁移会自动执行，已有数据完整保留。
 
 ## 环境变量
 

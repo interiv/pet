@@ -26,6 +26,9 @@ COPY --from=backend-builder /app/node_modules ./node_modules
 COPY backend/package*.json ./
 COPY backend/src ./src
 COPY backend/scripts ./scripts
+COPY backend/migrations ./migrations
+COPY backend/seeds ./seeds
+COPY backend/knexfile.js ./knexfile.js
 COPY --from=frontend-builder /app/frontend/dist ./public
 
 # 复制图片文件到正确的位置，同时满足两种静态文件服务路径

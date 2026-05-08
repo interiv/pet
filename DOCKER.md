@@ -38,7 +38,8 @@ chmod +x deploy.sh
 镜像托管在阿里云容器镜像服务，已公开，无需登录即可拉取。
 
 启动时自动检测环境：
-- 数据库不存在或缺少表结构 → 自动初始化
+- 自动执行数据库迁移（Knex.js），只运行未执行过的迁移，已有数据不会丢失
+- 数据库为空时自动填充种子数据（默认用户、宠物种类、道具等）
 - 无需额外配置，开箱即用
 
 ---
@@ -139,10 +140,20 @@ docker compose up -d     # 后台启动
 首次启动会自动初始化数据库，日志中会看到：
 
 ```
-数据库文件不存在，执行初始化...
-=== 初始化数据库 ===
-...
-✅ Real SQLite Database initialized successfully
+=== 执行数据库迁移 ===
+Batch 1 run: 1 migrations
+数据库为空，执行种子数据填充...
+
+基础账号信息（密码均为 111111）：
+  管理员: admin
+  教师:   teacher1 ~ teacher10
+  学生:   student1 ~ student50
+
+班级信息：
+  1班: teacher1(班主任), student1~30
+  2班: teacher2(班主任), student31~50
+
+=== 启动服务 ===
 服务器运行在端口 3000
 ```
 
@@ -287,6 +298,8 @@ docker compose pull
 docker compose up -d
 ```
 
+> 更新镜像后，容器启动时会自动执行数据库迁移（`knex migrate:latest`）。新增的表和字段会自动创建，**已有数据不会丢失**。你不需要做任何额外操作。
+
 ### 备份数据库
 
 ```bash
@@ -340,12 +353,15 @@ docker compose down             # 停止并删除容器
 docker logs class-pet --tail 30
 ```
 
-常见原因：数据库未初始化。删除数据库文件让容器重新初始化：
+常见原因：数据库文件损坏或迁移失败。删除数据库文件让容器重新初始化：
 
 ```bash
+docker compose stop
 rm -f /opt/pet/data/database.sqlite
-docker compose restart
+docker compose start
 ```
+
+容器启动后会自动执行迁移并填充种子数据。
 
 ### Q: 端口被占用？
 
