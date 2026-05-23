@@ -1,6 +1,6 @@
 import React, { useEffect, useState, lazy, Suspense } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, Modal, Spin, Table, Segmented, Drawer, Button, Steps, message, Alert, Pagination } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, Modal, Spin, Table, Segmented, Drawer, Button, Steps, message, Alert, Pagination, Badge } from 'antd';
 import {
   HomeOutlined,
   BookOutlined,
@@ -17,6 +17,7 @@ import {
   CreditCardOutlined,
 } from '@ant-design/icons';
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
+import { notificationAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
 import CreatePet from '../components/CreatePet';
 import { getPetThumbUrl } from '../utils/petImage';
@@ -58,6 +59,7 @@ const Home: React.FC = () => {
   const [siteSettings, setSiteSettings] = useState<any>({});
   const [activeMenu, setActiveMenu] = useState(searchParams.get('menu') || 'home');
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const handleMenuChange = (key: string) => {
     setActiveMenu(key);
@@ -98,6 +100,28 @@ const Home: React.FC = () => {
       console.log('加载站点设置失败');
     }
   };
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const loadUnreadCount = async () => {
+      try {
+        const res = await notificationAPI.getUnreadCount();
+        const byType = res.data.by_type || {};
+        const visibleTypes = user?.role === 'admin'
+          ? ['system', 'forum_reply', 'forum_like', 'forum_quote']
+          : user?.role === 'teacher'
+          ? ['system', 'forum_reply', 'forum_like', 'forum_quote', 'friend_request', 'friend_accepted', 'class_join_request', 'post_like', 'post_comment']
+          : ['friend_request', 'friend_accepted', 'gift_received', 'achievement', 'post_like', 'post_comment', 'forum_reply', 'forum_like'];
+        const total = visibleTypes.reduce((sum, t) => sum + (byType[t] || 0), 0);
+        setUnreadCount(total);
+      } catch (e) {
+        // ignore
+      }
+    };
+    loadUnreadCount();
+    const interval = setInterval(loadUnreadCount, 30000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, user?.role]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -238,7 +262,7 @@ const Home: React.FC = () => {
       { key: 'pet', icon: <HomeOutlined />, label: '我的宠物' },
       { key: 'social', icon: <MessageOutlined />, label: '班级' },
       { key: 'card-redeem', icon: <GiftOutlined />, label: '卡兑换' },
-      { key: 'notifications', icon: <BellOutlined />, label: '通知' },
+      { key: 'notifications', icon: <Badge count={unreadCount} size="small" offset={[6, -3]}><BellOutlined /></Badge>, label: '通知' },
     );
   } else if (isTeacher) {
     menuItems.push(
@@ -246,7 +270,7 @@ const Home: React.FC = () => {
       { key: 'social', icon: <MessageOutlined />, label: '沟通' },
       { key: 'card-manager', icon: <CreditCardOutlined />, label: '卡管理' },
       { key: 'classroom-quiz', icon: <PlayCircleOutlined />, label: '课堂做题' },
-      { key: 'notifications', icon: <BellOutlined />, label: '通知' },
+      { key: 'notifications', icon: <Badge count={unreadCount} size="small" offset={[6, -3]}><BellOutlined /></Badge>, label: '通知' },
     );
     if (user?.role === 'admin') {
       menuItems.push({ key: 'admin', icon: <SettingOutlined />, label: '管理后台' });

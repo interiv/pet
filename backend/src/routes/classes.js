@@ -557,6 +557,25 @@ router.post('/register-with-invite', async (req, res) => {
       'UPDATE class_invitations SET used_count = used_count + 1 WHERE id = ?'
     ).run(invitation.id);
 
+    // 向该班级的所有教师发送新成员加入通知
+    const classTeachers = db.prepare(`
+      SELECT teacher_id FROM class_teachers WHERE class_id = ?
+    `).all(invitation.class_id);
+
+    const className = db.prepare('SELECT name FROM classes WHERE id = ?').get(invitation.class_id)?.name || '未知班级';
+
+    for (const teacher of classTeachers) {
+      db.prepare(`
+        INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
+        VALUES (?, 'class_join_request', ?, ?, 'class_member', ?)
+      `).run(
+        teacher.teacher_id,
+        `新${role === 'teacher' ? '教师' : '学生'}已加入班级`,
+        `${username} 通过邀请码加入了你的班级「${className}」。`,
+        userId
+      );
+    }
+
     // 生成 JWT token
     const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
     const token = jwt.sign(
@@ -656,6 +675,26 @@ router.post('/join-with-invite', authenticateToken, (req, res) => {
     db.prepare(
       'UPDATE class_invitations SET used_count = used_count + 1 WHERE id = ?'
     ).run(invitation.id);
+
+    // 向该班级的所有教师发送新成员加入通知
+    const username = db.prepare('SELECT username FROM users WHERE id = ?').get(userId)?.username || '未知用户';
+    const classTeachers = db.prepare(`
+      SELECT teacher_id FROM class_teachers WHERE class_id = ?
+    `).all(invitation.class_id);
+
+    const className = db.prepare('SELECT name FROM classes WHERE id = ?').get(invitation.class_id)?.name || '未知班级';
+
+    for (const teacher of classTeachers) {
+      db.prepare(`
+        INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
+        VALUES (?, 'class_join_request', ?, ?, 'class_member', ?)
+      `).run(
+        teacher.teacher_id,
+        `新${userRole === 'teacher' ? '教师' : '学生'}已加入班级`,
+        `${username} 通过邀请码加入了你的班级「${className}」。`,
+        userId
+      );
+    }
 
     res.json({
       message: '成功加入班级',

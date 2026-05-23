@@ -11,12 +11,13 @@ import {
   UserAddOutlined,
   NotificationOutlined,
   EditOutlined,
+  TeamOutlined,
 } from '@ant-design/icons';
 import { notificationAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
 const adminVisibleTypes = ['system', 'forum_reply', 'forum_like', 'forum_quote', 'answer_changed'];
-const teacherVisibleTypes = ['system', 'forum_reply', 'forum_like', 'forum_quote', 'friend_request', 'friend_accepted', 'post_like', 'post_comment'];
+const teacherVisibleTypes = ['system', 'forum_reply', 'forum_like', 'forum_quote', 'friend_request', 'friend_accepted', 'class_join_request', 'post_like', 'post_comment'];
 const studentVisibleTypes = ['friend_request', 'friend_accepted', 'gift_received', 'achievement', 'post_like', 'post_comment', 'forum_reply', 'forum_like', 'answer_changed'];
 
 const useMobile = () => {
@@ -32,6 +33,7 @@ const useMobile = () => {
 const typeConfig: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
   friend_request: { icon: <UserAddOutlined />, color: 'blue', label: '好友请求' },
   friend_accepted: { icon: <UserAddOutlined />, color: 'green', label: '好友通过' },
+  class_join_request: { icon: <TeamOutlined />, color: '#722ed1', label: '班级加入' },
   gift_received: { icon: <GiftOutlined />, color: 'magenta', label: '收到礼物' },
   achievement: { icon: <TrophyOutlined />, color: 'gold', label: '成就解锁' },
   post_like: { icon: <HeartOutlined />, color: 'red', label: '动态被赞' },
@@ -201,6 +203,7 @@ const Notifications: React.FC = () => {
     ? [
         { key: 'all', label: `全部 ${unreadCount > 0 ? `(${unreadCount})` : ''}` },
         { key: 'system', label: `系统 ${unreadByType.system || ''}`.trim() || '系统' },
+        { key: 'class_join_request', label: `班级加入 ${unreadByType.class_join_request || ''}`.trim() || '班级加入' },
         { key: 'friend_request', label: `好友 ${unreadByType.friend_request || ''}`.trim() || '好友' },
         { key: 'forum_reply', label: `论坛 ${unreadByType.forum_reply || ''}`.trim() || '论坛' },
       ]

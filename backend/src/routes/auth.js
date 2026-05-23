@@ -10,7 +10,7 @@ const { getChinaDate } = require('../config/timezone');
 // 用户注册
 router.post('/register', async (req, res) => {
   try {
-    const { username, password, email, role = 'student', requested_class_id, requested_class_ids } = req.body;
+    const { username, password, email, role = 'student', requested_class_id, requested_class_ids, create_class } = req.body;
 
     // 验证必填字段
     if (!username || !password) {
@@ -26,6 +26,9 @@ router.post('/register', async (req, res) => {
     // 密码加密
     const passwordHash = await bcrypt.hash(password, 10);
 
+    // 教师创建班级模式：不需要选择现有班级
+    const isCreatingClass = role === 'teacher' && create_class === true;
+
     // 确定要申请的班级
     let applyClassIds = [];
     if (role === 'student' && requested_class_id) {
@@ -34,8 +37,8 @@ router.post('/register', async (req, res) => {
       applyClassIds = requested_class_ids.map((id) => parseInt(id));
     }
 
-    // 如果是学生或教师，需要有班级申请
-    if ((role === 'student' || role === 'teacher') && applyClassIds.length === 0) {
+    // 如果是学生或教师，需要有班级申请（创建班级的教师除外）
+    if (!isCreatingClass && (role === 'student' || role === 'teacher') && applyClassIds.length === 0) {
       return res.status(400).json({ error: '请选择要加入的班级' });
     }
 
@@ -47,8 +50,8 @@ router.post('/register', async (req, res) => {
       }
     }
 
-    // 默认状态：学生和教师都需要等待审批
-    let status = 'pending_approval';
+    // 创建班级的教师直接激活，其他需要等待审批
+    let status = isCreatingClass ? 'active' : 'pending_approval';
 
     // 插入新用户
     const result = db.prepare(`
@@ -58,13 +61,32 @@ router.post('/register', async (req, res) => {
 
     const userId = result.lastInsertRowid;
 
-    // 创建班级申请记录
+    // 创建班级申请记录，并给对应班级的班主任发通知
     for (const classId of applyClassIds) {
       try {
         db.prepare(`
           INSERT INTO class_applications (user_id, class_id, role, status)
           VALUES (?, ?, ?, 'pending')
         `).run(userId, classId, role);
+
+        // 向该班级的所有教师发送加入申请通知
+        const classTeachers = db.prepare(`
+          SELECT teacher_id FROM class_teachers WHERE class_id = ?
+        `).all(classId);
+
+        const className = db.prepare('SELECT name FROM classes WHERE id = ?').get(classId)?.name || '未知班级';
+
+        for (const teacher of classTeachers) {
+          db.prepare(`
+            INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
+            VALUES (?, 'class_join_request', ?, ?, 'class_application', ?)
+          `).run(
+            teacher.teacher_id,
+            `新${role === 'teacher' ? '教师' : '学生'}申请加入班级`,
+            `${username} 申请加入你的班级「${className}」，请前往审批。`,
+            userId
+          );
+        }
       } catch (e) {
         console.error('创建班级申请失败:', e);
       }
@@ -77,6 +99,14 @@ router.post('/register', async (req, res) => {
       jwtSecret,
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
+
+    if (isCreatingClass) {
+      return res.status(201).json({
+        message: '注册成功！请继续创建您的班级。',
+        token,
+        user: { id: userId, username, email, role, status: 'active' }
+      });
+    }
 
     return res.status(201).json({
       message: role === 'teacher'

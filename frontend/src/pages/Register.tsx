@@ -102,8 +102,12 @@ const Register: React.FC = () => {
         // 普通注册流程
         // 如果是教师且选择创建新班级
         if (role === 'teacher' && teacherAction === 'create') {
-          // 先注册账号
-          const response = await authAPI.register(registerData);
+          // 先注册账号（带上 create_class 标记）
+          const response = await authAPI.register({
+            ...registerData,
+            create_class: true
+          });
+          
           login(response.data.token, response.data.user);
           
           // 然后创建班级
