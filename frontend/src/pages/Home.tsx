@@ -78,6 +78,7 @@ const Home: React.FC = () => {
   const [petBonus, setPetBonus] = useState<any>(null);
   const [leaderboardView, setLeaderboardView] = useState<'card' | 'list'>('card');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [noticeVisible, setNoticeVisible] = useState(true);
   
   // 新手引导状态
   const [newbieGuideVisible, setNewbieGuideVisible] = useState(false);
@@ -961,6 +962,32 @@ const Home: React.FC = () => {
           </div>
         )}
       </Modal>
+
+      {siteSettings.home_notice && noticeVisible && (
+        <div style={{
+          position: 'fixed',
+          bottom: isMobile ? 80 : 24,
+          right: isMobile ? 12 : 24,
+          left: isMobile ? 12 : 'auto',
+          maxWidth: isMobile ? 'none' : 340,
+          padding: '14px 18px',
+          background: '#fff',
+          borderRadius: 12,
+          boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
+          zIndex: 1000,
+          borderLeft: '4px solid #1890ff',
+          fontSize: isMobile ? 13 : 14,
+          lineHeight: 1.8,
+          whiteSpace: 'pre-wrap',
+          animation: 'slideIn 0.3s ease-out',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ fontWeight: 600, color: '#1890ff', fontSize: isMobile ? 14 : 15 }}>📢 公告</span>
+            <span style={{ cursor: 'pointer', color: '#999', fontSize: 18, lineHeight: 1, padding: '0 4px' }} onClick={() => setNoticeVisible(false)}>×</span>
+          </div>
+          <div style={{ color: '#333' }}>{siteSettings.home_notice}</div>
+        </div>
+      )}
     </Layout>
   );
 };

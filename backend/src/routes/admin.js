@@ -1806,6 +1806,7 @@ function ensureSettingsTable() {
       ['site_logo', '🐾'],
       ['site_footer', '© 2026 班级宠物养成系统'],
       ['site_announcement', ''],
+      ['home_notice', ''],
       ['registration_enabled', 'true'],
       ['battle_enabled', 'true'],
       ['shop_enabled', 'true'],
@@ -1887,7 +1888,7 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
     ensureSettingsTable();
     const allowedKeys = [
       'site_name', 'site_description', 'site_logo', 'site_footer',
-      'site_announcement', 'registration_enabled', 'battle_enabled',
+      'site_announcement', 'home_notice', 'registration_enabled', 'battle_enabled',
       'shop_enabled', 'max_pets_per_user', 'daily_login_gold',
       'battle_stamina_cost', 'ai_model', 'ai_api_key', 'ai_base_url',
       'ai_report_interval_days', 'ai_timeout',
@@ -1921,7 +1922,7 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
 router.get('/settings/public', (req, res) => {
   try {
     ensureSettingsTable();
-    const publicKeys = ['site_name', 'site_description', 'site_logo', 'site_footer', 'site_announcement', 'registration_enabled', 'show_test_accounts'];
+    const publicKeys = ['site_name', 'site_description', 'site_logo', 'site_footer', 'site_announcement', 'registration_enabled', 'home_notice'];
     const settings = db.prepare(`SELECT key, value FROM settings WHERE key IN (${publicKeys.map(() => '?').join(',')})`).all(...publicKeys);
     const result = {};
     settings.forEach(s => result[s.key] = s.value);

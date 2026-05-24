@@ -1698,6 +1698,7 @@ const SiteSettings: React.FC = () => {
         site_logo: data.site_logo || '🐾',
         site_footer: data.site_footer || '© 2026 班级宠物养成系统',
         site_announcement: data.site_announcement || '',
+        home_notice: data.home_notice || '',
         registration_enabled: data.registration_enabled === 'true',
         battle_enabled: data.battle_enabled === 'true',
         shop_enabled: data.shop_enabled === 'true',
@@ -1763,6 +1764,9 @@ const SiteSettings: React.FC = () => {
           </Form.Item>
           <Form.Item name="site_announcement" label="全局公告">
             <Input.TextArea rows={2} placeholder="输入公告内容，留空则不显示公告栏" />
+          </Form.Item>
+          <Form.Item name="home_notice" label="首页公告" extra="显示在首页的浮动提示，留空则不显示。可用于展示测试账号等信息">
+            <Input.TextArea rows={3} placeholder="例如：测试账号 teacher1~10，密码均为 111111" />
           </Form.Item>
         </Card>
 

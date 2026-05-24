@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { Form, Input, Button, Card, message, Typography, Modal, List, Tag, Empty } from 'antd';
 import { UserOutlined, LockOutlined, QuestionCircleOutlined } from '@ant-design/icons';
-import { authAPI, adminAPI } from '../utils/api';
+import { authAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
 const useMobile = () => {
@@ -26,18 +26,7 @@ const Login: React.FC = () => {
   const [statusUsername, setStatusUsername] = useState('');
   const [statusLoading, setStatusLoading] = useState(false);
   const [statusData, setStatusData] = useState<any>(null);
-  const [showTestAccounts, setShowTestAccounts] = useState(false);
-  const [testModalVisible, setTestModalVisible] = useState(false);
   const isMobile = useMobile();
-
-  // 检测是否为测试数据环境
-  useEffect(() => {
-    adminAPI.getPublicSettings().then((res) => {
-      if (res.data.settings?.show_test_accounts === 'true') {
-        setShowTestAccounts(true);
-      }
-    }).catch(() => {});
-  }, []);
 
   const onFinish = async (values: any) => {
     setLoading(true);
@@ -136,13 +125,6 @@ const Login: React.FC = () => {
               查询注册/入班审批进度
             </Button>
           </div>
-          {showTestAccounts && (
-            <div style={{ textAlign: 'center', marginTop: 4 }}>
-              <Button type="link" onClick={() => setTestModalVisible(true)}>
-                查看测试账号
-              </Button>
-            </div>
-          )}
         </Form>
       </Card>
 
@@ -204,34 +186,6 @@ const Login: React.FC = () => {
             )}
           </div>
         )}
-      </Modal>
-
-      <Modal
-        title="测试账号信息"
-        open={testModalVisible}
-        onCancel={() => setTestModalVisible(false)}
-        footer={null}
-        width={360}
-      >
-        <div style={{ lineHeight: 2 }}>
-          <Text strong>所有账号密码：111111</Text>
-          <br /><br />
-          <Text strong>管理员：</Text>admin
-          <br />
-          <Text strong>教师：</Text>张老师 / 李老师 / 王老师
-          <br />
-          <Text strong>学生：</Text>
-          <br />
-          高一(1)班：小明、小红、小刚、小美、小强、小丽
-          <br />
-          高一(2)班：小军、小芳、小华、小燕、小伟
-          <br />
-          高二(1)班：小琳、小超、小娜、小勇、小婷
-          <br /><br />
-          <Text type="secondary">
-            提示：生产环境部署后，数据库不会包含这些测试数据，此提示也不会显示。
-          </Text>
-        </div>
       </Modal>
     </div>
   );
