@@ -1384,7 +1384,7 @@ async function createBasicUsers() {
 
 async function createRichTestData() {
   const saltRounds = 10;
-  const defaultPassword = '123456';
+  const defaultPassword = '111111';
   const hashedPassword = await bcrypt.hash(defaultPassword, saltRounds);
 
   // 学校
