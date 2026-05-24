@@ -151,4 +151,9 @@ exports.seed = async function (knex) {
   console.log(`  1班邀请码: ${invite1}`);
   console.log('  2班: teacher2(班主任), teacher1,5,6,7,8,9(科任), student31~50');
   console.log(`  2班邀请码: ${invite2}`);
+
+  // 标记测试环境
+  await knex('settings').insert({ key: 'show_test_accounts', value: 'true' });
+  console.log('');
+  console.log('  已标记测试数据环境');
 };

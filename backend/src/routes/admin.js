@@ -1350,6 +1350,10 @@ router.get('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
     const settings = db.prepare(`SELECT key, value FROM settings WHERE key LIKE 'ai_%'`).all();
     const result = {};
     settings.forEach(s => result[s.key] = s.value);
+    // 只写不读：不暴露 API Key 到前端
+    if (result.ai_api_key && result.ai_api_key.length > 0) {
+      result.ai_api_key = '***';
+    }
     res.json({ settings: result });
   } catch (error) {
     console.error('获取设置失败:', error);
@@ -1365,7 +1369,10 @@ router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
     const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {
       if (ai_model !== undefined) stmt.run('ai_model', ai_model);
-      if (ai_api_key !== undefined) stmt.run('ai_api_key', ai_api_key);
+      // API Key 只写不读：仅在用户明确提供真实值时更新
+      if (ai_api_key !== undefined && ai_api_key !== '' && ai_api_key !== '***') {
+        stmt.run('ai_api_key', ai_api_key);
+      }
       if (ai_base_url !== undefined) stmt.run('ai_base_url', ai_base_url);
       if (ai_report_interval_days !== undefined) stmt.run('ai_report_interval_days', String(ai_report_interval_days));
       if (ai_timeout !== undefined) stmt.run('ai_timeout', String(ai_timeout));
@@ -1382,7 +1389,14 @@ router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
 router.post('/settings/ai/test', authenticateToken, requireAdmin, async (req, res) => {
   const axios = require('axios');
   try {
-    const { ai_model, ai_api_key, ai_base_url, ai_timeout } = req.body;
+    let { ai_model, ai_api_key, ai_base_url, ai_timeout } = req.body;
+    
+    // 如果前端传了 *** 掩码，从数据库读取真实 key
+    if (!ai_api_key || ai_api_key === '***') {
+      ensureSettingsTable();
+      const row = db.prepare(`SELECT value FROM settings WHERE key = 'ai_api_key'`).get();
+      ai_api_key = row?.value || '';
+    }
     
     if (!ai_model || !ai_api_key || !ai_base_url) {
       return res.status(400).json({ error: '请填写完整的 AI 配置' });
@@ -1745,13 +1759,13 @@ router.get('/students/import-template', authenticateToken, (req, res) => {
       const template = [
         {
           username: 'student1',
-          password: '123456',
+          password: '111111',
           email: 'student1@example.com',
           real_name: '张三'
         },
         {
           username: 'student2',
-          password: '123456',
+          password: '111111',
           email: 'student2@example.com',
           real_name: '李四'
         }
@@ -1760,8 +1774,8 @@ router.get('/students/import-template', authenticateToken, (req, res) => {
     } else if (format === 'csv') {
       const header = 'username,password,email,real_name\n';
       const rows = [
-        'student1,123456,student1@example.com,张三',
-        'student2,123456,student2@example.com,李四'
+        'student1,111111,student1@example.com,张三',
+        'student2,111111,student2@example.com,李四'
       ].join('\n');
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', 'attachment; filename=student_import_template.csv');
@@ -1857,6 +1871,10 @@ router.get('/settings/site', authenticateToken, requireAdmin, (req, res) => {
     const settings = db.prepare(`SELECT key, value FROM settings`).all();
     const result = {};
     settings.forEach(s => result[s.key] = s.value);
+    // 只写不读：不暴露 API Key 到前端
+    if (result.ai_api_key && result.ai_api_key.length > 0) {
+      result.ai_api_key = '***';
+    }
     res.json({ settings: result });
   } catch (error) {
     console.error('获取网站设置失败:', error);
@@ -1881,6 +1899,13 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
     db.transaction(() => {
       Object.entries(req.body).forEach(([key, value]) => {
         if (allowedKeys.includes(key)) {
+          // API Key 只写不读：仅在用户明确提供真实值时更新
+          if (key === 'ai_api_key') {
+            if (value !== undefined && value !== '' && value !== '***') {
+              stmt.run(key, String(value));
+            }
+            return;
+          }
           stmt.run(key, String(value));
         }
       });
@@ -1896,7 +1921,7 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
 router.get('/settings/public', (req, res) => {
   try {
     ensureSettingsTable();
-    const publicKeys = ['site_name', 'site_description', 'site_logo', 'site_footer', 'site_announcement', 'registration_enabled'];
+    const publicKeys = ['site_name', 'site_description', 'site_logo', 'site_footer', 'site_announcement', 'registration_enabled', 'show_test_accounts'];
     const settings = db.prepare(`SELECT key, value FROM settings WHERE key IN (${publicKeys.map(() => '?').join(',')})`).all(...publicKeys);
     const result = {};
     settings.forEach(s => result[s.key] = s.value);

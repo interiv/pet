@@ -1,4 +1,5 @@
-const db = require('better-sqlite3')('./data/database.sqlite');
+const path = require('path');
+const db = require('better-sqlite3')(path.join(__dirname, '..', 'data', 'database.sqlite'));
 
 const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all();
 console.log('Tables (' + tables.length + '):');

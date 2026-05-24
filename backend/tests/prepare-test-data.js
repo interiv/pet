@@ -29,7 +29,7 @@ console.log('✅ 邀请码 TEST2026 创建成功');
 // 3. 创建测试用户(学生)
 console.log('\n3️⃣ 创建测试用户...');
 const bcrypt = require('bcryptjs');
-const hashedPassword = bcrypt.hashSync('Test123456', 10);
+const hashedPassword = bcrypt.hashSync('Test111111', 10);
 
 const userResult = db.prepare(`
   INSERT OR REPLACE INTO users (username, password, email, role, class_id)
@@ -54,7 +54,7 @@ console.log('✅ 教师班级关联成功');
 console.log('\n4️⃣ 检查宠物种类...');
 const speciesCount = db.prepare('SELECT COUNT(*) as count FROM pet_species').get().count;
 if (speciesCount === 0) {
-  console.log('   需要运行 init_db.js 初始化宠物种类');
+  console.log('   需要运行 scripts/setup.js 初始化数据库');
 } else {
   console.log(`✅ 已有 ${speciesCount} 种宠物`);
 }
@@ -81,6 +81,6 @@ db.close();
 
 console.log('\n✅ 测试数据准备完成!');
 console.log('\n测试账号:');
-console.log('  学生: test_student / Test123456');
-console.log('  教师: test_teacher / Test123456');
+console.log('  学生: test_student / Test111111');
+console.log('  教师: test_teacher / Test111111');
 console.log('  班级邀请码: TEST2026');

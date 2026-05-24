@@ -1146,7 +1146,7 @@ const StudentManagement: React.FC = () => {
           >
             <Input.TextArea 
               rows={10} 
-              placeholder='[{"username": "student1", "password": "123456", "email": "student1@example.com", "real_name": "张三"}]'
+              placeholder='[{"username": "student1", "password": "111111", "email": "student1@example.com", "real_name": "张三"}]'
             />
           </Form.Item>
           
@@ -1866,6 +1866,7 @@ const AISettings: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; ai_reply?: string; elapsed?: string; detail?: string } | null>(null);
+  const [hasApiKey, setHasApiKey] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -1875,6 +1876,7 @@ const AISettings: React.FC = () => {
     try {
       const res = await adminAPI.getSiteSettings();
       const data = res.data.settings || {};
+      setHasApiKey(data.ai_api_key === '***');
       settingsForm.setFieldsValue({
         ai_model: data.ai_model || 'gpt-3.5-turbo',
         ai_base_url: data.ai_base_url || 'https://api.openai.com/v1',
@@ -1894,9 +1896,16 @@ const AISettings: React.FC = () => {
   const handleSave = async (values: any) => {
     setLoading(true);
     try {
-      await adminAPI.saveSiteSettings(values);
+      // 如果 API Key 是掩码或空，不发送到后端
+      const saveValues = { ...values };
+      if (!saveValues.ai_api_key || saveValues.ai_api_key === '***') {
+        delete saveValues.ai_api_key;
+      }
+      await adminAPI.saveSiteSettings(saveValues);
       message.success('大模型设置已保存');
       setTestResult(null);
+      // 重新加载以刷新 API Key 掩码状态
+      loadSettings();
     } catch (error) {
       message.error('保存设置失败');
     } finally {
@@ -1907,7 +1916,9 @@ const AISettings: React.FC = () => {
   const handleTest = async () => {
     try {
       const values = settingsForm.getFieldsValue();
-      if (!values.ai_model || !values.ai_base_url || !values.ai_api_key) {
+      // *** 表示已有密钥，后端会自动读取
+      const hasKey = values.ai_api_key && values.ai_api_key !== '';
+      if (!values.ai_model || !values.ai_base_url || !hasKey) {
         message.warning('请先填写完整的 AI 配置（模型、地址、API Key）');
         return;
       }
@@ -1935,7 +1946,15 @@ const AISettings: React.FC = () => {
   };
 
   return (
-    <Card title={<span><RobotOutlined /> AI 大模型配置</span>} style={{ maxWidth: 600 }}>
+    <Card title={<span><RobotOutlined /> AI 大模型配置</span>} style={{ maxWidth: 600 }}>{hasApiKey && (
+        <Alert
+          message="API Key 已配置"
+          description="出于安全考虑，已保存的 API Key 不会在页面显示。如需更换，请在下方输入新的 Key；留空则保留当前密钥。"
+          type="success"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
       <Alert
         message="AI设置说明"
         description="配置AI大模型接口后，系统可以使用AI出题、智能分析等功能。"
@@ -1950,8 +1969,8 @@ const AISettings: React.FC = () => {
         <Form.Item name="ai_base_url" label="API Base URL" rules={[{ required: true, message: '请输入API地址' }]}>
           <Input placeholder="如 https://api.openai.com/v1" />
         </Form.Item>
-        <Form.Item name="ai_api_key" label="API Key" rules={[{ required: true, message: '请输入API Key' }]}>
-          <Input.Password placeholder="输入 API 密钥" />
+        <Form.Item name="ai_api_key" label="API Key" extra="留空则保留当前密钥，录入新值将替换">
+          <Input.Password placeholder="留空保留当前设置，或输入新 API 密钥" />
         </Form.Item>
         <Form.Item name="ai_report_interval_days" label="AI报告重新生成间隔（天）" rules={[{ required: true, message: '请输入间隔天数' }]} extra="学生生成学习规划或诊断报告后，需间隔多少天才可重新生成。默认3天。">
           <Input type="number" min={1} max={30} placeholder="3" />

@@ -152,7 +152,7 @@ router.get('/status', authenticateToken, (req, res) => {
             currentValue = db.prepare("SELECT COUNT(*) as c FROM daily_task_logs WHERE user_id = ? AND is_completed = 1").get(req.user.userId)?.c || 0;
             break;
           case 'add_friends':
-            currentValue = db.prepare('SELECT COUNT(*) as c FROM friendships WHERE user_id = ? OR friend_id = ?').get(req.user.userId, req.user.userId)?.c || 0;
+            currentValue = db.prepare("SELECT COUNT(*) as c FROM friends WHERE user_id = ? AND status = 'active'").get(req.user.userId)?.c || 0;
             break;
           case 'create_pet':
             currentValue = db.prepare('SELECT COUNT(*) as c FROM pets WHERE user_id = ?').get(req.user.userId)?.c || 0;
@@ -161,10 +161,18 @@ router.get('/status', authenticateToken, (req, res) => {
             currentValue = db.prepare("SELECT COUNT(*) as c FROM gold_transactions WHERE user_id = ? AND reason LIKE '%投喂%'").get(req.user.userId)?.c || 0;
             break;
           case 'win_battle':
-            currentValue = db.prepare("SELECT COUNT(*) as c FROM battle_results WHERE winner_id = ?").get(req.user.userId)?.c || 0;
+            currentValue = db.prepare(`
+              SELECT COUNT(*) as c FROM battles b
+              JOIN pets p ON (b.pet1_id = p.id OR b.pet2_id = p.id)
+              WHERE p.user_id = ? AND b.winner_id = p.id
+            `).get(req.user.userId)?.c || 0;
             break;
           case 'lose_battle':
-            currentValue = db.prepare("SELECT COUNT(*) as c FROM battle_results WHERE loser_id = ?").get(req.user.userId)?.c || 0;
+            currentValue = db.prepare(`
+              SELECT COUNT(*) as c FROM battles b
+              JOIN pets p ON (b.pet1_id = p.id OR b.pet2_id = p.id)
+              WHERE p.user_id = ? AND b.winner_id IS NOT NULL AND b.winner_id != p.id
+            `).get(req.user.userId)?.c || 0;
             break;
           case 'perfect_score':
             currentValue = db.prepare("SELECT COUNT(*) as c FROM submissions WHERE user_id = ? AND total_score = total_max_score").get(req.user.userId)?.c || 0;
@@ -183,10 +191,10 @@ router.get('/status', authenticateToken, (req, res) => {
             currentValue = db.prepare("SELECT MAX(streak_days) as d FROM daily_tasks WHERE user_id = ?").get(req.user.userId)?.d || 0;
             break;
           case 'collect_equipment':
-            currentValue = db.prepare("SELECT COUNT(DISTINCT item_id) as c FROM user_items WHERE user_id = ?").get(req.user.userId)?.c || 0;
+            currentValue = db.prepare("SELECT COUNT(DISTINCT equipment_id) as c FROM user_equipment WHERE user_id = ?").get(req.user.userId)?.c || 0;
             break;
           case 'send_message':
-            currentValue = db.prepare("SELECT COUNT(*) as c FROM chat_messages WHERE sender_id = ?").get(req.user.userId)?.c || 0;
+            currentValue = db.prepare("SELECT COUNT(*) as c FROM chat_messages WHERE user_id = ?").get(req.user.userId)?.c || 0;
             break;
           case 'post_count':
           case 'forum_post':

@@ -19,12 +19,12 @@ const testResults = {
 const testAccounts = {
   student: {
     username: 'test_student_' + Date.now(),
-    password: 'Test123456',
+    password: 'Test111111',
     email: 'student@test.com'
   },
   teacher: {
     username: 'test_teacher_' + Date.now(),
-    password: 'Test123456',
+    password: 'Test111111',
     email: 'teacher@test.com'
   }
 };

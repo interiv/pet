@@ -1,12 +1,15 @@
 /**
  * 默认成就种子数据
- * init_db.js 和 seed_achievements.js 共用此文件，避免重复维护。
+ * 由 seeds/05_achievements.js 使用，避免重复维护。
  *
  * 道具奖励说明：reward_type='item' 时 reward_value 为 items 表的 id
+ * 完整 ID 映射见 seeds/02_items.js，常用如下：
  *   1=普通粮食(hunger+20,10金) 2=高级零食(hunger+50,50金) 3=特殊料理(hunger+80,100金)
- *   8=快乐糖果(mood+50,50金) 13=经验药水(exp+200,200金) 14=超级经验药水(exp+500,500金)
- *   17=大治疗药剂(health+100,100金) 19=大体力药剂(stamina+100,100金)
- *   27=转生丹(1000金) 28=经验加倍卡(300金) 30=营养套餐(hunger+60,80金)
+ *   8=治疗药剂(health+50,50金) 9=大治疗药剂(health+100,100金)
+ *   12=大体力药剂(stamina+100,100金)
+ *   14=心情药水(mood+30,30金)
+ *   17=力量果实(attack+1,500金) 19=疾风果实(speed+1,500金)
+ *   27=转生丹(1000金) 28=经验加倍卡(300金) 29=万灵药(300金) 30=营养套餐(hunger+60,80金)
  */
 module.exports = [
   // ===== 宠物 (19个) =====
@@ -16,13 +19,13 @@ module.exports = [
   { name: '渐入佳境', description: '宠物达到15级', condition: JSON.stringify({ type: 'pet_level', level: 15 }), reward_type: 'gold', reward_value: 300, category: 'pet', icon: '💫', sort_order: 4 },
   { name: '崭露头角', description: '宠物达到20级', condition: JSON.stringify({ type: 'pet_level', level: 20 }), reward_type: 'item', reward_value: 3, category: 'pet', icon: '✨', sort_order: 5 },
   { name: '声名鹊起', description: '宠物达到25级', condition: JSON.stringify({ type: 'pet_level', level: 25 }), reward_type: 'gold', reward_value: 500, category: 'pet', icon: '🔥', sort_order: 6 },
-  { name: '一方霸主', description: '宠物达到30级', condition: JSON.stringify({ type: 'pet_level', level: 30 }), reward_type: 'item', reward_value: 10, category: 'pet', icon: '👑', sort_order: 7 },
+  { name: '一方霸主', description: '宠物达到30级', condition: JSON.stringify({ type: 'pet_level', level: 30 }), reward_type: 'item', reward_value: 9, category: 'pet', icon: '👑', sort_order: 7 },
   { name: '威震八方', description: '宠物达到40级', condition: JSON.stringify({ type: 'pet_level', level: 40 }), reward_type: 'gold', reward_value: 800, category: 'pet', icon: '💎', sort_order: 8 },
   { name: '登峰造极', description: '宠物达到50级', condition: JSON.stringify({ type: 'pet_level', level: 50 }), reward_type: 'item', reward_value: 28, category: 'pet', icon: '🏰', sort_order: 9 },
   { name: '超凡入圣', description: '宠物达到60级', condition: JSON.stringify({ type: 'pet_level', level: 60 }), reward_type: 'gold', reward_value: 1000, category: 'pet', icon: '🌈', sort_order: 10 },
-  { name: '天下无敌', description: '宠物达到70级', condition: JSON.stringify({ type: 'pet_level', level: 70 }), reward_type: 'item', reward_value: 24, category: 'pet', icon: '⚡', sort_order: 11 },
+  { name: '天下无敌', description: '宠物达到70级', condition: JSON.stringify({ type: 'pet_level', level: 70 }), reward_type: 'item', reward_value: 27, category: 'pet', icon: '⚡', sort_order: 11 },
   { name: '传奇诞生', description: '宠物达到80级', condition: JSON.stringify({ type: 'pet_level', level: 80 }), reward_type: 'gold', reward_value: 2000, category: 'pet', icon: '🏆', sort_order: 12 },
-  { name: '神话降临', description: '宠物达到90级', condition: JSON.stringify({ type: 'pet_level', level: 90 }), reward_type: 'item', reward_value: 24, category: 'pet', icon: '🌠', sort_order: 13 },
+  { name: '神话降临', description: '宠物达到90级', condition: JSON.stringify({ type: 'pet_level', level: 90 }), reward_type: 'item', reward_value: 29, category: 'pet', icon: '🌠', sort_order: 13 },
   { name: '满级成就', description: '宠物达到100级', condition: JSON.stringify({ type: 'pet_level', level: 100 }), reward_type: 'gold', reward_value: 5000, category: 'pet', icon: '🎯', sort_order: 14 },
   { name: '初学乍练', description: '累计获得1000经验', condition: JSON.stringify({ type: 'total_exp', exp: 1000 }), reward_type: 'gold', reward_value: 100, category: 'pet', icon: '📖', sort_order: 15 },
   { name: '学有小成', description: '累计获得5000经验', condition: JSON.stringify({ type: 'total_exp', exp: 5000 }), reward_type: 'item', reward_value: 1, category: 'pet', icon: '📚', sort_order: 16 },
@@ -33,13 +36,13 @@ module.exports = [
   // ===== 战斗 (12个) =====
   { name: '首战告捷', description: '获得第一场战斗胜利', condition: JSON.stringify({ type: 'win_battle', count: 1 }), reward_type: 'gold', reward_value: 200, category: 'battle', icon: '⚔️', sort_order: 20 },
   { name: '战斗新手', description: '累计胜利10场', condition: JSON.stringify({ type: 'win_battle', count: 10 }), reward_type: 'item', reward_value: 8, category: 'battle', icon: '🗡️', sort_order: 21 },
-  { name: '身经百战', description: '累计胜利50场', condition: JSON.stringify({ type: 'win_battle', count: 50 }), reward_type: 'item', reward_value: 10, category: 'battle', icon: '🛡️', sort_order: 22 },
+  { name: '身经百战', description: '累计胜利50场', condition: JSON.stringify({ type: 'win_battle', count: 50 }), reward_type: 'item', reward_value: 9, category: 'battle', icon: '🛡️', sort_order: 22 },
   { name: '百战不殆', description: '累计胜利100场', condition: JSON.stringify({ type: 'win_battle', count: 100 }), reward_type: 'gold', reward_value: 800, category: 'battle', icon: '🏅', sort_order: 23 },
   { name: '连胜新星', description: '获得3连胜', condition: JSON.stringify({ type: 'win_streak', count: 3 }), reward_type: 'gold', reward_value: 150, category: 'battle', icon: '🔥', sort_order: 24 },
-  { name: '连胜达人', description: '获得10连胜', condition: JSON.stringify({ type: 'win_streak', count: 10 }), reward_type: 'item', reward_value: 17, category: 'battle', icon: '💥', sort_order: 25 },
+  { name: '连胜达人', description: '获得10连胜', condition: JSON.stringify({ type: 'win_streak', count: 10 }), reward_type: 'item', reward_value: 9, category: 'battle', icon: '💥', sort_order: 25 },
   { name: '连胜王者', description: '获得25连胜', condition: JSON.stringify({ type: 'win_streak', count: 25 }), reward_type: 'gold', reward_value: 1000, category: 'battle', icon: '👹', sort_order: 26 },
   { name: '首战失利', description: '经历第一次战败', condition: JSON.stringify({ type: 'lose_battle', count: 1 }), reward_type: 'gold', reward_value: 50, category: 'battle', icon: '💪', sort_order: 27 },
-  { name: '越挫越勇', description: '累计失败10场', condition: JSON.stringify({ type: 'lose_battle', count: 10 }), reward_type: 'item', reward_value: 16, category: 'battle', icon: '🩹', sort_order: 28 },
+  { name: '越挫越勇', description: '累计失败10场', condition: JSON.stringify({ type: 'lose_battle', count: 10 }), reward_type: 'item', reward_value: 12, category: 'battle', icon: '🩹', sort_order: 28 },
   { name: 'BOSS猎手', description: '对BOSS累计造成500伤害', condition: JSON.stringify({ type: 'boss_damage', damage: 500 }), reward_type: 'gold', reward_value: 300, category: 'battle', icon: '🐉', sort_order: 29 },
   { name: 'BOSS终结者', description: '参与击杀3只BOSS', condition: JSON.stringify({ type: 'boss_kill', count: 3 }), reward_type: 'item', reward_value: 10, category: 'battle', icon: '☠️', sort_order: 30 },
   { name: '屠龙勇士', description: '参与击杀10只BOSS', condition: JSON.stringify({ type: 'boss_kill', count: 10 }), reward_type: 'gold', reward_value: 1000, category: 'battle', icon: '🐲', sort_order: 31 },

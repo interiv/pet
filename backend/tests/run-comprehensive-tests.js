@@ -13,7 +13,7 @@ const testResults = {
 // 测试用户数据
 const testUser = {
   username: 'test_user_' + Date.now(),
-  password: 'Test123456',
+  password: 'Test111111',
   email: 'test@example.com',
   role: 'student'
 };
