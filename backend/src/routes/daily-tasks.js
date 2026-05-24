@@ -45,7 +45,7 @@ router.get('/', authenticateToken, (req, res) => {
     // 如果任务日志不存在，创建默认任务
     if (taskLogs.length === 0) {
       const defaultTasks = [
-        { task_type: 'login', task_target: 1, task_progress: 1, is_completed: 1 }, // 登录自动完成
+        { task_type: 'login', task_target: 1, task_progress: 0, is_completed: 0 },
         { task_type: 'complete_assignment', task_target: 1, task_progress: 0, is_completed: 0 },
         { task_type: 'feed_pet', task_target: 1, task_progress: 0, is_completed: 0 },
         { task_type: 'correct_rate', task_target: 80, task_progress: 0, is_completed: 0 },
@@ -60,6 +60,8 @@ router.get('/', authenticateToken, (req, res) => {
       for (const task of defaultTasks) {
         insertLog.run(userId, today, task.task_type, task.task_target, task.task_progress, task.is_completed);
       }
+      // 登录任务自动完成
+      updateTaskProgress(userId, 'login', 1);
     }
 
     // 重新获取任务日志

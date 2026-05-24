@@ -160,6 +160,7 @@ exports.up = async function (knex) {
       status TEXT DEFAULT 'normal',
       rebirth_count INTEGER DEFAULT 0,
       total_exp_earned INTEGER DEFAULT 0,
+      feed_count INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id),

@@ -71,7 +71,7 @@ const CreatePet: React.FC<CreatePetProps> = ({ onSuccess }) => {
             label="宠物名字"
             rules={[
               { required: true, message: '请输入宠物名字!' },
-              { max: 10, message: '名字不能超过 10 个字符!' }
+              { max: 20, message: '名字不能超过 20 个字符!' }
             ]}
           >
             <Input placeholder="给你的宠物起个名字吧" />

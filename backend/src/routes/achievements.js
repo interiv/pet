@@ -158,7 +158,7 @@ router.get('/status', authenticateToken, (req, res) => {
             currentValue = db.prepare('SELECT COUNT(*) as c FROM pets WHERE user_id = ?').get(req.user.userId)?.c || 0;
             break;
           case 'feed_pet':
-            currentValue = db.prepare("SELECT COUNT(*) as c FROM gold_transactions WHERE user_id = ? AND reason LIKE '%投喂%'").get(req.user.userId)?.c || 0;
+            currentValue = db.prepare('SELECT COALESCE(feed_count, 0) as c FROM pets WHERE user_id = ?').get(req.user.userId)?.c || 0;
             break;
           case 'win_battle':
             currentValue = db.prepare(`

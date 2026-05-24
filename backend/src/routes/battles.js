@@ -21,13 +21,17 @@ function generateBattleLog(myPet, opponentPet, winner, myWinChance, moodCritical
     const isCritical = Math.random() < baseCritChance;
     const finalMyDamage = isCritical ? Math.floor(myDamage * 1.5) : myDamage;
 
+    // 对手也有暴击判定
+    const isOpponentCritical = Math.random() < 0.1;
+    const finalOpponentDamage = isOpponentCritical ? Math.floor(opponentDamage * 1.5) : opponentDamage;
+
     opponentHp = Math.max(0, opponentHp - finalMyDamage);
-    myHp = Math.max(0, myHp - opponentDamage);
+    myHp = Math.max(0, myHp - finalOpponentDamage);
 
     log.push({
       round,
       myPet: { hp: myHp, damage: finalMyDamage, critical: isCritical },
-      opponent: { hp: opponentHp, damage: opponentDamage }
+      opponent: { hp: opponentHp, damage: finalOpponentDamage, critical: isOpponentCritical }
     });
 
     if (opponentHp <= 0 || myHp <= 0) break;
@@ -98,9 +102,11 @@ router.post('/start', authenticateToken, (req, res) => {
     if (winner === myPet.id) {
       rewardExp = Math.floor(baseExp * (1 + Math.max(0, levelDiff) * 0.1));
       myExpGain = rewardExp;
+      opponentExpGain = Math.max(5, Math.floor(rewardExp * 0.3));
     } else {
-      rewardExp = 10;
       opponentExpGain = Math.floor(baseExp * (1 + Math.max(0, -levelDiff) * 0.1));
+      rewardExp = opponentExpGain;
+      myExpGain = Math.max(5, Math.floor(opponentExpGain * 0.3));
     }
 
     const battleLog = generateBattleLog(myPet, opponentPet, winner, myWinChance, moodCriticalBonus);
@@ -131,18 +137,30 @@ router.post('/start', authenticateToken, (req, res) => {
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(myExpGain, myExpGain, myPet.id);
-    } else {
-      db.prepare('UPDATE pets SET total_battles = total_battles + 1, exp = exp + 10, total_exp_earned = total_exp_earned + 10 WHERE id = ?').run(myPet.id);
-    }
 
-    if (opponentExpGain > 0) {
-      db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ? WHERE id = ?').run(opponentExpGain, opponentExpGain, opponentPet.id);
-      const updatedOpponent = db.prepare('SELECT * FROM pets WHERE id = ?').get(opponentPet.id);
-      checkLevelUp(updatedOpponent);
+      // 对手战败更新
+      db.prepare('UPDATE pets SET total_battles = total_battles + 1, exp = exp + ? WHERE id = ?').run(opponentExpGain, opponentPet.id);
+    } else {
+      // 我方战败
+      db.prepare('UPDATE pets SET total_battles = total_battles + 1, exp = exp + ? WHERE id = ?').run(myExpGain, myPet.id);
+
+      // 对手获胜
+      db.prepare(`
+        UPDATE pets
+        SET win_count = win_count + 1,
+            total_battles = total_battles + 1,
+            exp = exp + ?,
+            total_exp_earned = total_exp_earned + ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(opponentExpGain, opponentExpGain, opponentPet.id);
     }
 
     const updatedMyPet = db.prepare('SELECT * FROM pets WHERE id = ?').get(myPet.id);
     const myLevelUp = checkLevelUp(updatedMyPet);
+
+    const updatedOpponent = db.prepare('SELECT * FROM pets WHERE id = ?').get(opponentPet.id);
+    checkLevelUp(updatedOpponent);
 
     // 成就检查
     try {
@@ -189,7 +207,7 @@ router.get('/history', authenticateToken, (req, res) => {
     }
 
     const battles = db.prepare(`
-      SELECT b.*, 
+      SELECT b.id, b.pet1_id, b.pet2_id, b.winner_id, b.reward_exp, b.reward_gold, b.battle_log, b.battle_date, b.battle_type,
              p1.name as pet1_name, p2.name as pet2_name,
              pw.name as winner_name
       FROM battles b

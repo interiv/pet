@@ -101,7 +101,7 @@ router.post('/add', authenticateToken, (req, res) => {
     // 发送通知
     db.prepare(`
       INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
-      VALUES (?, 'friend_request', '收到新的朋好友请求', ?, 'friend_request', ?)
+      VALUES (?, 'friend_request', '收到新的好友请求', ?, 'friend_request', ?)
     `).run(friend.id, `${req.user.username} 请求添加你为好友`, req.user.userId);
 
     res.json({ message: '好友请求已发送，等待对方接受' });
@@ -269,10 +269,16 @@ router.post('/friend-battle', authenticateToken, (req, res) => {
     if (!myPet) {
       return res.status(404).json({ error: '还没有宠物' });
     }
+    if (myPet.status === 'unconscious') {
+      return res.status(400).json({ error: '宠物已昏迷，无法战斗' });
+    }
 
     const friendPet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(friend_id);
     if (!friendPet) {
       return res.status(404).json({ error: '好友还没有宠物' });
+    }
+    if (friendPet.status === 'unconscious') {
+      return res.status(400).json({ error: '好友的宠物已昏迷，无法战斗' });
     }
 
     const myPower = myPet.attack + myPet.defense + myPet.speed;

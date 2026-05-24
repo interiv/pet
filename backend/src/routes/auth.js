@@ -142,6 +142,9 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: '用户名或密码错误' });
     }
 
+    // 删除密码哈希，防止泄露到前端
+    delete user.password_hash;
+
     // 检查状态
     if (user.status === 'pending_approval') {
       return res.status(403).json({ error: '您的账号正在审核中，请联系管理员。' });
@@ -154,8 +157,8 @@ router.post('/login', async (req, res) => {
 
     // 成就检查
     try {
-      const loginCount = db.prepare("SELECT COUNT(*) as c FROM users WHERE id = ? AND last_login IS NOT NULL").get(user.id)?.c || 0;
-      checkAndAwardAchievement(user.id, 'login', loginCount > 0 ? loginCount : 1);
+      const loginDays = db.prepare('SELECT COUNT(DISTINCT date) as c FROM daily_tasks WHERE user_id = ?').get(user.id)?.c || 0;
+      checkAndAwardAchievement(user.id, 'login', loginDays + 1);
       const today = getChinaDate();
       const dailyTask = db.prepare('SELECT streak_days FROM daily_tasks WHERE user_id = ? AND date = ?').get(user.id, today);
       if (dailyTask && dailyTask.streak_days > 0) {
@@ -173,50 +176,52 @@ router.post('/login', async (req, res) => {
     // 宠物属性每小时变化处理（登录时计算离线时间）
     const myPet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(user.id);
     if (myPet) {
-      const lastLogin = user.last_login ? new Date(user.last_login).getTime() : Date.now() - 3600000;
-      const hoursSinceLastLogin = Math.max(0, Math.floor((Date.now() - lastLogin) / (1000 * 60 * 60)));
-      const daysSinceLastLogin = Math.floor(hoursSinceLastLogin / 24);
+      if (user.last_login) {
+        const lastLogin = new Date(user.last_login).getTime();
+        const hoursSinceLastLogin = Math.max(0, Math.floor((Date.now() - lastLogin) / (1000 * 60 * 60)));
+        const daysSinceLastLogin = Math.floor(hoursSinceLastLogin / 24);
 
-      if (hoursSinceLastLogin > 0) {
-        let newStamina = Math.min(100, myPet.stamina + hoursSinceLastLogin * 10);
-        let newHunger = Math.max(0, myPet.hunger - hoursSinceLastLogin * 2);
-        let newMood = myPet.mood;
-        let newHealth = myPet.health;
+        if (hoursSinceLastLogin > 0) {
+          let newStamina = Math.min(100, myPet.stamina + hoursSinceLastLogin * 10);
+          let newHunger = Math.max(0, myPet.hunger - hoursSinceLastLogin * 2);
+          let newMood = myPet.mood;
+          let newHealth = myPet.health;
 
-        if (daysSinceLastLogin > 0) {
-          newHunger = Math.max(0, newHunger - daysSinceLastLogin * 5);
-          newMood = Math.max(0, newMood - daysSinceLastLogin * 5);
+          if (daysSinceLastLogin > 0) {
+            newHunger = Math.max(0, newHunger - daysSinceLastLogin * 5);
+            newMood = Math.max(0, newMood - daysSinceLastLogin * 5);
+          }
+
+          if (newHunger < 30) {
+            newMood = Math.max(0, newMood - hoursSinceLastLogin * 1);
+          }
+
+          if (newHunger === 0 || newMood === 0) {
+            newHealth = Math.max(0, newHealth - hoursSinceLastLogin * 2);
+          }
+
+          // 状态异常标记
+          let statusDebuff = false;
+          if (newHunger < 30 || newMood < 30) {
+            statusDebuff = true;
+          }
+
+          // 更新宠物属性
+          db.prepare(`
+            UPDATE pets SET
+              stamina = ?,
+              hunger = ?,
+              mood = ?,
+              health = ?,
+              status = ?,
+              updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(newStamina, newHunger, newMood, newHealth, (newHunger <= 0 || newHealth <= 0) ? 'unconscious' : myPet.status, myPet.id);
+
+          // 返回状态衰减信息给前端
+          myPet.status_debuff = statusDebuff;
+          myPet.days_offline = daysSinceLastLogin;
         }
-
-        if (newHunger < 30) {
-          newMood = Math.max(0, newMood - hoursSinceLastLogin * 1);
-        }
-
-        if (newHunger === 0 || newMood === 0) {
-          newHealth = Math.max(0, newHealth - hoursSinceLastLogin * 2);
-        }
-
-        // 状态异常标记
-        let statusDebuff = false;
-        if (newHunger < 30 || newMood < 30) {
-          statusDebuff = true;
-        }
-
-        // 更新宠物属性
-        db.prepare(`
-          UPDATE pets SET
-            stamina = ?,
-            hunger = ?,
-            mood = ?,
-            health = ?,
-            status = ?,
-            updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(newStamina, newHunger, newMood, newHealth, (newHunger <= 0 || newHealth <= 0) ? 'unconscious' : myPet.status, myPet.id);
-        
-        // 返回状态衰减信息给前端
-        myPet.status_debuff = statusDebuff;
-        myPet.days_offline = daysSinceLastLogin;
       }
     }
 

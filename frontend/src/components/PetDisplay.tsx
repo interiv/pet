@@ -254,6 +254,7 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
                       onBlur={handleUpdateName}
                       onPressEnter={handleUpdateName}
                       style={{ width: 150 }}
+                      maxLength={20}
                       autoFocus
                     />
                   ) : (

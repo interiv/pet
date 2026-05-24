@@ -45,11 +45,19 @@ router.post('/buy', authenticateToken, (req, res) => {
       db.prepare('INSERT INTO user_items (user_id, item_id, quantity) VALUES (?, ?, ?)').run(req.user.userId, item_id, quantity);
     }
 
+    const updatedItems = db.prepare(`
+      SELECT ui.*, i.name, i.type, i.effect_type, i.effect_value, i.description, i.image_url
+      FROM user_items ui
+      JOIN items i ON ui.item_id = i.id
+      WHERE ui.user_id = ? AND ui.quantity > 0
+    `).all(req.user.userId);
+
     res.json({
       message: '购买成功',
       item: item.name,
       quantity,
-      totalCost
+      totalCost,
+      items: updatedItems
     });
   } catch (error) {
     console.error('购买物品错误:', error);

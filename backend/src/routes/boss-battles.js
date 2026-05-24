@@ -652,6 +652,8 @@ router.post('/:bossId/terminate', authenticateToken, authorizeRole('teacher', 'a
       db.prepare(`
         UPDATE boss_battles SET status = 'expired', completed_at = CURRENT_TIMESTAMP WHERE id = ?
       `).run(boss.id);
+      // 即使未击败，也按伤害比例分发部分奖励
+      distributeRewards(boss.id, boss.class_id);
     }
 
     res.json({ message: 'BOSS战已终止' });
@@ -674,6 +676,14 @@ router.delete('/:bossId', authenticateToken, authorizeRole('teacher', 'admin'), 
 
     if (!isAdmin(req.user.userId) && !checkHeadTeacher(req.user.userId, boss.class_id)) {
       return res.status(403).json({ error: '只有班主任才能删除本班的BOSS记录' });
+    }
+
+    // 检查是否有未领取的奖励
+    const unclaimedCount = db.prepare(
+      'SELECT COUNT(*) as c FROM boss_battle_rewards WHERE boss_battle_id = ? AND claimed = 0'
+    ).get(boss.id)?.c || 0;
+    if (unclaimedCount > 0) {
+      return res.status(400).json({ error: `还有 ${unclaimedCount} 条奖励未被领取，请领取后再删除` });
     }
 
     db.prepare('DELETE FROM boss_battle_rewards WHERE boss_battle_id = ?').run(boss.id);
@@ -882,8 +892,17 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
     const correctAnswer = question.answer;
     const studentAnswer = String(answer).trim();
 
-    if (question.type === 'choice_single' || question.type === 'judgment') {
+    if (question.type === 'choice_single') {
       isCorrect = studentAnswer.toUpperCase() === String(correctAnswer).toUpperCase();
+    } else if (question.type === 'judgment') {
+      // 规范化判断题答案：true/yes/A/正确/对 vs false/no/B/错误/错
+      const normalizeJudgment = (ans) => {
+        const s = String(ans).toLowerCase().trim();
+        if (['true', 'yes', 'a', '正确', '对', '1'].includes(s)) return 'true';
+        if (['false', 'no', 'b', '错误', '错', '0'].includes(s)) return 'false';
+        return s;
+      };
+      isCorrect = normalizeJudgment(studentAnswer) === normalizeJudgment(String(correctAnswer));
     } else if (question.type === 'choice_multi') {
       const correctSet = new Set(String(correctAnswer).toUpperCase().split('').sort());
       const answerSet = new Set(String(studentAnswer).toUpperCase().split('').sort());

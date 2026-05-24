@@ -5,6 +5,11 @@ const { authenticateToken } = require('../middleware/auth');
 const { updateTaskProgress } = require('./daily-tasks');
 const { checkAndAwardAchievement } = require('./achievements');
 
+// 确保数据库列存在（运行时迁移）
+try {
+  db.exec('ALTER TABLE pets ADD COLUMN feed_count INTEGER DEFAULT 0');
+} catch (e) { /* 列已存在则忽略 */ }
+
 // 检查升级
 function checkLevelUp(pet) {
   const levelThreshold = Math.floor(100 * Math.pow(pet.level, 1.5));
@@ -14,8 +19,8 @@ function checkLevelUp(pet) {
     db.prepare(`
       UPDATE pets 
       SET level = ?, exp = exp - ?, updated_at = CURRENT_TIMESTAMP
-      WHERE user_id = ?
-    `).run(newLevel, levelThreshold, pet.user_id);
+      WHERE id = ?
+    `).run(newLevel, levelThreshold, pet.id);
 
     let newStage = pet.growth_stage;
     if (newLevel >= 5 && pet.growth_stage === '宠物蛋') {
@@ -33,7 +38,7 @@ function checkLevelUp(pet) {
     }
 
     if (newStage !== pet.growth_stage) {
-      db.prepare('UPDATE pets SET growth_stage = ? WHERE user_id = ?').run(newStage, pet.user_id);
+      db.prepare('UPDATE pets SET growth_stage = ? WHERE id = ?').run(newStage, pet.id);
     }
 
     try {
@@ -178,15 +183,25 @@ router.post('/create', authenticateToken, (req, res) => {
       return res.status(400).json({ error: '已经拥有宠物了' });
     }
 
-    const species = db.prepare('SELECT id FROM pet_species WHERE id = ?').get(species_id);
+    const species = db.prepare('SELECT * FROM pet_species WHERE id = ?').get(species_id);
     if (!species) {
       return res.status(400).json({ error: '无效的宠物种类' });
     }
 
+    let baseStats = { attack: 10, defense: 10, speed: 10 };
+    try {
+      if (species.base_stats) {
+        const parsed = JSON.parse(species.base_stats);
+        baseStats.attack = parsed.attack || 10;
+        baseStats.defense = parsed.defense || 10;
+        baseStats.speed = parsed.speed || 10;
+      }
+    } catch (e) { /* 使用默认值 */ }
+
     const result = db.prepare(`
-      INSERT INTO pets (user_id, name, species_id)
-      VALUES (?, ?, ?)
-    `).run(req.user.userId, name, species_id);
+      INSERT INTO pets (user_id, name, species_id, attack, defense, speed)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(req.user.userId, name, species_id, baseStats.attack, baseStats.defense, baseStats.speed);
 
     const basicEquipments = db.prepare('SELECT id FROM equipment WHERE rarity = ?').all('common');
     const insertEquip = db.prepare('INSERT INTO user_equipment (user_id, equipment_id, equipped, level) VALUES (?, ?, 0, 1)');
@@ -335,7 +350,7 @@ router.post('/feed', authenticateToken, (req, res) => {
         fullQuery += bonusEffects[userItem.item_name];
       }
 
-      fullQuery += ', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?';
+      fullQuery += ', feed_count = feed_count + 1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?';
       db.prepare(fullQuery).run(...finalValues);
     }
 
@@ -353,8 +368,8 @@ router.post('/feed', authenticateToken, (req, res) => {
     const levelUp = checkLevelUp(updatedPet);
 
     try {
-      const feedCount = db.prepare('SELECT COUNT(*) as c FROM daily_task_logs WHERE user_id = ? AND task_type = ?').get(req.user.userId, 'feed_pet')?.c || 0;
-      checkAndAwardAchievement(req.user.userId, 'feed_pet', feedCount + 1);
+      const feedCount = db.prepare('SELECT feed_count FROM pets WHERE user_id = ?').get(req.user.userId)?.feed_count || 0;
+      checkAndAwardAchievement(req.user.userId, 'feed_pet', feedCount);
     } catch (e) { console.error('成就检查失败:', e); }
 
     res.json({
@@ -545,10 +560,15 @@ router.post('/rebirth', authenticateToken, (req, res) => {
         attack = ?,
         defense = ?,
         speed = ?,
+        growth_stage = '宠物蛋',
+        stamina = 100,
+        hunger = 100,
+        mood = 100,
+        health = 100,
         rebirth_count = rebirth_count + 1,
         updated_at = CURRENT_TIMESTAMP
-      WHERE user_id = ?
-    `).run(newAttack, newDefense, newSpeed, req.user.userId);
+      WHERE id = ?
+    `).run(newAttack, newDefense, newSpeed, pet.id);
 
     db.prepare('UPDATE user_items SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?').run(req.user.userId, item_id);
 
