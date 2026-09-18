@@ -22,6 +22,13 @@ const args = process.argv.slice(2);
 
 const runClean = args.includes('--clean');
 
+// ---- 确保 data 目录存在 (better-sqlite3 不会自动创建目录) ----
+const dataDir = path.join(projectRoot, 'data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  console.log('已创建数据库目录:', dataDir);
+}
+
 // ---- 清理旧数据库 ----
 if (runClean) {
   console.log('=== 清理旧数据库 ===\n');
