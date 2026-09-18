@@ -1,0 +1,31 @@
+
+> class-pet-backend@1.0.0 dev
+> nodemon src/server.js
+
+[33m[nodemon] 3.1.14[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): *.*[39m
+[33m[nodemon] watching extensions: js,mjs,cjs,json[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mGET /api/classes/public-list [32m200[0m 3.283 ms - 279[0m
+[0mGET /api/classes/public-list [32m200[0m 0.600 ms - 279[0m
+[0mGET /api/admin/settings/public [32m200[0m 11.060 ms - 668[0m
+[0mGET /api/admin/statistics/public [32m200[0m 0.723 ms - 91[0m
+[0mGET /api/schools [32m200[0m 0.462 ms - 128[0m
+[0mGET /api/classes/public-list [32m200[0m 0.278 ms - 279[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.977 ms - -[0m
+[0mGET /api/admin/statistics/public [36m304[0m 0.603 ms - -[0m
+[0mGET /api/pets/species [32m200[0m 1.141 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [32m200[0m 1.251 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.418 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.370 ms - -[0m
+[0mGET /api/pets/species [36m304[0m 0.696 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [36m304[0m 0.729 ms - -[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production

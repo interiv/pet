@@ -161,7 +161,7 @@ const Login: React.FC = () => {
             <p>
               <Text strong>账号状态：</Text>
               {statusData.status === 'active' && <Tag color="green">已激活</Tag>}
-              {statusData.status === 'pending' && <Tag color="orange">待审批</Tag>}
+              {statusData.status === 'pending_approval' && <Tag color="orange">待审批</Tag>}
               {statusData.status === 'rejected' && <Tag color="red">已拒绝</Tag>}
               {statusData.status === 'disabled' && <Tag color="default">已禁用</Tag>}
             </p>
@@ -175,7 +175,7 @@ const Login: React.FC = () => {
                   <List.Item>
                     <List.Item.Meta
                       title={<>{a.class_name || `班级#${a.class_id}`}</>}
-                      description={<Text type="secondary">角色：{a.role === 'teacher' ? '教师' : '学生'} · 申请时间：{new Date(a.created_at).toLocaleString()}</Text>}
+                      description={<Text type="secondary">身份：{a.role === 'student' ? '学生' : a.teacher_type === 'head_teacher' ? '班主任' : '任课教师'} · 申请时间：{new Date(a.created_at).toLocaleString()}</Text>}
                     />
                     {a.status === 'approved' && <Tag color="green">已通过</Tag>}
                     {a.status === 'pending' && <Tag color="orange">待审批</Tag>}

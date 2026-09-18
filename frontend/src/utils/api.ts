@@ -282,6 +282,13 @@ export const leaderboardAPI = {
 
 export const adminAPI = {
   // 教师管理
+  createTeacher: (data: {
+    username: string;
+    password: string;
+    email?: string;
+    class_id?: number;
+    teacher_identity?: 'head_teacher' | 'teacher';
+  }) => api.post('/admin/teachers', data),
   getTeachers: (params?: { status?: string; search?: string }) => api.get('/admin/teachers', { params }),
   getPendingTeachers: () => api.get('/admin/pending-teachers'),
   approveTeacher: (teacher_id: number, action: 'approve' | 'reject') => api.post('/admin/approve-teacher', { teacher_id, action }),

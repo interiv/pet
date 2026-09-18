@@ -26,6 +26,9 @@ router.get('/public-list', (req, res) => {
     const classes = db.prepare(`
       SELECT c.id, c.name, c.grade, c.slug, c.school_id,
         s.name AS school_name,
+        CASE WHEN c.head_teacher_id IS NOT NULL
+          OR EXISTS (SELECT 1 FROM class_teachers ct WHERE ct.class_id = c.id AND ct.role = 'head_teacher')
+          THEN 1 ELSE 0 END AS has_head_teacher,
         (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') as student_count
       FROM classes c
       LEFT JOIN schools s ON c.school_id = s.id
@@ -488,13 +491,16 @@ router.post('/register-with-invite', async (req, res) => {
   try {
     const { username, password, email, role, invitation_code } = req.body;
 
+    // 用户名统一去掉首尾空格
+    const uname = String(username || '').trim();
+
     // 验证必填字段
-    if (!username || !password || !invitation_code) {
+    if (!uname || !password || !invitation_code) {
       return res.status(400).json({ error: '用户名、密码和邀请码为必填项' });
     }
 
-    // 检查用户名是否已存在
-    const existingUser = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+    // 检查用户名是否已存在（忽略大小写）
+    const existingUser = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE').get(uname);
     if (existingUser) {
       return res.status(400).json({ error: '用户名已存在' });
     }
@@ -533,7 +539,7 @@ router.post('/register-with-invite', async (req, res) => {
     const result = db.prepare(`
       INSERT INTO users (username, password_hash, email, role, class_id, status)
       VALUES (?, ?, ?, ?, ?, 'active')
-    `).run(username, passwordHash, email, role || 'student', invitation.class_id);
+    `).run(uname, passwordHash, email, role || 'student', invitation.class_id);
 
     const userId = result.lastInsertRowid;
 

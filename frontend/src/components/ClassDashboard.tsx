@@ -42,7 +42,7 @@ const ClassDashboard: React.FC = () => {
 
   useEffect(() => {
     const s = io(
-      (import.meta as any).env.VITE_API_URL?.replace('/api', '') || 'http://localhost:3000',
+      (import.meta as any).env.VITE_API_URL?.replace('/api', '') || window.location.origin,
       { transports: ['websocket', 'polling'] }
     );
     setSocket(s);

@@ -27,10 +27,11 @@ const Register: React.FC = () => {
   const [schools, setSchools] = useState<any[]>([]);
   const [selectedSchoolId, setSelectedSchoolId] = useState<number | null>(null);
   const [selectedRole, setSelectedRole] = useState('student');
-  const [teacherAction, setTeacherAction] = useState<'create' | 'join'>('create');
+  const [teacherType, setTeacherType] = useState<'head_teacher' | 'teacher'>('head_teacher');
   const [inviteCode, setInviteCode] = useState('');
   const [inviteInfo, setInviteInfo] = useState<any>(null);
   const isMobile = useMobile();
+  const [form] = Form.useForm();
 
   useEffect(() => {
     loadClasses();
@@ -61,10 +62,13 @@ const Register: React.FC = () => {
     }
   };
 
-  // 按学校筛选班级；selectedSchoolId 为 null 时返回全部
+  // 按学校筛选班级；未分配学校的历史班级始终保留显示，避免选校后"消失"
   const filteredClasses = selectedSchoolId
-    ? classes.filter((c: any) => c.school_id === selectedSchoolId)
+    ? classes.filter((c: any) => c.school_id === selectedSchoolId || !c.school_id)
     : classes;
+
+  // 申请班主任时，只显示还没有班主任的班级（前端直接不展示，服务端仍会二次校验）
+  const headTeacherCandidates = filteredClasses.filter((c: any) => !c.has_head_teacher);
 
   const validateInviteCode = async (code: string) => {
     if (!code) return;
@@ -99,44 +103,19 @@ const Register: React.FC = () => {
         message.success('注册成功并已加入班级！');
         navigate('/');
       } else {
-        // 普通注册流程
-        // 如果是教师且选择创建新班级
-        if (role === 'teacher' && teacherAction === 'create') {
-          // 先注册账号（带上 create_class 标记）
-          const response = await authAPI.register({
-            ...registerData,
-            create_class: true
-          });
-          
-          login(response.data.token, response.data.user);
-          
-          // 然后创建班级
-          try {
-            const classResponse = await classAPI.createClass({
-              name: values.class_name,
-              grade: values.class_grade
-            });
-            
-            message.success(`注册成功！班级「${values.class_name}」已创建，推荐码：${classResponse.data.invitation_code}`);
-            navigate('/');
-          } catch (classError: any) {
-            message.error(`账号注册成功，但班级创建失败：${classError.response?.data?.error || '未知错误'}`);
-            navigate('/');
-          }
+        // 普通注册：学生 / 教师（均需选择班级，等待审批）
+        const response = await authAPI.register({
+          ...registerData,
+          role,
+          requested_class_ids: values.requested_class_ids
+        });
+        if (response.data.pending) {
+          message.success(response.data.message);
+          navigate('/login');
         } else {
-          // 学生或申请加入现有班级的教师
-          const response = await authAPI.register({
-            ...registerData,
-            requested_class_ids: values.requested_class_ids
-          });
-          if (response.data.pending) {
-            message.success(response.data.message);
-            navigate('/login');
-          } else {
-            login(response.data.token, response.data.user);
-            message.success('注册成功！');
-            navigate('/');
-          }
+          login(response.data.token, response.data.user);
+          message.success('注册成功！');
+          navigate('/');
         }
       }
     } catch (error: any) {
@@ -163,6 +142,7 @@ const Register: React.FC = () => {
         </div>
 
         <Form
+          form={form}
           name="register"
           onFinish={onFinish}
           autoComplete="off"
@@ -170,6 +150,7 @@ const Register: React.FC = () => {
         >
           <Form.Item
             name="username"
+            label="用户名"
             rules={[
               { required: true, message: '请输入用户名!' },
               { min: 3, message: '用户名至少 3 个字符!' }
@@ -183,18 +164,20 @@ const Register: React.FC = () => {
 
           <Form.Item
             name="email"
+            label="邮箱（选填）"
             rules={[
               { type: 'email', message: '请输入有效的邮箱地址!' }
             ]}
           >
             <Input
               prefix={<MailOutlined />}
-              placeholder="邮箱（可选）"
+              placeholder="邮箱（选填）"
             />
           </Form.Item>
 
           <Form.Item
             name="password"
+            label="密码"
             rules={[
               { required: true, message: '请输入密码!' },
               { min: 6, message: '密码至少 6 个字符!' }
@@ -208,6 +191,7 @@ const Register: React.FC = () => {
 
           <Form.Item
             name="confirmPassword"
+            label="确认密码"
             dependencies={['password']}
             rules={[
               { required: true, message: '请确认密码!' },
@@ -229,7 +213,9 @@ const Register: React.FC = () => {
 
           <Form.Item
             name="role"
+            label="注册身份"
             initialValue="student"
+            rules={[{ required: true, message: '请选择注册身份' }]}
           >
             <Select placeholder="选择角色" onChange={(value) => setSelectedRole(value)} disabled={!!inviteInfo && inviteInfo.role_filter !== 'any'}>
               <Option value="student">学生</Option>
@@ -257,39 +243,24 @@ const Register: React.FC = () => {
             />
           )}
 
-          {/* 手动输入推荐码 */}
-          {!inviteInfo && (
-            <Form.Item
-              name="invitation_code"
-              label="班级推荐码（可选）"
-              tooltip="如果老师给了你推荐码或邀请链接，请在这里输入推荐码"
-            >
-              <Input
-                prefix={<LinkOutlined />}
-                placeholder="输入老师给你的推荐码"
-                value={inviteCode}
-                onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-                onBlur={(e) => {
-                  if (e.target.value) {
-                    validateInviteCode(e.target.value.toUpperCase());
-                  }
-                }}
-              />
-            </Form.Item>
-          )}
+          {/* 班级推荐码手动输入暂时隐藏：注册改为直接选择学校和班级 */}
 
           {!inviteInfo && (
             <Form.Item
               name="school_id"
-              label="选择学校（导航用）"
-              tooltip="先选学校可快速缩小班级范围；如你的学校不在列表中，不选即可"
+              label="选择所在学校"
+              tooltip="选择学校后，下方只会显示该学校的班级"
+              rules={[{ required: true, message: '请选择所在学校' }]}
             >
               <Select
-                allowClear
                 showSearch
-                placeholder="选择所在学校（可选）"
+                placeholder="请选择所在学校"
                 optionFilterProp="label"
-                onChange={(v: number | undefined) => setSelectedSchoolId(v ?? null)}
+                onChange={(v: number) => {
+                  setSelectedSchoolId(v);
+                  // 学校变化后清空已选班级，避免选到别校的班级
+                  form.setFieldsValue({ requested_class_id: undefined, requested_class_ids: undefined });
+                }}
                 options={schools.map((s: any) => ({ value: s.id, label: `${s.name}${s.city ? ` - ${s.city}` : ''}` }))}
               />
             </Form.Item>
@@ -312,57 +283,62 @@ const Register: React.FC = () => {
           {!inviteInfo && selectedRole === 'teacher' && (
             <>
               <Form.Item
-                name="teacher_action"
-                label="您希望如何加入系统？"
-                initialValue="create"
+                name="teacher_type"
+                label="教师类型"
+                initialValue="head_teacher"
+                rules={[{ required: true, message: '请选择教师类型' }]}
               >
-                <Select onChange={(value) => setTeacherAction(value)}>
-                  <Option value="create">创建新班级（成为班主任）</Option>
-                  <Option value="join">申请加入现有班级</Option>
+                <Select
+                  onChange={(value) => {
+                    setTeacherType(value);
+                    // 切换身份后清空已选班级（两种身份用的字段不同）
+                    form.setFieldsValue({ requested_class_id: undefined, requested_class_ids: undefined });
+                  }}
+                >
+                  <Option value="head_teacher">班主任（只能选择一个班级）</Option>
+                  <Option value="teacher">任课教师（可同时申请多个班级）</Option>
                 </Select>
               </Form.Item>
 
-              {teacherAction === 'create' && (
-                <>
-                  <Form.Item
-                    name="class_name"
-                    label="班级名称"
-                    rules={[
-                      { required: true, message: '请输入班级名称!' },
-                      { min: 2, max: 50, message: '班级名称长度为2-50个字符!' }
-                    ]}
-                    tooltip="例如：三年级二班、高一(3)班"
+              {teacherType === 'head_teacher' ? (
+                <Form.Item
+                  name="requested_class_id"
+                  label="选择要担任班主任的班级"
+                  rules={[{ required: true, message: '请选择要担任班主任的班级' }]}
+                >
+                  <Select
+                    placeholder={
+                      headTeacherCandidates.length
+                        ? '选择班级'
+                        : '当前暂无缺少班主任的班级，请联系管理员'
+                    }
+                    showSearch
+                    optionFilterProp="children"
                   >
-                    <Input placeholder="输入班级名称，例如：三年级二班" />
-                  </Form.Item>
-
-                  <Form.Item
-                    name="class_grade"
-                    label="年级（可选）"
-                    tooltip="例如：三年级、高一、2024级"
-                  >
-                    <Input placeholder="输入年级，例如：三年级" />
-                  </Form.Item>
-
-                  <Alert
-                    message="创建班级说明"
-                    description="创建后您将成为该班级的班主任，自动生成推荐码，学生可通过推荐码加入您的班级。"
-                    type="info"
-                    showIcon
-                    style={{ marginBottom: 16 }}
-                  />
-                </>
-              )}
-
-              {teacherAction === 'join' && (
+                    {headTeacherCandidates.map(c => (
+                      <Option key={c.id} value={c.id}>
+                        {c.name} {c.grade ? `(${c.grade})` : ''}{c.school_name ? ` · ${c.school_name}` : ''}
+                      </Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              ) : (
                 <Form.Item
                   name="requested_class_ids"
-                  label="选择要申请的班级（可多选）"
+                  label="选择要加入的班级（可多选）"
                   rules={[{ required: true, message: '请至少选择一个班级' }]}
                 >
-                  <Select mode="multiple" placeholder={filteredClasses.length ? '选择要申请的班级' : '当前暂无公开班级'} maxTagCount={2} showSearch optionFilterProp="children">
+                  <Select
+                    mode="multiple"
+                    placeholder={filteredClasses.length ? '选择要加入的班级' : '当前学校暂无公开班级'}
+                    maxTagCount={2}
+                    showSearch
+                    optionFilterProp="children"
+                  >
                     {filteredClasses.map(c => (
-                      <Option key={c.id} value={c.id}>{c.name} {c.grade ? `(${c.grade})` : ''}{c.school_name ? ` · ${c.school_name}` : ''}</Option>
+                      <Option key={c.id} value={c.id}>
+                        {c.name} {c.grade ? `(${c.grade})` : ''}{c.school_name ? ` · ${c.school_name}` : ''}
+                      </Option>
                     ))}
                   </Select>
                 </Form.Item>

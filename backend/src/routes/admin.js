@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const bcrypt = require('bcryptjs');
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { getChinaDate } = require('../config/timezone');
@@ -10,6 +11,49 @@ const requireAdmin = (req, res, next) => {
   }
   next();
 };
+
+// 删除用户前，清理所有引用该用户的外键数据：
+// - 外键列 NOT NULL 的表视为该用户的私有数据 → 删除记录
+// - 外键列可空的表视为共享实体（如班级的班主任）→ 置空引用，保留实体
+function purgeUserData(userId) {
+  db.pragma('foreign_keys = OFF');
+  try {
+    const run = db.transaction(() => {
+      // 学生若已入班，先扣减班级人数计数（审批通过时 +1，删除时需 -1）
+      const target = db.prepare('SELECT role, class_id FROM users WHERE id = ?').get(userId);
+      if (target && target.role === 'student' && target.class_id) {
+        db.prepare('UPDATE classes SET student_count = MAX(student_count - 1, 0) WHERE id = ?').run(target.class_id);
+      }
+
+      // 先清理宠物的子表（pet_skills 不直接引用 users）
+      db.prepare(`DELETE FROM pet_skills WHERE pet_id IN (SELECT id FROM pets WHERE user_id = ?)`).run(userId);
+
+      const tables = db.prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`
+      ).all();
+      for (const { name } of tables) {
+        if (name === 'users') continue;
+        const fks = db.prepare(`PRAGMA foreign_key_list("${name}")`).all().filter(fk => fk.table === 'users');
+        if (fks.length === 0) continue;
+        const cols = db.prepare(`PRAGMA table_info("${name}")`).all();
+        for (const fk of fks) {
+          const col = cols.find(c => c.name === fk.from);
+          if (!col) continue;
+          if (col.notnull) {
+            db.prepare(`DELETE FROM "${name}" WHERE "${fk.from}" = ?`).run(userId);
+          } else {
+            db.prepare(`UPDATE "${name}" SET "${fk.from}" = NULL WHERE "${fk.from}" = ?`).run(userId);
+          }
+        }
+      }
+
+      db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    });
+    run();
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+}
 
 // ==================== 教师管理 ====================
 
@@ -76,6 +120,85 @@ router.post('/approve-teacher', authenticateToken, requireAdmin, (req, res) => {
   }
 });
 
+// 管理员直接创建教师账号（无需教师自行注册，创建后即为已激活状态）
+// 可选：同时指定班级与身份（head_teacher=班主任 / teacher=任课教师）
+router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { username, password, email, class_id, teacher_identity } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: '用户名和密码为必填项' });
+    }
+    if (String(username).trim().length < 3) {
+      return res.status(400).json({ error: '用户名至少 3 个字符' });
+    }
+    if (String(password).length < 6) {
+      return res.status(400).json({ error: '密码至少 6 个字符' });
+    }
+
+    const existingUser = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE').get(String(username).trim());
+    if (existingUser) {
+      return res.status(400).json({ error: '用户名已存在' });
+    }
+
+    // 指定班级时的校验
+    const identity = teacher_identity === 'head_teacher' ? 'head_teacher' : 'teacher';
+    let targetClass = null;
+    if (class_id) {
+      targetClass = db.prepare('SELECT id, name, head_teacher_id FROM classes WHERE id = ?').get(class_id);
+      if (!targetClass) {
+        return res.status(400).json({ error: '指定的班级不存在' });
+      }
+      if (identity === 'head_teacher') {
+        const hasHeadTeacher = targetClass.head_teacher_id
+          || db.prepare(`SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(class_id);
+        if (hasHeadTeacher) {
+          return res.status(400).json({ error: `班级「${targetClass.name}」已有班主任，无法再指定班主任` });
+        }
+      }
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // 创建账号 + 班级归属（同一事务）
+    const createTeacher = db.transaction(() => {
+      const result = db.prepare(`
+        INSERT INTO users (username, password_hash, email, role, status, created_at)
+        VALUES (?, ?, ?, 'teacher', 'active', datetime('now'))
+      `).run(String(username).trim(), passwordHash, email || null);
+
+      const teacherId = result.lastInsertRowid;
+
+      if (targetClass) {
+        if (identity === 'head_teacher') {
+          db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'head_teacher')`)
+            .run(targetClass.id, teacherId);
+          db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?').run(teacherId, targetClass.id);
+        } else {
+          db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'teacher')`)
+            .run(targetClass.id, teacherId);
+        }
+      }
+
+      return teacherId;
+    });
+
+    const teacherId = createTeacher();
+
+    res.json({
+      message: targetClass
+        ? `教师创建成功，已${identity === 'head_teacher' ? '设为班主任' : '加入'}班级「${targetClass.name}」`
+        : '教师创建成功',
+      teacher_id: teacherId,
+      class_id: targetClass ? targetClass.id : null,
+      teacher_identity: targetClass ? identity : null
+    });
+  } catch (error) {
+    console.error('创建教师失败:', error);
+    res.status(500).json({ error: '创建教师失败' });
+  }
+});
+
 // 更新教师信息
 router.put('/teachers/:id', authenticateToken, requireAdmin, (req, res) => {
   try {
@@ -89,7 +212,18 @@ router.put('/teachers/:id', authenticateToken, requireAdmin, (req, res) => {
     
     const updates = [];
     const params = [];
-    if (username !== undefined) { updates.push('username = ?'); params.push(username); }
+    if (username !== undefined) {
+      const uname = String(username || '').trim();
+      if (!uname) {
+        return res.status(400).json({ error: '用户名不能为空' });
+      }
+      // 改名时校验重名（忽略大小写，排除自己）
+      const dup = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE AND id <> ?').get(uname, id);
+      if (dup) {
+        return res.status(400).json({ error: '用户名已存在' });
+      }
+      updates.push('username = ?'); params.push(uname);
+    }
     if (email !== undefined) { updates.push('email = ?'); params.push(email); }
     if (avatar !== undefined) { updates.push('avatar = ?'); params.push(avatar); }
     if (status !== undefined) { updates.push('status = ?'); params.push(status); }
@@ -122,7 +256,7 @@ router.delete('/teachers/:id', authenticateToken, requireAdmin, (req, res) => {
       db.prepare(`UPDATE users SET status = 'disabled' WHERE id = ?`).run(id);
       res.json({ message: '教师已被禁用' });
     } else if (action === 'delete') {
-      db.prepare(`DELETE FROM users WHERE id = ? AND role = 'teacher'`).run(id);
+      purgeUserData(id);
       res.json({ message: '教师已删除' });
     } else {
       res.status(400).json({ error: '无效的操作' });
@@ -260,7 +394,18 @@ router.put('/students/:id', authenticateToken, (req, res) => {
     
     const updates = [];
     const params = [];
-    if (username !== undefined) { updates.push('username = ?'); params.push(username); }
+    if (username !== undefined) {
+      const uname = String(username || '').trim();
+      if (!uname) {
+        return res.status(400).json({ error: '用户名不能为空' });
+      }
+      // 改名时校验重名（忽略大小写，排除自己）
+      const dup = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE AND id <> ?').get(uname, id);
+      if (dup) {
+        return res.status(400).json({ error: '用户名已存在' });
+      }
+      updates.push('username = ?'); params.push(uname);
+    }
     if (email !== undefined) { updates.push('email = ?'); params.push(email); }
     if (avatar !== undefined) { updates.push('avatar = ?'); params.push(avatar); }
     if (class_id !== undefined) { updates.push('class_id = ?'); params.push(class_id); }
@@ -352,10 +497,7 @@ router.delete('/students/:id', authenticateToken, (req, res) => {
       db.prepare(`UPDATE users SET status = 'disabled' WHERE id = ?`).run(id);
       res.json({ message: '学生已被禁用' });
     } else if (action === 'delete') {
-      db.prepare(`DELETE FROM pets WHERE user_id = ?`).run(id);
-      db.prepare(`DELETE FROM user_items WHERE user_id = ?`).run(id);
-      db.prepare(`DELETE FROM user_equipment WHERE user_id = ?`).run(id);
-      db.prepare(`DELETE FROM users WHERE id = ? AND role = 'student'`).run(id);
+      purgeUserData(id);
       res.json({ message: '学生及其数据已删除' });
     } else {
       res.status(400).json({ error: '无效的操作' });
@@ -596,40 +738,70 @@ router.put('/class-applications/:id/review', authenticateToken, (req, res) => {
       return res.status(403).json({ error: '学生无法审批申请' });
     }
 
-    // 更新申请状态
-    db.prepare(`
-      UPDATE class_applications
-      SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(status, req.user.userId, id);
-
-    // 如果批准，将用户分配到班级
-    if (status === 'approved') {
-      if (application.role === 'student') {
-        db.prepare('UPDATE users SET class_id = ?, status = ? WHERE id = ?')
-          .run(application.class_id, 'active', application.user_id);
-        // 更新班级学生数
-        db.prepare('UPDATE classes SET student_count = student_count + 1 WHERE id = ?')
-          .run(application.class_id);
-      } else if (application.role === 'teacher') {
-        // 将老师添加到班级老师列表
-        const existing = db.prepare('SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ?')
-          .get(application.class_id, application.user_id);
-        if (!existing) {
-          db.prepare('INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, ?)')
-            .run(application.class_id, application.user_id, 'teacher');
-        }
-        // 检查是否所有申请都通过了
-        const pendingApps = db.prepare(`
-          SELECT id FROM class_applications
-          WHERE user_id = ? AND status = 'pending'
-        `).all(application.user_id);
-        if (pendingApps.length === 0) {
-          db.prepare('UPDATE users SET status = ? WHERE id = ?')
-            .run('active', application.user_id);
-        }
+    // 班主任申请审批前校验班主任唯一性（须在更新申请状态之前，避免"已通过"却不生效）
+    if (status === 'approved' && application.teacher_type === 'head_teacher') {
+      const cls = db.prepare('SELECT name, head_teacher_id FROM classes WHERE id = ?').get(application.class_id);
+      const existingHeadTeacher = (cls && cls.head_teacher_id)
+        || db.prepare(`SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(application.class_id);
+      if (existingHeadTeacher) {
+        return res.status(400).json({
+          error: `班级「${cls?.name || application.class_id}」已有班主任，无法作为班主任加入`
+        });
+      }
+      // 一位教师只能担任一个班级的班主任
+      const otherClass = db.prepare('SELECT name FROM classes WHERE head_teacher_id = ?').get(application.user_id);
+      if (otherClass) {
+        return res.status(400).json({
+          error: `该教师已是班级「${otherClass.name}」的班主任，不能同时担任两个班级的班主任`
+        });
       }
     }
+
+    const runApproval = db.transaction(() => {
+      // 更新申请状态
+      db.prepare(`
+        UPDATE class_applications
+        SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(status, req.user.userId, id);
+
+      // 如果批准，将用户分配到班级
+      if (status === 'approved') {
+        if (application.role === 'student') {
+          db.prepare('UPDATE users SET class_id = ?, status = ? WHERE id = ?')
+            .run(application.class_id, 'active', application.user_id);
+          // 更新班级学生数
+          db.prepare('UPDATE classes SET student_count = student_count + 1 WHERE id = ?')
+            .run(application.class_id);
+        } else if (application.teacher_type === 'head_teacher') {
+          // 班主任申请：同时写入 class_teachers(权限) 与 classes.head_teacher_id
+          const existing = db.prepare('SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ?')
+            .get(application.class_id, application.user_id);
+          if (existing) {
+            db.prepare(`UPDATE class_teachers SET role = 'head_teacher' WHERE id = ?`).run(existing.id);
+          } else {
+            db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'head_teacher')`)
+              .run(application.class_id, application.user_id);
+          }
+          db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?')
+            .run(application.user_id, application.class_id);
+          // 激活账号
+          db.prepare(`UPDATE users SET status = 'active' WHERE id = ?`).run(application.user_id);
+        } else if (application.role === 'teacher') {
+          // 任课教师申请：以普通教师身份加入班级（不占用班主任）
+          const existing = db.prepare('SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ?')
+            .get(application.class_id, application.user_id);
+          if (!existing) {
+            db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'teacher')`)
+              .run(application.class_id, application.user_id);
+          }
+          // 激活账号
+          db.prepare(`UPDATE users SET status = 'active' WHERE id = ?`).run(application.user_id);
+        }
+      }
+    });
+
+    runApproval();
 
     res.json({ message: status === 'approved' ? '已批准申请' : '已拒绝申请' });
   } catch (error) {
@@ -641,23 +813,31 @@ router.put('/class-applications/:id/review', authenticateToken, (req, res) => {
 // 创建班级
 router.post('/classes', authenticateToken, requireAdmin, (req, res) => {
   try {
-    const { name, grade, teacher_id } = req.body;
-    
+    const { name, grade, teacher_id, school_id } = req.body;
+
     if (!name) {
       return res.status(400).json({ error: '班级名称不能为空' });
     }
-    
+
     if (teacher_id) {
       const teacher = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher' AND status = 'active'`).get(teacher_id);
       if (!teacher) {
         return res.status(400).json({ error: '指定的教师不存在或未激活' });
       }
     }
-    
+
+    if (!school_id) {
+      return res.status(400).json({ error: '请选择所属学校' });
+    }
+    const school = db.prepare(`SELECT id FROM schools WHERE id = ?`).get(school_id);
+    if (!school) {
+      return res.status(400).json({ error: '指定的学校不存在' });
+    }
+
     const result = db.prepare(`
-      INSERT INTO classes (name, grade, teacher_id, student_count, total_exp, created_at)
-      VALUES (?, ?, ?, 0, 0, datetime('now'))
-    `).run(name, grade || null, teacher_id || null);
+      INSERT INTO classes (name, grade, teacher_id, school_id, student_count, total_exp, created_at)
+      VALUES (?, ?, ?, ?, 0, 0, datetime('now'))
+    `).run(name, grade || null, teacher_id || null, school_id);
     
     res.json({ message: '班级创建成功', class_id: result.lastInsertRowid });
   } catch (error) {
@@ -787,7 +967,12 @@ router.delete('/classes/:id', authenticateToken, requireAdmin, (req, res) => {
       return res.status(400).json({ error: '班级中还有学生，无法删除' });
     }
     
-    db.prepare(`UPDATE classes SET teacher_id = NULL WHERE id = ?`).run(id);
+    // 清理关联记录，避免外键约束失败
+    db.prepare(`DELETE FROM class_applications WHERE class_id = ?`).run(id);
+    db.prepare(`DELETE FROM class_teachers WHERE class_id = ?`).run(id);
+    db.prepare(`DELETE FROM class_invitations WHERE class_id = ?`).run(id);
+    db.prepare(`UPDATE users SET class_id = NULL WHERE class_id = ?`).run(id);
+    db.prepare(`UPDATE classes SET teacher_id = NULL, head_teacher_id = NULL WHERE id = ?`).run(id);
     db.prepare(`DELETE FROM classes WHERE id = ?`).run(id);
     res.json({ message: '班级已删除' });
   } catch (error) {
@@ -1694,14 +1879,16 @@ router.post('/students/import', authenticateToken, async (req, res) => {
     const importStudent = db.transaction((student) => {
       const { username, password, email, real_name } = student;
 
+      const uname = String(username || '').trim();
+
       // 验证必填字段
-      if (!username || !password) {
+      if (!uname || !password) {
         results.failed.push({ ...student, error: '用户名和密码不能为空' });
         return;
       }
 
-      // 检查用户名是否已存在
-      const existingUser = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+      // 检查用户名是否已存在（忽略大小写）
+      const existingUser = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE').get(uname);
       if (existingUser) {
         results.skipped.push({ ...student, error: '用户名已存在' });
         return;
@@ -1714,7 +1901,7 @@ router.post('/students/import', authenticateToken, async (req, res) => {
       const result = db.prepare(`
         INSERT INTO users (username, password_hash, email, role, class_id, status, created_at)
         VALUES (?, ?, ?, 'student', ?, 'active', datetime('now'))
-      `).run(username, passwordHash, email || null, classId);
+      `).run(uname, passwordHash, email || null, classId);
 
       // 如果有真实姓名字段，可以保存到某个地方
       // 这里可以扩展
@@ -2175,7 +2362,8 @@ router.post('/clean-all-data', authenticateToken, requireAdmin, (req, res) => {
       db.prepare(`DELETE FROM forum_likes`).run();
       db.prepare(`DELETE FROM forum_posts`).run();
       db.prepare(`DELETE FROM forum_threads`).run();
-      db.prepare(`DELETE FROM forum_boards`).run();
+      db.prepare(`DELETE FROM forum_thread_tags`).run();
+      db.prepare(`DELETE FROM forums`).run();
 
       db.prepare(`DELETE FROM boss_battle_answers`).run();
       db.prepare(`DELETE FROM boss_battle_rewards`).run();

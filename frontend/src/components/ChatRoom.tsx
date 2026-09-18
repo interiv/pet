@@ -83,7 +83,7 @@ const ChatRoom: React.FC = () => {
     const token = localStorage.getItem('token');
     if (!token || !user?.id) return;
 
-    const socket = io((import.meta as any).env.VITE_API_URL?.replace('/api', '') || 'http://localhost:3000', {
+    const socket = io((import.meta as any).env.VITE_API_URL?.replace('/api', '') || window.location.origin, {
       auth: { token },
       transports: ['websocket'],
     });

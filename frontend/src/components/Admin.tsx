@@ -94,7 +94,8 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
   return (
     <div style={{ padding: isMobile ? 12 : 24 }}>
       <h2 style={{ marginBottom: isMobile ? 16 : 24 }}>{getTitle()}</h2>
-      <Tabs activeKey={activeTab} onChange={setActiveTab} items={getTabItems()} />
+      {/* destroyOnHidden：切换页签时重新挂载，确保每次进入都拉取最新数据（避免跨页签数据不更新的问题） */}
+      <Tabs activeKey={activeTab} onChange={setActiveTab} items={getTabItems()} destroyOnHidden />
     </div>
   );
 };
@@ -619,7 +620,14 @@ const ApplicationManagement: React.FC = () => {
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     { title: '班级', dataIndex: 'class_name', key: 'class_name', render: (name: string) => <Tag color="blue">{name}</Tag> },
     { title: '用户名', dataIndex: 'username', key: 'username' },
-    { title: '角色', dataIndex: 'role', key: 'role', render: (r: string) => r === 'student' ? <Tag>学生</Tag> : <Tag color="purple">教师</Tag> },
+    {
+      title: '身份',
+      dataIndex: 'role',
+      key: 'role',
+      render: (r: string, record: any) => r === 'student'
+        ? <Tag>学生</Tag>
+        : record.teacher_type === 'head_teacher' ? <Tag color="purple">班主任</Tag> : <Tag color="geekblue">任课教师</Tag>
+    },
     { title: '状态', dataIndex: 'status', key: 'status', render: getStatusTag },
     { title: '申请时间', dataIndex: 'created_at', key: 'created_at', render: (t: string) => new Date(t).toLocaleString() },
     {
@@ -675,11 +683,36 @@ const TeacherManagement: React.FC = () => {
   const [searchText, setSearchText] = useState('');
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingTeacher, setEditingTeacher] = useState<any>(null);
+  const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [schools, setSchools] = useState<any[]>([]);
+  const [classList, setClassList] = useState<any[]>([]);
   const [form] = Form.useForm();
+  const [createForm] = Form.useForm();
 
   useEffect(() => {
     loadTeachers();
   }, [statusFilter, searchText]);
+
+  // 打开"添加教师"弹窗时刷新学校与班级（可能刚在其他页签新建过）
+  useEffect(() => {
+    if (!createModalVisible) return;
+    (async () => {
+      try {
+        const [sRes, cRes] = await Promise.all([schoolAPI.getSchools(), adminAPI.getClasses()]);
+        setSchools(sRes.data.schools || []);
+        setClassList(cRes.data.classes || []);
+      } catch (e) {
+        console.error('加载学校/班级列表失败', e);
+      }
+    })();
+  }, [createModalVisible]);
+
+  const createSchoolId = Form.useWatch('school_id', createForm);
+  const createIdentity = Form.useWatch('teacher_identity', createForm) || 'teacher';
+  // 选学校后只显示该校班级（未分配学校的历史班级始终保留）
+  const createClassOptions = createSchoolId
+    ? classList.filter((c: any) => c.school_id === createSchoolId || !c.school_id)
+    : classList;
 
   const loadTeachers = async () => {
     setLoading(true);
@@ -697,6 +730,21 @@ const TeacherManagement: React.FC = () => {
     setEditingTeacher(record);
     form.setFieldsValue(record);
     setEditModalVisible(true);
+  };
+
+  const handleCreate = async () => {
+    try {
+      const values = await createForm.validateFields();
+      const res = await adminAPI.createTeacher(values);
+      message.success(res.data?.message || '教师创建成功，可直接登录使用');
+      setCreateModalVisible(false);
+      createForm.resetFields();
+      loadTeachers();
+    } catch (error: any) {
+      if (error?.response?.data?.error) {
+        message.error(error.response.data.error);
+      }
+    }
   };
 
   const handleUpdate = async () => {
@@ -765,9 +813,81 @@ const TeacherManagement: React.FC = () => {
             <Select.Option value="disabled">已禁用</Select.Option>
           </Select>
           <Button onClick={loadTeachers}>刷新</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalVisible(true)}>添加教师</Button>
         </Space>
       </div>
       <Table columns={columns} dataSource={teachers} rowKey="id" loading={loading} pagination={pagination} scroll={{ x: true }} />
+
+      <Modal
+        title="添加教师"
+        open={createModalVisible}
+        onOk={handleCreate}
+        onCancel={() => { setCreateModalVisible(false); createForm.resetFields(); }}
+      >
+        <Form form={createForm} layout="vertical">
+          <Form.Item
+            name="username"
+            label="用户名"
+            rules={[
+              { required: true, message: '请输入用户名' },
+              { min: 3, message: '用户名至少 3 个字符' }
+            ]}
+          >
+            <Input placeholder="教师登录用的用户名" />
+          </Form.Item>
+          <Form.Item
+            name="password"
+            label="初始密码"
+            rules={[
+              { required: true, message: '请输入初始密码' },
+              { min: 6, message: '密码至少 6 个字符' }
+            ]}
+          >
+            <Input.Password placeholder="至少 6 个字符，教师首次登录后可自行修改" />
+          </Form.Item>
+          <Form.Item
+            name="email"
+            label="邮箱（可选）"
+            rules={[{ type: 'email', message: '请输入有效的邮箱地址' }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item name="school_id" label="所属学校（用于筛选班级）">
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="选择学校（可选）"
+              onChange={() => createForm.setFieldValue('class_id', undefined)}
+              options={schools.map((s: any) => ({ value: s.id, label: `${s.name}${s.city ? ` - ${s.city}` : ''}` }))}
+            />
+          </Form.Item>
+          <Form.Item name="class_id" label="分配班级（可选）">
+            <Select allowClear showSearch optionFilterProp="children" placeholder={createClassOptions.length ? '选择班级' : '暂无可选班级'}>
+              {createClassOptions.map((c: any) => {
+                const hasHeadTeacher = !!c.head_teacher_id || (c.teachers || []).some((t: any) => t.role === 'head_teacher');
+                const disabled = createIdentity === 'head_teacher' && hasHeadTeacher;
+                return (
+                  <Select.Option key={c.id} value={c.id} disabled={disabled}>
+                    {c.name}{c.grade ? `（${c.grade}）` : ''}{disabled ? ' · 已有班主任' : ''}
+                  </Select.Option>
+                );
+              })}
+            </Select>
+          </Form.Item>
+          <Form.Item
+            name="teacher_identity"
+            label="教师身份"
+            initialValue="teacher"
+            tooltip="仅在选择了班级时生效：班主任会成为该班班主任，任课教师以普通教师身份加入"
+          >
+            <Select>
+              <Select.Option value="teacher">任课教师</Select.Option>
+              <Select.Option value="head_teacher">班主任</Select.Option>
+            </Select>
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Modal title="编辑教师" open={editModalVisible} onOk={handleUpdate} onCancel={() => setEditModalVisible(false)}>
         <Form form={form} layout="vertical">
@@ -911,7 +1031,12 @@ const StudentManagement: React.FC = () => {
       }
 
       const res = await adminAPI.importStudents(classId, students);
-      message.success(`导入完成：成功 ${res.data.success} 个，失败 ${res.data.failed} 个，跳过 ${res.data.skipped} 个`);
+      // 后端返回 { message, results: { success: [], failed: [], skipped: [] } }
+      const r = res.data?.results || {};
+      message.success(
+        res.data?.message ||
+        `导入完成：成功 ${r.success?.length ?? 0} 个，失败 ${r.failed?.length ?? 0} 个，跳过 ${r.skipped?.length ?? 0} 个`
+      );
       setImportModalVisible(false);
       loadStudents();
     } catch (error: any) {
@@ -1170,6 +1295,7 @@ const ClassManagement: React.FC = () => {
   const isMobile = useMobile();
   const [classes, setClasses] = useState<any[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
+  const [schools, setSchools] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -1185,7 +1311,17 @@ const ClassManagement: React.FC = () => {
   useEffect(() => {
     loadClasses();
     loadTeachers();
+    loadSchools();
   }, []);
+
+  const loadSchools = async () => {
+    try {
+      const res = await schoolAPI.getSchools();
+      setSchools(res.data.schools || []);
+    } catch (error) {
+      console.error('加载学校列表失败');
+    }
+  };
 
   const loadClasses = async () => {
     setLoading(true);
@@ -1288,6 +1424,7 @@ const ClassManagement: React.FC = () => {
 
   const openAddTeacherModal = (cls: any) => {
     setSelectedClass(cls);
+    loadTeachers();
     setAddTeacherModalVisible(true);
   };
 
@@ -1344,7 +1481,7 @@ const ClassManagement: React.FC = () => {
     <div>
       {isAdmin && (
         <div style={{ marginBottom: 16 }}>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>创建班级</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => { loadSchools(); setModalVisible(true); }}>创建班级</Button>
         </div>
       )}
       <Table columns={columns} dataSource={classes} rowKey="id" loading={loading} pagination={pagination} scroll={{ x: true }} />
@@ -1357,6 +1494,14 @@ const ClassManagement: React.FC = () => {
           <Form.Item name="grade" label="年级">
             <Input placeholder="如：高一(1)班" />
           </Form.Item>
+          <Form.Item name="school_id" label="所属学校" rules={[{ required: true, message: '请选择所属学校' }]}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder="请选择学校"
+              options={schools.map((s: any) => ({ value: s.id, label: `${s.name}${s.city ? ` - ${s.city}` : ''}` }))}
+            />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -1367,6 +1512,14 @@ const ClassManagement: React.FC = () => {
           </Form.Item>
           <Form.Item name="grade" label="年级">
             <Input />
+          </Form.Item>
+          <Form.Item name="school_id" label="所属学校" tooltip="用于学生注册时按学校筛选班级">
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder="选择学校"
+              options={schools.map((s: any) => ({ value: s.id, label: `${s.name}${s.city ? ` - ${s.city}` : ''}` }))}
+            />
           </Form.Item>
           <Form.Item name="description" label="班级简介">
             <Input.TextArea rows={3} maxLength={300} showCount />
