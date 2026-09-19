@@ -55,6 +55,91 @@ function purgeUserData(userId) {
   }
 }
 
+// 把一条班级申请"落地"到班级上（审批通过时调用）
+// 教师：班主任申请 → 成为班主任（写 class_teachers + classes.head_teacher_id）
+//       任课教师申请 → 以普通教师身份加入
+// 返回 { ok: true, ... } 或 { ok: false, reason }
+function applyApplicationToClass(application, reviewerId) {
+  const applicantId = application.user_id;
+  const cls = db.prepare('SELECT id, name, head_teacher_id FROM classes WHERE id = ?').get(application.class_id);
+  if (!cls) {
+    return { ok: false, reason: `班级 #${application.class_id} 不存在` };
+  }
+
+  const isTeacherApplication = application.role === 'teacher';
+  const isHeadTeacherApply = isTeacherApplication && application.teacher_type === 'head_teacher';
+
+  if (isHeadTeacherApply) {
+    const hasHeadTeacher = cls.head_teacher_id
+      || db.prepare(`SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(cls.id);
+    if (hasHeadTeacher) {
+      return { ok: false, reason: `班级「${cls.name}」已有班主任` };
+    }
+    const otherClass = db.prepare('SELECT name FROM classes WHERE head_teacher_id = ?').get(applicantId);
+    if (otherClass) {
+      return { ok: false, reason: `该教师已是班级「${otherClass.name}」的班主任` };
+    }
+  }
+
+  // 标记申请已通过
+  db.prepare(`
+    UPDATE class_applications
+    SET status = 'approved', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(reviewerId, application.id);
+
+  if (application.role === 'student') {
+    db.prepare('UPDATE users SET class_id = ?, status = ? WHERE id = ?')
+      .run(cls.id, 'active', applicantId);
+    db.prepare('UPDATE classes SET student_count = student_count + 1 WHERE id = ?').run(cls.id);
+    return { ok: true, classId: cls.id, className: cls.name, isHeadTeacher: false };
+  }
+
+  // 教师申请
+  const existing = db.prepare('SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ?')
+    .get(cls.id, applicantId);
+
+  if (isHeadTeacherApply) {
+    if (existing) {
+      db.prepare(`UPDATE class_teachers SET role = 'head_teacher' WHERE id = ?`).run(existing.id);
+    } else {
+      db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'head_teacher')`)
+        .run(cls.id, applicantId);
+    }
+    db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?').run(applicantId, cls.id);
+  } else if (!existing) {
+    db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'teacher')`)
+      .run(cls.id, applicantId);
+  }
+
+  // 激活账号
+  db.prepare(`UPDATE users SET status = 'active' WHERE id = ?`).run(applicantId);
+
+  return { ok: true, classId: cls.id, className: cls.name, isHeadTeacher: isHeadTeacherApply };
+}
+
+// 教师审批通过后，一并处理该教师所有待审批的班级申请
+// （供"审批教师"入口复用，避免只改账号状态却漏掉入班）
+function approveTeacherPendingApplications(teacherId, reviewerId) {
+  const applications = db.prepare(`
+    SELECT * FROM class_applications
+    WHERE user_id = ? AND status = 'pending' AND role = 'teacher'
+    ORDER BY id ASC
+  `).all(teacherId);
+
+  const applied = [];
+  const skipped = [];
+  for (const application of applications) {
+    const result = applyApplicationToClass(application, reviewerId);
+    if (result.ok) {
+      applied.push(`${result.className}${result.isHeadTeacher ? '（班主任）' : ''}`);
+    } else {
+      skipped.push(result.reason);
+    }
+  }
+  return { applied, skipped };
+}
+
 // ==================== 教师管理 ====================
 
 // 获取所有教师列表（教师/管理员可用；学生禁止）
@@ -101,16 +186,32 @@ router.get('/pending-teachers', authenticateToken, requireAdmin, (req, res) => {
 });
 
 // 审批教师注册
+// 通过后必须同时处理该教师的待审批班级申请，否则会出现"账号已激活但没进班级"
 router.post('/approve-teacher', authenticateToken, requireAdmin, (req, res) => {
   try {
     const { teacher_id, action } = req.body;
-    
+
+    const teacher = db.prepare(`SELECT id, username FROM users WHERE id = ? AND role = 'teacher'`).get(teacher_id);
+    if (!teacher) {
+      return res.status(404).json({ error: '教师不存在' });
+    }
+
     if (action === 'approve') {
-      db.prepare(`UPDATE users SET status = 'active' WHERE id = ? AND role = 'teacher'`).run(teacher_id);
-      res.json({ message: '教师审批通过' });
+      const run = db.transaction(() => {
+        db.prepare(`UPDATE users SET status = 'active' WHERE id = ?`).run(teacher_id);
+        return approveTeacherPendingApplications(teacher_id, req.user.userId);
+      });
+      const { applied, skipped } = run();
+
+      const parts = [`教师 ${teacher.username} 审批通过`];
+      if (applied.length > 0) parts.push(`已加入班级：${applied.join('、')}`);
+      if (skipped.length > 0) parts.push(`未处理的申请：${skipped.join('；')}`);
+      if (applied.length === 0 && skipped.length === 0) parts.push('该教师没有待处理的班级申请');
+
+      res.json({ message: parts.join('，'), applied_classes: applied, skipped });
     } else if (action === 'reject') {
-      db.prepare(`DELETE FROM users WHERE id = ? AND role = 'teacher' AND status = 'pending_approval'`).run(teacher_id);
-      res.json({ message: '教师注册已拒绝' });
+      purgeUserData(teacher_id);
+      res.json({ message: '教师注册已拒绝（账号及其申请数据已删除）' });
     } else {
       res.status(400).json({ error: '无效的操作' });
     }
@@ -124,7 +225,7 @@ router.post('/approve-teacher', authenticateToken, requireAdmin, (req, res) => {
 // 可选：同时指定班级与身份（head_teacher=班主任 / teacher=任课教师）
 router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { username, password, email, class_id, teacher_identity } = req.body;
+    const { username, password, email, class_id, class_ids, teacher_identity } = req.body;
 
     if (!username || !password) {
       return res.status(400).json({ error: '用户名和密码为必填项' });
@@ -141,21 +242,31 @@ router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: '用户名已存在' });
     }
 
-    // 指定班级时的校验
+    // 指定班级时的校验（支持多班级：任课教师可多选，班主任只能一个班）
     const identity = teacher_identity === 'head_teacher' ? 'head_teacher' : 'teacher';
-    let targetClass = null;
-    if (class_id) {
-      targetClass = db.prepare('SELECT id, name, head_teacher_id FROM classes WHERE id = ?').get(class_id);
-      if (!targetClass) {
-        return res.status(400).json({ error: '指定的班级不存在' });
+    let targetClassIds = Array.isArray(class_ids) && class_ids.length > 0
+      ? class_ids
+      : (class_id ? [class_id] : []);
+    targetClassIds = [...new Set(targetClassIds.map((v) => parseInt(v)).filter((n) => Number.isFinite(n)))];
+
+    if (identity === 'head_teacher' && targetClassIds.length > 1) {
+      return res.status(400).json({ error: '班主任只能分配一个班级' });
+    }
+
+    const targetClasses = [];
+    for (const cid of targetClassIds) {
+      const cls = db.prepare('SELECT id, name, head_teacher_id FROM classes WHERE id = ?').get(cid);
+      if (!cls) {
+        return res.status(400).json({ error: `班级 ID ${cid} 不存在` });
       }
       if (identity === 'head_teacher') {
-        const hasHeadTeacher = targetClass.head_teacher_id
-          || db.prepare(`SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(class_id);
+        const hasHeadTeacher = cls.head_teacher_id
+          || db.prepare(`SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(cid);
         if (hasHeadTeacher) {
-          return res.status(400).json({ error: `班级「${targetClass.name}」已有班主任，无法再指定班主任` });
+          return res.status(400).json({ error: `班级「${cls.name}」已有班主任，无法再指定班主任` });
         }
       }
+      targetClasses.push(cls);
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
@@ -169,14 +280,14 @@ router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
 
       const teacherId = result.lastInsertRowid;
 
-      if (targetClass) {
+      for (const cls of targetClasses) {
         if (identity === 'head_teacher') {
           db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'head_teacher')`)
-            .run(targetClass.id, teacherId);
-          db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?').run(teacherId, targetClass.id);
+            .run(cls.id, teacherId);
+          db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?').run(teacherId, cls.id);
         } else {
           db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'teacher')`)
-            .run(targetClass.id, teacherId);
+            .run(cls.id, teacherId);
         }
       }
 
@@ -185,13 +296,16 @@ router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
 
     const teacherId = createTeacher();
 
+    const classNames = targetClasses.map((c) => c.name);
     res.json({
-      message: targetClass
-        ? `教师创建成功，已${identity === 'head_teacher' ? '设为班主任' : '加入'}班级「${targetClass.name}」`
+      message: targetClasses.length > 0
+        ? `教师创建成功，已${identity === 'head_teacher' ? '设为班主任' : '加入'}：${classNames.map((n) => `「${n}」`).join('、')}`
         : '教师创建成功',
       teacher_id: teacherId,
-      class_id: targetClass ? targetClass.id : null,
-      teacher_identity: targetClass ? identity : null
+      class_ids: targetClasses.map((c) => c.id),
+      class_names: classNames,
+      class_id: targetClasses.length === 1 ? targetClasses[0].id : null,
+      teacher_identity: targetClasses.length > 0 ? identity : null
     });
   } catch (error) {
     console.error('创建教师失败:', error);
@@ -613,7 +727,7 @@ router.post('/classes/:id/teachers', authenticateToken, (req, res) => {
     const userId = req.user.userId;
     const userRole = req.user.role;
 
-    const cls = db.prepare(`SELECT id FROM classes WHERE id = ?`).get(id);
+    const cls = db.prepare(`SELECT id, name, head_teacher_id FROM classes WHERE id = ?`).get(id);
     if (!cls) {
       return res.status(404).json({ error: '班级不存在' });
     }
@@ -639,12 +753,40 @@ router.post('/classes/:id/teachers', authenticateToken, (req, res) => {
       return res.status(400).json({ error: '该教师已在班级中' });
     }
 
-    const result = db.prepare(`
-      INSERT INTO class_teachers (class_id, teacher_id, role)
-      VALUES (?, ?, ?)
-    `).run(id, teacher_id, role || 'teacher');
+    const targetRole = role === 'head_teacher' ? 'head_teacher' : 'teacher';
 
-    res.json({ message: '教师已添加到班级', class_teacher_id: result.lastInsertRowid });
+    // 指定为班主任时：校验班主任唯一性（一个班一个班主任、一个教师只能带一个班）
+    if (targetRole === 'head_teacher') {
+      const hasHeadTeacher = cls.head_teacher_id
+        || db.prepare(`SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(id);
+      if (hasHeadTeacher) {
+        return res.status(400).json({ error: `班级「${cls.name}」已有班主任` });
+      }
+      const otherClass = db.prepare('SELECT name FROM classes WHERE head_teacher_id = ?').get(teacher_id);
+      if (otherClass) {
+        return res.status(400).json({ error: `该教师已是班级「${otherClass.name}」的班主任` });
+      }
+    }
+
+    const addTeacher = db.transaction(() => {
+      const result = db.prepare(`
+        INSERT INTO class_teachers (class_id, teacher_id, role)
+        VALUES (?, ?, ?)
+      `).run(id, teacher_id, targetRole);
+
+      // 关键：指定班主任时必须同步 classes.head_teacher_id，否则"我的班级"等依赖该字段的功能会失效
+      if (targetRole === 'head_teacher') {
+        db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?').run(teacher_id, id);
+      }
+      return result;
+    });
+
+    const result = addTeacher();
+
+    res.json({
+      message: targetRole === 'head_teacher' ? `已将教师设为「${cls.name}」的班主任` : '教师已添加到班级',
+      class_teacher_id: result.lastInsertRowid,
+    });
   } catch (error) {
     console.error('添加教师到班级失败:', error);
     res.status(500).json({ error: '添加教师到班级失败' });
@@ -783,72 +925,35 @@ router.put('/class-applications/:id/review', authenticateToken, (req, res) => {
       return res.status(403).json({ error: '学生无法审批申请' });
     }
 
-    // 班主任申请审批前校验班主任唯一性（须在更新申请状态之前，避免"已通过"却不生效）
-    if (status === 'approved' && application.teacher_type === 'head_teacher') {
-      const cls = db.prepare('SELECT name, head_teacher_id FROM classes WHERE id = ?').get(application.class_id);
-      const existingHeadTeacher = (cls && cls.head_teacher_id)
-        || db.prepare(`SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(application.class_id);
-      if (existingHeadTeacher) {
-        return res.status(400).json({
-          error: `班级「${cls?.name || application.class_id}」已有班主任，无法作为班主任加入`
-        });
-      }
-      // 一位教师只能担任一个班级的班主任
-      const otherClass = db.prepare('SELECT name FROM classes WHERE head_teacher_id = ?').get(application.user_id);
-      if (otherClass) {
-        return res.status(400).json({
-          error: `该教师已是班级「${otherClass.name}」的班主任，不能同时担任两个班级的班主任`
-        });
-      }
-    }
-
+    // 审批：通过与拒绝都走统一的"申请落地"逻辑（内部含班主任唯一性等校验）
     const runApproval = db.transaction(() => {
-      // 更新申请状态
+      if (status === 'approved') {
+        const result = applyApplicationToClass(application, req.user.userId);
+        if (!result.ok) {
+          throw new Error(result.reason);
+        }
+        return result;
+      }
       db.prepare(`
         UPDATE class_applications
         SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(status, req.user.userId, id);
-
-      // 如果批准，将用户分配到班级
-      if (status === 'approved') {
-        if (application.role === 'student') {
-          db.prepare('UPDATE users SET class_id = ?, status = ? WHERE id = ?')
-            .run(application.class_id, 'active', application.user_id);
-          // 更新班级学生数
-          db.prepare('UPDATE classes SET student_count = student_count + 1 WHERE id = ?')
-            .run(application.class_id);
-        } else if (application.teacher_type === 'head_teacher') {
-          // 班主任申请：同时写入 class_teachers(权限) 与 classes.head_teacher_id
-          const existing = db.prepare('SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ?')
-            .get(application.class_id, application.user_id);
-          if (existing) {
-            db.prepare(`UPDATE class_teachers SET role = 'head_teacher' WHERE id = ?`).run(existing.id);
-          } else {
-            db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'head_teacher')`)
-              .run(application.class_id, application.user_id);
-          }
-          db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?')
-            .run(application.user_id, application.class_id);
-          // 激活账号
-          db.prepare(`UPDATE users SET status = 'active' WHERE id = ?`).run(application.user_id);
-        } else if (application.role === 'teacher') {
-          // 任课教师申请：以普通教师身份加入班级（不占用班主任）
-          const existing = db.prepare('SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ?')
-            .get(application.class_id, application.user_id);
-          if (!existing) {
-            db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'teacher')`)
-              .run(application.class_id, application.user_id);
-          }
-          // 激活账号
-          db.prepare(`UPDATE users SET status = 'active' WHERE id = ?`).run(application.user_id);
-        }
-      }
+      return null;
     });
 
-    runApproval();
+    let applied = null;
+    try {
+      applied = runApproval();
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
 
-    res.json({ message: status === 'approved' ? '已批准申请' : '已拒绝申请' });
+    res.json({
+      message: status === 'approved'
+        ? `已批准申请${applied?.className ? `，已加入班级「${applied.className}」` : ''}`
+        : '已拒绝申请',
+    });
   } catch (error) {
     console.error('审批申请失败:', error);
     res.status(500).json({ error: '审批申请失败' });

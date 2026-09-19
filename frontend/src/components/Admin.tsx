@@ -37,6 +37,8 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
   const { user } = useAuthStore();
   const isMobile = useMobile();
   const [activeTab, setActiveTab] = useState(defaultTab || 'dashboard');
+  // 从其他页签跳转到「申请审批」时携带的预设（默认子页签 / 默认状态筛选）
+  const [approvalPreset, setApprovalPreset] = useState<{ role?: 'teacher' | 'student'; status?: string } | null>(null);
 
   useEffect(() => {
     if (defaultTab) {
@@ -47,15 +49,31 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
   const isAdmin = user?.role === 'admin';
   const isTeacher = user?.role === 'teacher';
 
+  // 跳转到「申请审批」页签（可指定落到教师申请/学生申请）
+  const goToApproval = (role: 'teacher' | 'student' = 'teacher', status?: string) => {
+    setApprovalPreset({ role, status });
+    setActiveTab('applications');
+  };
+
+  // 手动切换页签时清掉跳转预设，避免下次进入时还带着旧筛选
+  const handleTabChange = (key: string) => {
+    setApprovalPreset(null);
+    setActiveTab(key);
+  };
+
   const getTabItems = () => {
     if (isAdmin) {
       return [
         { key: 'dashboard', label: <span><TeamOutlined /> 总览</span>, children: <Dashboard /> },
-        { key: 'teachers', label: <span><UserOutlined /> 教师管理</span>, children: <TeacherManagement /> },
+        { key: 'teachers', label: <span><UserOutlined /> 教师管理</span>, children: <TeacherManagement onGoApprove={() => goToApproval('teacher', 'pending')} /> },
         { key: 'students', label: <span><TeamOutlined /> 学生管理</span>, children: <StudentManagement /> },
         { key: 'classes', label: <span><FolderOutlined /> 班级管理</span>, children: <ClassManagement /> },
         { key: 'schools', label: <span><BankOutlined /> 学校管理</span>, children: <SchoolManagement /> },
-        { key: 'applications', label: <span><TeamOutlined /> 入学申请</span>, children: <ApplicationManagement /> },
+        {
+          key: 'applications',
+          label: <span><TeamOutlined /> 申请审批</span>,
+          children: <ApplicationManagement initialRole={approvalPreset?.role} initialStatus={approvalPreset?.status} />
+        },
         { key: 'announcements', label: <span><NotificationOutlined /> 公告管理</span>, children: <AnnouncementManagement /> },
         { key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> },
         { key: 'site_settings', label: <span><GlobalOutlined /> 网站设置</span>, children: <SiteSettings /> },
@@ -75,7 +93,7 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
       if (isHeadTeacher) {
         items.push(
           { key: 'class-invitation', label: <span><TeamOutlined /> 邀请设置</span>, children: <ClassInvitationManager /> },
-          { key: 'applications', label: <span><TeamOutlined /> 入学申请</span>, children: <ApplicationManagement /> },
+          { key: 'applications', label: <span><TeamOutlined /> 申请审批</span>, children: <ApplicationManagement /> },
         );
       }
       items.push(
@@ -96,7 +114,7 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
     <div style={{ padding: isMobile ? 12 : 24 }}>
       <h2 style={{ marginBottom: isMobile ? 16 : 24 }}>{getTitle()}</h2>
       {/* destroyOnHidden：切换页签时重新挂载，确保每次进入都拉取最新数据（避免跨页签数据不更新的问题） */}
-      <Tabs activeKey={activeTab} onChange={setActiveTab} items={getTabItems()} destroyOnHidden />
+      <Tabs activeKey={activeTab} onChange={handleTabChange} items={getTabItems()} destroyOnHidden />
     </div>
   );
 };
@@ -551,14 +569,18 @@ export const ClassTeachingOverview: React.FC = () => {
   );
 };
 
-const ApplicationManagement: React.FC = () => {
+const ApplicationManagement: React.FC<{
+  initialRole?: 'teacher' | 'student';
+  initialStatus?: string;
+}> = ({ initialRole, initialStatus }) => {
   const pagination = useTablePagination();
   const { user } = useAuthStore();
   const [applications, setApplications] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string>(initialStatus !== undefined ? initialStatus : 'pending');
   const [classFilter, setClassFilter] = useState<number | null>(null);
+  const [roleTab, setRoleTab] = useState<'teacher' | 'student'>(initialRole || 'teacher');
 
   const isAdmin = user?.role === 'admin';
   const isTeacher = user?.role === 'teacher';
@@ -566,7 +588,7 @@ const ApplicationManagement: React.FC = () => {
   useEffect(() => {
     loadApplications();
     loadClasses();
-  }, [statusFilter, classFilter]);
+  }, [classFilter]);
 
   const loadClasses = async () => {
     try {
@@ -586,8 +608,9 @@ const ApplicationManagement: React.FC = () => {
   const loadApplications = async () => {
     setLoading(true);
     try {
+      // 只按班级向后端筛选；身份（教师/学生）与状态在前端过滤，
+      // 这样两个子页签上的"待审批"数量始终准确
       const params: any = {};
-      if (statusFilter) params.status = statusFilter;
       if (classFilter) params.class_id = classFilter;
       const res = await adminAPI.getClassApplications(params);
       setApplications(res.data.applications || []);
@@ -600,8 +623,8 @@ const ApplicationManagement: React.FC = () => {
 
   const handleReview = async (id: number, status: 'approved' | 'rejected') => {
     try {
-      await adminAPI.reviewClassApplication(id, { status });
-      message.success(status === 'approved' ? '已批准该申请' : '已拒绝该申请');
+      const res = await adminAPI.reviewClassApplication(id, { status });
+      message.success(res.data?.message || (status === 'approved' ? '已批准该申请' : '已拒绝该申请'));
       loadApplications();
     } catch (error: any) {
       message.error(error.response?.data?.error || '操作失败');
@@ -645,14 +668,29 @@ const ApplicationManagement: React.FC = () => {
     },
   ];
 
+  // 按身份拆分为「教师申请」与「学生申请」两组
+  const teacherApplications = applications.filter((a: any) => a.role !== 'student');
+  const studentApplications = applications.filter((a: any) => a.role === 'student');
+  const filterByStatus = (list: any[]) => (statusFilter ? list.filter((a) => a.status === statusFilter) : list);
+  const pendingCount = (list: any[]) => list.filter((a) => a.status === 'pending').length;
+  const teacherPending = pendingCount(teacherApplications);
+  const studentPending = pendingCount(studentApplications);
+
+  const tabLabel = (text: string, count: number) => (
+    <span>
+      {text}
+      {count > 0 && <Badge count={count} size="small" style={{ marginLeft: 6 }} />}
+    </span>
+  );
+
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', gap: 16 }}>
+      <div style={{ marginBottom: 16, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <Select
           placeholder="筛选班级"
           allowClear
           style={{ width: 200 }}
-          onChange={(value) => setClassFilter(value)}
+          onChange={(value) => setClassFilter(value ?? null)}
           value={classFilter}
         >
           {classes.map(c => (
@@ -663,20 +701,64 @@ const ApplicationManagement: React.FC = () => {
           placeholder="筛选状态"
           allowClear
           style={{ width: 120 }}
-          onChange={(value) => setStatusFilter(value)}
+          onChange={(value) => setStatusFilter(value || '')}
           value={statusFilter}
         >
           <Select.Option value="pending">待审批</Select.Option>
           <Select.Option value="approved">已批准</Select.Option>
           <Select.Option value="rejected">已拒绝</Select.Option>
         </Select>
+        <Button onClick={loadApplications}>刷新</Button>
       </div>
-      <Table columns={columns} dataSource={applications} rowKey="id" loading={loading} pagination={pagination} scroll={{ x: true }} />
+
+      <Tabs
+        activeKey={roleTab}
+        onChange={(key) => setRoleTab(key as 'teacher' | 'student')}
+        items={[
+          {
+            key: 'teacher',
+            label: tabLabel('教师申请', teacherPending),
+            children: (
+              <div>
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 12 }}
+                  message="教师申请说明"
+                  description="「班主任」申请通过后，该教师将成为所选班级的班主任；「任课教师」申请通过后，将以普通教师身份加入所选班级。"
+                />
+                <Table
+                  columns={columns}
+                  dataSource={filterByStatus(teacherApplications)}
+                  rowKey="id"
+                  loading={loading}
+                  pagination={pagination}
+                  scroll={{ x: true }}
+                />
+              </div>
+            ),
+          },
+          {
+            key: 'student',
+            label: tabLabel('学生申请', studentPending),
+            children: (
+              <Table
+                columns={columns}
+                dataSource={filterByStatus(studentApplications)}
+                rowKey="id"
+                loading={loading}
+                pagination={pagination}
+                scroll={{ x: true }}
+              />
+            ),
+          },
+        ]}
+      />
     </div>
   );
 };
 
-const TeacherManagement: React.FC = () => {
+const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove }) => {
   const pagination = useTablePagination();
   const [teachers, setTeachers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -714,6 +796,10 @@ const TeacherManagement: React.FC = () => {
   const createClassOptions = createSchoolId
     ? classList.filter((c: any) => c.school_id === createSchoolId || !c.school_id)
     : classList;
+  // 班主任只能分配到"还没有班主任"的班级
+  const headTeacherCandidateClasses = createClassOptions.filter(
+    (c: any) => !c.head_teacher_id && !(c.teachers || []).some((t: any) => t.role === 'head_teacher')
+  );
 
   const loadTeachers = async () => {
     setLoading(true);
@@ -770,6 +856,9 @@ const TeacherManagement: React.FC = () => {
     }
   };
 
+  // 待审批的教师数量（审批动作统一放在「申请审批 → 教师申请」页签，避免两处重复）
+  const pendingTeacherCount = teachers.filter((t: any) => t.status === 'pending_approval').length;
+
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     { title: '用户名', dataIndex: 'username', key: 'username' },
@@ -790,23 +879,49 @@ const TeacherManagement: React.FC = () => {
       title: '操作',
       key: 'action',
       render: (_: any, record: any) => (
-        <Space>
-          <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
-          {record.status !== 'disabled' && (
-            <Button type="link" danger onClick={() => handleDelete(record.id, 'disable')}>禁用</Button>
-          )}
-          <Popconfirm title="确定删除该教师？" onConfirm={() => handleDelete(record.id, 'delete')}>
-            <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
-          </Popconfirm>
-        </Space>
+        record.status === 'pending_approval' ? (
+          <Space>
+            {onGoApprove && <Button type="link" onClick={onGoApprove}>去审批</Button>}
+            <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
+            <Popconfirm title="确定删除该教师？" onConfirm={() => handleDelete(record.id, 'delete')}>
+              <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+            </Popconfirm>
+          </Space>
+        ) : (
+          <Space>
+            <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
+            {record.status !== 'disabled' && (
+              <Button type="link" danger onClick={() => handleDelete(record.id, 'disable')}>禁用</Button>
+            )}
+            <Popconfirm title="确定删除该教师？" onConfirm={() => handleDelete(record.id, 'delete')}>
+              <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+            </Popconfirm>
+          </Space>
+        )
       ),
     },
   ];
 
   return (
     <div>
+      {pendingTeacherCount > 0 && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={`有 ${pendingTeacherCount} 个教师账号待审批`}
+          description={
+            <span>
+              教师注册申请统一在「申请审批 → 教师申请」中处理，批准后会自动成为班主任或以任课教师身份加入所选班级。
+              {onGoApprove && (
+                <Button type="link" size="small" style={{ paddingLeft: 4 }} onClick={onGoApprove}>立即去审批</Button>
+              )}
+            </span>
+          }
+        />
+      )}
       <div style={{ marginBottom: 16 }}>
-        <Space>
+        <Space wrap>
           <Input.Search placeholder="搜索教师" onSearch={setSearchText} style={{ width: 200 }} allowClear />
           <Select placeholder="筛选状态" style={{ width: 120 }} allowClear value={statusFilter || undefined} onChange={setStatusFilter}>
             <Select.Option value="active">已激活</Select.Option>
@@ -859,34 +974,60 @@ const TeacherManagement: React.FC = () => {
               showSearch
               optionFilterProp="label"
               placeholder="选择学校（可选）"
-              onChange={() => createForm.setFieldValue('class_id', undefined)}
+              onChange={() => createForm.setFieldsValue({ class_id: undefined, class_ids: undefined })}
               options={schools.map((s: any) => ({ value: s.id, label: `${s.name}${s.city ? ` - ${s.city}` : ''}` }))}
             />
-          </Form.Item>
-          <Form.Item name="class_id" label="分配班级（可选）">
-            <Select allowClear showSearch optionFilterProp="children" placeholder={createClassOptions.length ? '选择班级' : '暂无可选班级'}>
-              {createClassOptions.map((c: any) => {
-                const hasHeadTeacher = !!c.head_teacher_id || (c.teachers || []).some((t: any) => t.role === 'head_teacher');
-                const disabled = createIdentity === 'head_teacher' && hasHeadTeacher;
-                return (
-                  <Select.Option key={c.id} value={c.id} disabled={disabled}>
-                    {c.name}{c.grade ? `（${c.grade}）` : ''}{disabled ? ' · 已有班主任' : ''}
-                  </Select.Option>
-                );
-              })}
-            </Select>
           </Form.Item>
           <Form.Item
             name="teacher_identity"
             label="教师身份"
             initialValue="teacher"
-            tooltip="仅在选择了班级时生效：班主任会成为该班班主任，任课教师以普通教师身份加入"
+            tooltip="选择班级后生效：班主任会成为该班班主任（一名教师只能带一个班），任课教师可同时加入多个班级"
           >
-            <Select>
+            <Select
+              onChange={() => {
+                // 切换身份时清空已选班级（两种身份用的字段不同）
+                createForm.setFieldsValue({ class_id: undefined, class_ids: undefined });
+              }}
+            >
               <Select.Option value="teacher">任课教师</Select.Option>
               <Select.Option value="head_teacher">班主任</Select.Option>
             </Select>
           </Form.Item>
+
+          {createIdentity === 'head_teacher' ? (
+            <Form.Item name="class_id" label="分配班级（可选，只能选一个）">
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="children"
+                placeholder={headTeacherCandidateClasses.length ? '选择班级' : '暂无可选班级（都已设置班主任）'}
+              >
+                {headTeacherCandidateClasses.map((c: any) => (
+                  <Select.Option key={c.id} value={c.id}>
+                    {c.name}{c.grade ? `（${c.grade}）` : ''}
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+          ) : (
+            <Form.Item name="class_ids" label="分配班级（可多选，也可以先不选）">
+              <Select
+                mode="multiple"
+                allowClear
+                showSearch
+                optionFilterProp="children"
+                maxTagCount={3}
+                placeholder={createClassOptions.length ? '选择班级（可多选）' : '暂无可选班级'}
+              >
+                {createClassOptions.map((c: any) => (
+                  <Select.Option key={c.id} value={c.id}>
+                    {c.name}{c.grade ? `（${c.grade}）` : ''}
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+          )}
         </Form>
       </Modal>
 

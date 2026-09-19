@@ -103,8 +103,8 @@ const AdminHome: React.FC<AdminHomeProps> = ({ onNavigate }) => {
   };
 
   const quickActions = [
-    { key: 'teachers', icon: <UserOutlined />, label: '审批教师', tab: 'teachers', color: '#faad14', badge: pendingTeachers },
-    { key: 'applications', icon: <TeamOutlined />, label: '入学申请', tab: 'applications', color: '#1890ff', badge: pendingApps },
+    { key: 'teachers', icon: <UserOutlined />, label: '教师申请审批', tab: 'applications', color: '#faad14', badge: pendingTeachers },
+    { key: 'applications', icon: <TeamOutlined />, label: '申请审批', tab: 'applications', color: '#1890ff', badge: pendingApps },
     { key: 'announcements', icon: <NotificationOutlined />, label: '发布公告', tab: 'announcements', color: '#52c41a' },
     { key: 'site_settings', icon: <SettingOutlined />, label: '网站设置', tab: 'site_settings', color: '#722ed1' },
     { key: 'ai_settings', icon: <RobotOutlined />, label: 'AI设置', tab: 'ai_settings', color: '#13c2c2' },
@@ -164,7 +164,7 @@ const AdminHome: React.FC<AdminHomeProps> = ({ onNavigate }) => {
             <Col xs={24} sm={12}>
               <Card
                 hoverable
-                onClick={() => onNavigate('admin', 'teachers')}
+                onClick={() => onNavigate('admin', 'applications')}
                 style={{ borderLeft: '4px solid #faad14', cursor: 'pointer' }}
                 styles={{ body: { padding: isMobile ? '12px 16px' : '16px 20px' } }}
               >

@@ -1102,3 +1102,290 @@
 [0mDELETE /api/admin/students/220 [32m200[0m 9.153 ms - 41[0m
 [0mDELETE /api/admin/students/221 [32m200[0m 8.886 ms - 41[0m
 [0mGET /api/admin/students?search=uitest [32m200[0m 0.540 ms - 15[0m
+[0mPOST /api/auth/login [32m200[0m 79.629 ms - 398[0m
+[0mGET /api/schools [32m200[0m 0.333 ms - 243[0m
+[0mPOST /api/admin/classes [32m200[0m 9.509 ms - 46[0m
+[0mPOST /api/admin/classes [32m200[0m 7.910 ms - 46[0m
+[0mPOST /api/admin/classes [32m200[0m 7.746 ms - 46[0m
+[0mPOST /api/admin/classes [32m200[0m 7.391 ms - 46[0m
+[0mPOST /api/auth/register [32m201[0m 73.319 ms - 125[0m
+[0mGET /api/admin/class-applications?status=pending [32m200[0m 0.661 ms - 516[0m
+[0mPUT /api/admin/class-applications/17/review [32m200[0m 8.685 ms - 29[0m
+[0mPUT /api/admin/class-applications/18/review [32m200[0m 7.444 ms - 29[0m
+[0mPOST /api/auth/login [32m200[0m 72.685 ms - 593[0m
+[0mPOST /api/auth/register [32m201[0m 71.233 ms - 137[0m
+[0mGET /api/admin/class-applications?status=pending [32m200[0m 0.661 ms - 272[0m
+[0mPUT /api/admin/class-applications/19/review [32m200[0m 7.972 ms - 29[0m
+[0mPOST /api/auth/login [32m200[0m 70.963 ms - 520[0m
+[0mPOST /api/auth/register [32m201[0m 71.478 ms - 137[0m
+[0mGET /api/admin/class-applications?status=pending [32m200[0m 0.581 ms - 272[0m
+[0mGET /api/admin/pending-teachers [32m200[0m 0.703 ms - 139[0m
+[0mPOST /api/admin/approve-teacher [32m200[0m 7.375 ms - 32[0m
+[0mPOST /api/auth/login [32m200[0m 70.812 ms - 438[0m
+[0mGET /api/admin/class-applications?class_id=26&status=pending [32m200[0m 0.563 ms - 272[0m
+[0mPOST /api/admin/teachers [32m200[0m 70.496 ms - 89[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[0mPOST /api/auth/login [32m200[0m 98.772 ms - 398[0m
+[0mGET /api/schools [32m200[0m 0.776 ms - 243[0m
+[0mPOST /api/admin/classes [32m200[0m 9.260 ms - 46[0m
+[0mPOST /api/admin/classes [32m200[0m 6.999 ms - 46[0m
+[0mPOST /api/admin/classes [32m200[0m 9.101 ms - 46[0m
+[0mPOST /api/admin/classes [32m200[0m 7.529 ms - 46[0m
+[0mPOST /api/auth/register [32m201[0m 75.883 ms - 125[0m
+[0mGET /api/admin/class-applications?status=pending [32m200[0m 1.119 ms - 516[0m
+[0mPUT /api/admin/class-applications/21/review [32m200[0m 9.006 ms - 63[0m
+[0mPUT /api/admin/class-applications/22/review [32m200[0m 7.105 ms - 63[0m
+[0mPOST /api/auth/login [32m200[0m 68.984 ms - 593[0m
+[0mPOST /api/auth/register [32m201[0m 71.430 ms - 137[0m
+[0mGET /api/admin/class-applications?status=pending [32m200[0m 0.570 ms - 272[0m
+[0mPUT /api/admin/class-applications/23/review [32m200[0m 8.279 ms - 63[0m
+[0mPOST /api/auth/login [32m200[0m 69.017 ms - 520[0m
+[0mPOST /api/auth/register [32m201[0m 68.770 ms - 137[0m
+[0mGET /api/admin/class-applications?status=pending [32m200[0m 0.778 ms - 272[0m
+[0mGET /api/admin/pending-teachers [32m200[0m 0.615 ms - 139[0m
+[0mPOST /api/admin/approve-teacher [32m200[0m 8.147 ms - 165[0m
+[0mPOST /api/auth/login [32m200[0m 71.139 ms - 520[0m
+[0mGET /api/admin/class-applications?class_id=30&status=pending [32m200[0m 0.523 ms - 19[0m
+[0mPOST /api/admin/teachers [32m200[0m 69.242 ms - 206[0m
+[0mPOST /api/auth/login [32m200[0m 68.469 ms - 593[0m
+[0mPOST /api/admin/teachers [33m400[0m 0.559 ms - 45[0m
+[0mPOST /api/admin/teachers [32m200[0m 68.560 ms - 121[0m
+[0mPOST /api/admin/classes/27/teachers [32m200[0m 7.668 ms - 82[0m
+[0mPOST /api/auth/login [32m200[0m 69.559 ms - 520[0m
+[0mGET /api/classes/my-class [32m200[0m 0.950 ms - 293[0m
+[0mPOST /api/admin/teachers [32m200[0m 72.370 ms - 121[0m
+[0mPOST /api/admin/classes/27/teachers [33m400[0m 0.672 ms - 49[0m
+[0mPOST /api/auth/login [32m200[0m 77.643 ms - 398[0m
+[0mGET /api/admin/statistics/public [32m200[0m 0.935 ms - 87[0m
+[0mGET /api/admin/settings/public [32m200[0m 1.349 ms - 668[0m
+[0mGET /api/schools [32m200[0m 0.388 ms - 243[0m
+[0mGET /api/leaderboard/level?limit=10 [32m200[0m 0.587 ms - 18[0m
+[0mGET /api/classes/public-list [32m200[0m 1.021 ms - 281[0m
+[0mGET /api/pets/species [32m200[0m 0.492 ms - -[0m
+[0mGET /api/admin/statistics/public [36m304[0m 1.119 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.724 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.420 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [36m304[0m 0.804 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.501 ms - -[0m
+[0mGET /api/pets/species [36m304[0m 0.739 ms - -[0m
+[0mGET /api/auth/me [32m200[0m 0.775 ms - 322[0m
+[0mGET /api/auth/me [36m304[0m 0.778 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.774 ms - 27[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.648 ms - -[0m
+[0mGET /api/notifications/unread-count [32m200[0m 0.757 ms - 24[0m
+[0mGET /api/pets/all [32m200[0m 0.792 ms - 11[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.707 ms - 27[0m
+[0mGET /api/admin/settings/public [36m304[0m 1.004 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.960 ms - -[0m
+[0mGET /api/pets/all [36m304[0m 0.582 ms - -[0m
+[0mGET /api/leaderboard/level [32m200[0m 0.412 ms - 18[0m
+[0mGET /api/leaderboard/level [36m304[0m 0.395 ms - -[0m
+[0mGET /api/admin/statistics [32m200[0m 2.577 ms - 563[0m
+[0mGET /api/admin/operational-stats [32m200[0m 2.283 ms - 222[0m
+[0mGET /api/admin/statistics [36m304[0m 1.553 ms - -[0m
+[0mGET /api/admin/operational-stats [36m304[0m 1.103 ms - -[0m
+[0mGET /api/admin/teachers [32m200[0m 0.651 ms - 15[0m
+[0mGET /api/admin/teachers [36m304[0m 0.930 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.358 ms - -[0m
+[0mGET /api/admin/classes [32m200[0m 1.473 ms - 639[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.671 ms - -[0m
+[0mPOST /api/auth/login [32m200[0m 78.968 ms - 398[0m
+[0mGET /api/admin/settings/public [32m200[0m 0.678 ms - 668[0m
+[0mGET /api/admin/statistics/public [32m200[0m 0.817 ms - 87[0m
+[0mGET /api/leaderboard/level?limit=10 [32m200[0m 0.647 ms - 18[0m
+[0mGET /api/schools [32m200[0m 0.294 ms - 243[0m
+[0mGET /api/classes/public-list [32m200[0m 0.321 ms - 281[0m
+[0mGET /api/pets/species [32m200[0m 0.621 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.642 ms - -[0m
+[0mGET /api/admin/statistics/public [36m304[0m 1.032 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [36m304[0m 0.576 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.290 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.403 ms - -[0m
+[0mGET /api/pets/species [36m304[0m 0.439 ms - -[0m
+[0mGET /api/auth/me [32m200[0m 0.569 ms - 322[0m
+[0mGET /api/auth/me [36m304[0m 0.620 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.614 ms - -[0m
+[0mGET /api/pets/all [32m200[0m 1.154 ms - 11[0m
+[0mGET /api/notifications/unread-count [32m200[0m 0.733 ms - 24[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.904 ms - 27[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.956 ms - -[0m
+[0mGET /api/pets/all [36m304[0m 0.711 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.962 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.973 ms - 27[0m
+[0mGET /api/leaderboard/level [32m200[0m 0.569 ms - 18[0m
+[0mGET /api/leaderboard/level [36m304[0m 0.534 ms - -[0m
+[0mGET /api/admin/statistics [32m200[0m 1.481 ms - 563[0m
+[0mGET /api/admin/operational-stats [32m200[0m 1.588 ms - 222[0m
+[0mGET /api/admin/statistics [36m304[0m 1.558 ms - -[0m
+[0mGET /api/admin/operational-stats [36m304[0m 1.517 ms - -[0m
+[0mGET /api/admin/teachers [32m200[0m 0.479 ms - 15[0m
+[0mGET /api/admin/teachers [36m304[0m 0.527 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.349 ms - -[0m
+[0mGET /api/admin/classes [32m200[0m 0.752 ms - 639[0m
+[0mPOST /api/auth/login [32m200[0m 78.028 ms - 398[0m
+[0mGET /api/schools [32m200[0m 0.341 ms - 243[0m
+[0mPOST /api/admin/classes [32m200[0m 7.448 ms - 46[0m
+[0mPOST /api/auth/register [32m201[0m 72.892 ms - 137[0m
+[0mPOST /api/auth/register [32m201[0m 69.986 ms - 110[0m
+[0mPOST /api/auth/login [32m200[0m 79.519 ms - 398[0m
+[0mGET /api/admin/settings/public [32m200[0m 0.730 ms - 668[0m
+[0mGET /api/admin/statistics/public [32m200[0m 0.502 ms - 87[0m
+[0mGET /api/classes/public-list [32m200[0m 0.407 ms - 432[0m
+[0mGET /api/schools [32m200[0m 0.329 ms - 243[0m
+[0mGET /api/leaderboard/level?limit=10 [32m200[0m 0.384 ms - 18[0m
+[0mGET /api/pets/species [32m200[0m 0.657 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.735 ms - -[0m
+[0mGET /api/admin/statistics/public [36m304[0m 0.591 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.376 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.318 ms - -[0m
+[0mGET /api/pets/species [36m304[0m 0.591 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [36m304[0m 0.425 ms - -[0m
+[0mGET /api/auth/me [32m200[0m 0.641 ms - 322[0m
+[0mGET /api/auth/me [36m304[0m 0.920 ms - -[0m
+[0mGET /api/notifications/unread-count [32m200[0m 0.530 ms - 24[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.450 ms - -[0m
+[0mGET /api/pets/all [32m200[0m 0.496 ms - 11[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.805 ms - 27[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.930 ms - -[0m
+[0mGET /api/pets/all [36m304[0m 0.614 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.641 ms - 27[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.657 ms - -[0m
+[0mGET /api/leaderboard/level [32m200[0m 0.488 ms - 18[0m
+[0mGET /api/leaderboard/level [36m304[0m 0.528 ms - -[0m
+[0mGET /api/admin/operational-stats [32m200[0m 1.289 ms - 432[0m
+[0mGET /api/admin/statistics [32m200[0m 1.772 ms - 863[0m
+[0mGET /api/admin/operational-stats [36m304[0m 1.252 ms - -[0m
+[0mGET /api/admin/statistics [36m304[0m 1.406 ms - -[0m
+[0mGET /api/admin/class-applications [32m200[0m 0.598 ms - 546[0m
+[0mGET /api/admin/classes [32m200[0m 0.792 ms - 969[0m
+[0mGET /api/admin/classes [36m304[0m 1.206 ms - -[0m
+[0mGET /api/admin/class-applications [36m304[0m 0.692 ms - -[0m
+[0mGET /api/admin/teachers [32m200[0m 0.603 ms - 172[0m
+[0mGET /api/admin/teachers [36m304[0m 0.625 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 0.808 ms - -[0m
+[0mGET /api/admin/class-applications [36m304[0m 0.547 ms - -[0m
+[0mGET /api/admin/class-applications [36m304[0m 0.808 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.355 ms - -[0m
+[0mPOST /api/auth/login [32m200[0m 78.087 ms - 398[0m
+[0mGET /api/admin/settings/public [32m200[0m 0.705 ms - 668[0m
+[0mGET /api/leaderboard/level?limit=10 [32m200[0m 0.443 ms - 18[0m
+[0mGET /api/schools [32m200[0m 0.297 ms - 243[0m
+[0mGET /api/admin/statistics/public [32m200[0m 0.596 ms - 87[0m
+[0mGET /api/classes/public-list [32m200[0m 0.470 ms - 432[0m
+[0mGET /api/pets/species [32m200[0m 1.249 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.916 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [36m304[0m 0.458 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.338 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.496 ms - -[0m
+[0mGET /api/admin/statistics/public [36m304[0m 0.489 ms - -[0m
+[0mGET /api/pets/species [36m304[0m 0.455 ms - -[0m
+[0mGET /api/auth/me [32m200[0m 0.696 ms - 322[0m
+[0mGET /api/auth/me [36m304[0m 0.686 ms - -[0m
+[0mGET /api/notifications/unread-count [32m200[0m 0.603 ms - 24[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.591 ms - -[0m
+[0mGET /api/pets/all [32m200[0m 0.600 ms - 11[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.918 ms - 27[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.912 ms - -[0m
+[0mGET /api/pets/all [36m304[0m 0.770 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.855 ms - 27[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.622 ms - -[0m
+[0mGET /api/leaderboard/level [32m200[0m 0.556 ms - 18[0m
+[0mGET /api/leaderboard/level [36m304[0m 0.386 ms - -[0m
+[0mGET /api/admin/operational-stats [32m200[0m 1.095 ms - 432[0m
+[0mGET /api/admin/statistics [32m200[0m 1.221 ms - 863[0m
+[0mGET /api/admin/operational-stats [36m304[0m 1.111 ms - -[0m
+[0mGET /api/admin/statistics [36m304[0m 1.502 ms - -[0m
+[0mGET /api/admin/class-applications [32m200[0m 0.637 ms - 546[0m
+[0mGET /api/admin/classes [32m200[0m 1.007 ms - 969[0m
+[0mGET /api/admin/class-applications [36m304[0m 0.546 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 0.827 ms - -[0m
+[0mGET /api/admin/teachers [32m200[0m 0.719 ms - 172[0m
+[0mGET /api/admin/teachers [36m304[0m 0.537 ms - -[0m
+[0mGET /api/admin/class-applications [36m304[0m 0.723 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 0.955 ms - -[0m
+[0mGET /api/admin/class-applications [36m304[0m 0.594 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 0.781 ms - -[0m
+[0mPOST /api/auth/login [32m200[0m 78.472 ms - 398[0m
+[0mGET /api/admin/settings/public [32m200[0m 0.810 ms - 668[0m
+[0mGET /api/schools [32m200[0m 0.378 ms - 243[0m
+[0mGET /api/classes/public-list [32m200[0m 0.347 ms - 432[0m
+[0mGET /api/leaderboard/level?limit=10 [32m200[0m 0.390 ms - 18[0m
+[0mGET /api/admin/statistics/public [32m200[0m 0.550 ms - 87[0m
+[0mGET /api/pets/species [32m200[0m 0.550 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.719 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.493 ms - -[0m
+[0mGET /api/admin/statistics/public [36m304[0m 1.120 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [36m304[0m 0.536 ms - -[0m
+[0mGET /api/pets/species [36m304[0m 0.745 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.366 ms - -[0m
+[0mGET /api/auth/me [32m200[0m 0.674 ms - 322[0m
+[0mGET /api/auth/me [36m304[0m 0.638 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.591 ms - -[0m
+[0mGET /api/notifications/unread-count [32m200[0m 0.496 ms - 24[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.534 ms - 27[0m
+[0mGET /api/pets/all [32m200[0m 0.676 ms - 11[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.818 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.660 ms - -[0m
+[0mGET /api/pets/all [36m304[0m 0.524 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.608 ms - 27[0m
+[0mGET /api/leaderboard/level [32m200[0m 0.445 ms - 18[0m
+[0mGET /api/leaderboard/level [36m304[0m 0.333 ms - -[0m
+[0mGET /api/admin/statistics [32m200[0m 1.509 ms - 863[0m
+[0mGET /api/admin/operational-stats [32m200[0m 1.116 ms - 432[0m
+[0mGET /api/admin/statistics [36m304[0m 1.490 ms - -[0m
+[0mGET /api/admin/operational-stats [36m304[0m 1.244 ms - -[0m
+[0mGET /api/admin/class-applications [32m200[0m 0.551 ms - 546[0m
+[0mGET /api/admin/classes [32m200[0m 0.709 ms - 969[0m
+[0mGET /api/admin/classes [36m304[0m 0.785 ms - -[0m
+[0mGET /api/admin/class-applications [36m304[0m 0.523 ms - -[0m
+[0mGET /api/admin/teachers [32m200[0m 0.887 ms - 172[0m
+[0mGET /api/admin/teachers [36m304[0m 0.551 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 0.865 ms - -[0m
+[0mGET /api/admin/class-applications [36m304[0m 0.456 ms - -[0m
+[0mGET /api/admin/class-applications [36m304[0m 0.725 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 0.815 ms - -[0m
+[0mPUT /api/admin/class-applications/25/review [32m200[0m 17.197 ms - 77[0m
+[0mGET /api/admin/class-applications [32m200[0m 0.553 ms - 561[0m

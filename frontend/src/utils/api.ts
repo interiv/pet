@@ -287,6 +287,7 @@ export const adminAPI = {
     password: string;
     email?: string;
     class_id?: number;
+    class_ids?: number[];
     teacher_identity?: 'head_teacher' | 'teacher';
   }) => api.post('/admin/teachers', data),
   getTeachers: (params?: { status?: string; search?: string }) => api.get('/admin/teachers', { params }),
