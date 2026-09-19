@@ -17,6 +17,9 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
+// 给控制台输出加上日期时间戳
+require('../src/config/logger');
+
 const projectRoot = path.join(__dirname, '..');
 const args = process.argv.slice(2);
 

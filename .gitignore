@@ -23,6 +23,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+*.log
 
 # 编辑器
 .vscode/
@@ -59,3 +60,4 @@ backend/uploads/
 备用图片/
 temp/
 我的脚本/
+

@@ -1,3 +1,6 @@
+// 最顶部加载：给所有 console 输出加上日期时间戳（必须在其他模块之前 require）
+require('./config/logger');
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -75,7 +78,10 @@ app.use(cors({
   },
   credentials: true
 }));
-app.use(morgan('dev')); // 日志
+// 请求日志：输出到 console（morgan 默认直接写 stdout，绕过 console 补丁，故这里改走 console.log 以带时间戳）
+app.use(morgan('dev', {
+  stream: { write: (msg) => console.log(msg.trimEnd()) }
+}));
 app.use(express.json()); // JSON 解析
 app.use(express.urlencoded({ extended: true }));
 
