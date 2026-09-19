@@ -9,6 +9,7 @@ const morgan = require('morgan');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const { initDatabase } = require('./config/database');
@@ -78,6 +79,18 @@ app.use(cors({
   },
   credentials: true
 }));
+// 常见扫描/探测路径：直接静默 404
+// 说明：这些请求本就取不到任何东西（源码里没有对应的静态目录），
+// 放在日志中间件之前，避免 /api/.env、/wp-admin 之类的扫描把控制台刷满。
+// 如需追踪扫描来源，可在 Nginx 的 access_log 里查看（请求仍会被 Nginx 记录）。
+const SCAN_PATH_RE = /(^|\/)(\.env|\.git|\.svn|\.aws|\.ssh|wp-admin|wp-login|wp-content|phpmyadmin|pma|admin\.php|xmlrpc\.php|config\.php|\.htaccess)/i;
+app.use((req, res, next) => {
+  if (SCAN_PATH_RE.test(req.path) || /\.(sqlite|sqlite3|db|log|env|bak|old|zip|tar|gz)$/i.test(req.path)) {
+    return res.status(404).json({ error: '未找到请求的资源' });
+  }
+  next();
+});
+
 // 请求日志：输出到 console（morgan 默认直接写 stdout，绕过 console 补丁，故这里改走 console.log 以带时间戳）
 app.use(morgan('dev', {
   stream: { write: (msg) => console.log(msg.trimEnd()) }
@@ -127,18 +140,25 @@ app.get('/api/health', (req, res) => {
 app.use(express.static(path.join(__dirname, '../public')));
 
 // SPA fallback：非 API 请求都返回 index.html
+const PUBLIC_INDEX = path.join(__dirname, '../public/index.html');
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: '未找到请求的资源' });
   }
-  res.sendFile(path.join(__dirname, '../public/index.html'));
+  // 后端未托管前端（前端由 Nginx 提供）时，返回干净的 404，不暴露服务器文件路径
+  if (!fs.existsSync(PUBLIC_INDEX)) {
+    return res.status(404).json({ error: '未找到请求的资源' });
+  }
+  res.sendFile(PUBLIC_INDEX);
 });
 
 // 错误处理
 app.use((err, req, res, next) => {
+  // 详细错误只写服务器日志（含堆栈），不返回给客户端，避免泄露文件路径等内部信息
   console.error('错误:', err);
-  res.status(err.status || 500).json({
-    error: err.message || '服务器内部错误'
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({
+    error: status >= 500 ? '服务器内部错误' : (status === 404 ? '未找到请求的资源' : (err.message || '请求失败'))
   });
 });
 
