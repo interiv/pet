@@ -9,6 +9,7 @@ const path = require('path');
 require('dotenv').config();
 
 const { initDatabase } = require('./config/database');
+const { runMigrations } = require('./config/migrate');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const petRoutes = require('./routes/pets');
@@ -20,6 +21,7 @@ const achievementRoutes = require('./routes/achievements');
 const leaderboardRoutes = require('./routes/leaderboard');
 const equipmentRoutes = require('./routes/equipment');
 const adminRoutes = require('./routes/admin');
+const systemRoutes = require('./routes/system');
 const postRoutes = require('./routes/posts');
 const chatRoutes = require('./routes/chat');
 const forumRoutes = require('./routes/forum');
@@ -94,6 +96,7 @@ app.use('/api/friends', friendRoutes);
 app.use('/api/achievements', achievementRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/equipment', equipmentRoutes);
+app.use('/api/admin/system', systemRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/chat', chatRoutes);
@@ -205,9 +208,14 @@ io.on('connection', (socket) => {
 
 // 启动服务器
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`服务器运行在端口 ${PORT}`);
-  console.log(`环境：${process.env.NODE_ENV}`);
+
+// 启动前自动执行数据库迁移：
+// 传文件 + 重启即可完成建表/补列/老数据回填；迁移失败只记日志，不阻断服务启动（管理后台会给出提示）
+runMigrations().finally(() => {
+  server.listen(PORT, () => {
+    console.log(`服务器运行在端口 ${PORT}`);
+    console.log(`环境：${process.env.NODE_ENV}`);
+  });
 });
 
 module.exports = { app, io };

@@ -368,6 +368,13 @@ export const adminAPI = {
   getMyGenLimit: () => api.get('/admin/token-usage/my-limit'),
 
   cleanAllData: () => api.post('/admin/clean-all-data'),
+
+  // 系统数据管理（结构迁移 + 演示数据）
+  getSystemStatus: () => api.get('/admin/system/status'),
+  runSystemMigrate: () => api.post('/admin/system/migrate'),
+  importDemoData: (data?: { updateNotices?: boolean }) => api.post('/admin/system/demo-data', data || {}),
+  clearDemoData: () => api.delete('/admin/system/demo-data'),
+  resetSystem: (confirm: string) => api.post('/admin/system/reset', { confirm }),
 };
 
 // 装备部件相关 API

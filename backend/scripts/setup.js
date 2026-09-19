@@ -87,8 +87,9 @@ console.log('\n========================================');
 console.log('  初始化完成！');
 console.log('========================================\n');
 
-console.log('基础账号（密码均为 111111）：');
+console.log('管理员账号（密码 111111，请登录后尽快修改）：');
 console.log('  管理员: admin');
-console.log('  教师:   teacher1 ~ teacher10');
-console.log('  学生:   student1 ~ student50');
+console.log('');
+console.log('想快速体验系统？登录管理后台 →「系统数据」→ 导入演示数据');
+console.log('（会创建 demo_teacher1 / demo_student1 等独立的演示账号，不影响真实数据）');
 console.log('');

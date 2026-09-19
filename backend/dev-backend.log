@@ -29,3 +29,826 @@
 ✅ Real SQLite Database initialized successfully
 服务器运行在端口 3000
 环境：production
+[0mGET /api/classes/public-list [32m200[0m 2.953 ms - 279[0m
+[0mGET /api/auth/me [33m403[0m 2.292 ms - 27[0m
+[0mGET /api/auth/me [33m403[0m 0.789 ms - 27[0m
+[0mGET /api/admin/statistics/public [32m200[0m 1.252 ms - 91[0m
+[0mGET /api/admin/settings/public [32m200[0m 2.184 ms - 668[0m
+[0mGET /api/classes/public-list [32m200[0m 0.447 ms - 279[0m
+[0mGET /api/schools [32m200[0m 0.593 ms - 128[0m
+[0mGET /api/pets/species [32m200[0m 0.712 ms - -[0m
+[0mGET /api/admin/statistics/public [36m304[0m 0.824 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 1.042 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [32m200[0m 0.945 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.555 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.636 ms - -[0m
+[0mGET /api/pets/species [36m304[0m 0.696 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [36m304[0m 0.714 ms - -[0m
+[0mPOST /api/auth/login [33m401[0m 77.219 ms - 36[0m
+[0mPOST /api/auth/login [33m401[0m 63.297 ms - 36[0m
+[0mPOST /api/auth/login [32m200[0m 99.852 ms - 398[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[0mGET /api/admin/settings/public [36m304[0m 0.978 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [36m304[0m 1.067 ms - -[0m
+[0mGET /api/pets/species [36m304[0m 0.853 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.511 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.593 ms - -[0m
+[0mGET /api/admin/statistics/public [36m304[0m 0.981 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 1.075 ms - -[0m
+[0mGET /api/pets/species [36m304[0m 1.170 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [36m304[0m 0.994 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.517 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.734 ms - -[0m
+[0mGET /api/admin/statistics/public [36m304[0m 0.956 ms - -[0m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mGET /api/admin/settings/public [36m304[0m 5.518 ms - -[0m
+[0mGET /api/notifications/unread-count [32m200[0m 3.381 ms - 24[0m
+[0mGET /api/pets/my-pet [33m404[0m 1.284 ms - 27[0m
+[0mGET /api/pets/all [32m200[0m 0.953 ms - 11[0m
+[0mGET /api/admin/settings/public [36m304[0m 1.584 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.229 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.895 ms - 27[0m
+[0mGET /api/pets/all [36m304[0m 0.494 ms - -[0m
+[0mGET /api/admin/statistics [32m200[0m 3.916 ms - -[0m
+[0mGET /api/admin/operational-stats [32m200[0m 14.229 ms - -[0m
+[0mGET /api/leaderboard/level?limit=5 [32m200[0m 1.260 ms - -[0m
+[0mGET /api/leaderboard/level [32m200[0m 1.559 ms - -[0m
+[0mGET /api/admin/statistics [36m304[0m 3.993 ms - -[0m
+[0mGET /api/leaderboard/level?limit=5 [36m304[0m 0.800 ms - -[0m
+[0mGET /api/admin/operational-stats [36m304[0m 4.845 ms - -[0m
+[0mGET /api/leaderboard/level [36m304[0m 1.146 ms - -[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mGET /api/achievements/admin/items [32m200[0m 5.180 ms - -[0m
+[0mGET /api/achievements/list [32m200[0m 1.436 ms - -[0m
+[0mGET /api/achievements/condition-types [32m200[0m 0.558 ms - -[0m
+[0mGET /api/achievements/admin/items [36m304[0m 1.400 ms - -[0m
+[0mGET /api/achievements/list [36m304[0m 1.216 ms - -[0m
+[0mGET /api/achievements/condition-types [36m304[0m 0.740 ms - -[0m
+[0mPOST /api/admin/clean-all-data [32m200[0m 28.405 ms - 81[0m
+[0mGET /api/auth/me [32m200[0m 1.826 ms - 322[0m
+[0mGET /api/auth/me [36m304[0m 0.937 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 1.930 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.322 ms - -[0m
+[0mGET /api/pets/all [36m304[0m 0.848 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 1.347 ms - 27[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.978 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.014 ms - -[0m
+[0mGET /api/pets/all [36m304[0m 0.542 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.813 ms - 27[0m
+[0mGET /api/leaderboard/level [32m200[0m 1.097 ms - 18[0m
+[0mGET /api/leaderboard/level [36m304[0m 0.449 ms - -[0m
+[0mGET /api/admin/statistics [32m200[0m 2.591 ms - 414[0m
+[0mGET /api/admin/operational-stats [32m200[0m 1.616 ms - 222[0m
+[0mGET /api/admin/statistics [36m304[0m 1.544 ms - -[0m
+[0mGET /api/admin/operational-stats [36m304[0m 1.320 ms - -[0m
+[0mGET /api/admin/classes [32m200[0m 0.980 ms - 14[0m
+[0mGET /api/admin/teachers?status=active [32m200[0m 1.049 ms - 15[0m
+[0mGET /api/schools [32m200[0m 0.583 ms - 14[0m
+[0mGET /api/admin/classes [36m304[0m 0.770 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.637 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.608 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.303 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.370 ms - -[0m
+[0mPOST /api/schools [32m201[0m 15.475 ms - 116[0m
+[0mGET /api/schools [32m200[0m 0.417 ms - 122[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.894 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.127 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.809 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.711 ms - -[0m
+[0mGET /api/auth/me [36m304[0m 0.793 ms - -[0m
+[0mGET /api/auth/me [36m304[0m 0.809 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.844 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 1.085 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.747 ms - 27[0m
+[0mGET /api/pets/all [36m304[0m 0.743 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.012 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 1.122 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.839 ms - 27[0m
+[0mGET /api/pets/all [36m304[0m 0.614 ms - -[0m
+[0mGET /api/leaderboard/level [36m304[0m 0.428 ms - -[0m
+[0mGET /api/leaderboard/level [36m304[0m 0.405 ms - -[0m
+[0mGET /api/admin/statistics [36m304[0m 1.533 ms - -[0m
+[0mGET /api/admin/operational-stats [36m304[0m 1.272 ms - -[0m
+[0mGET /api/admin/statistics [36m304[0m 1.805 ms - -[0m
+[0mGET /api/admin/operational-stats [36m304[0m 1.524 ms - -[0m
+[0mGET /api/admin/students [32m200[0m 0.726 ms - 15[0m
+[0mGET /api/admin/classes [36m304[0m 0.678 ms - -[0m
+[0mGET /api/admin/students [36m304[0m 1.061 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 0.865 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 0.952 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.719 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.476 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 0.922 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.453 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.772 ms - -[0m
+[0mPOST /api/admin/classes [32m200[0m 8.554 ms - 45[0m
+[0mGET /api/admin/classes [32m200[0m 1.032 ms - 326[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.620 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.667 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.561 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.123 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.760 ms - -[0m
+[0mGET /api/schools [32m200[0m 0.373 ms - 122[0m
+[0mGET /api/admin/classes [36m304[0m 0.934 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.816 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.411 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.079 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.787 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.414 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.192 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.363 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.717 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.005 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.641 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.329 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.462 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.462 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.198 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 0.807 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 1.576 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.789 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.027 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.407 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.812 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.374 ms - -[0m
+[0mGET /api/admin/settings/site [32m200[0m 1.552 ms - -[0m
+[0mGET /api/admin/settings/site [36m304[0m 1.038 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.621 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.328 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.343 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.816 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.640 ms - -[0m
+[0mPOST /api/schools [32m201[0m 17.197 ms - 128[0m
+[0mGET /api/schools [32m200[0m 0.288 ms - 243[0m
+[0mGET /api/admin/classes [36m304[0m 1.098 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.530 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 2.616 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.116 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.357 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.628 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.316 ms - -[0m
+[0mPOST /api/admin/classes [32m200[0m 17.089 ms - 45[0m
+[0mGET /api/admin/classes [32m200[0m 0.718 ms - 639[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.894 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [32m200[0m 0.417 ms - 18[0m
+[0mGET /api/classes/public-list [32m200[0m 0.343 ms - 281[0m
+[0mGET /api/admin/settings/public [32m200[0m 0.668 ms - 668[0m
+[0mGET /api/admin/statistics/public [32m200[0m 0.717 ms - 87[0m
+[0mGET /api/schools [32m200[0m 0.365 ms - 243[0m
+[0mGET /api/pets/species [32m200[0m 0.678 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [36m304[0m 0.541 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.761 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.804 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.386 ms - -[0m
+[0mGET /api/admin/statistics/public [36m304[0m 0.602 ms - -[0m
+[0mGET /api/pets/species [36m304[0m 0.532 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.531 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.553 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.399 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.581 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.554 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.094 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.777 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.771 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.557 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.693 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.431 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.304 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.346 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.870 ms - -[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mGET /api/schools [36m304[0m 5.044 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.944 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.679 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.562 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 3.187 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.464 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.527 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.561 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.514 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 2.178 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 1.207 ms - -[0m
+[0mGET /api/schools [32m200[0m 0.510 ms - 243[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mPOST /api/auth/login [32m200[0m 101.906 ms - 398[0m
+[0mGET /api/schools [32m200[0m 1.232 ms - 243[0m
+[0mPOST /api/admin/classes [32m200[0m 10.198 ms - 45[0m
+[0mGET /api/classes/public-list [32m200[0m 0.650 ms - 417[0m
+创建班级申请失败: SqliteError: CHECK constraint failed: role IN ('student', 'teacher')
+    at D:\参赛用\2026-创AI\pet\backend\src\routes\auth.js:93:12 {
+  code: 'SQLITE_CONSTRAINT_CHECK'
+}
+[0mPOST /api/auth/register [32m201[0m 75.251 ms - 137[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mGET /api/classes/public-list [32m200[0m 2.990 ms - 417[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mGET /api/notifications/unread-count [36m304[0m 6.390 ms - -[0m
+[0mPOST /api/auth/login [32m200[0m 84.240 ms - 398[0m
+[0mGET /api/schools [32m200[0m 0.704 ms - 243[0m
+[0mPOST /api/admin/classes [32m200[0m 9.738 ms - 45[0m
+[0mPOST /api/admin/classes [32m200[0m 9.291 ms - 46[0m
+[0mPOST /api/auth/register [33m400[0m 64.781 ms - 45[0m
+创建班级申请失败: SqliteError: CHECK constraint failed: role IN ('student', 'teacher')
+    at D:\参赛用\2026-创AI\pet\backend\src\routes\auth.js:93:12 {
+  code: 'SQLITE_CONSTRAINT_CHECK'
+}
+[0mPOST /api/auth/register [32m201[0m 71.974 ms - 137[0m
+[0mGET /api/admin/class-applications?status=pending [32m200[0m 0.828 ms - 19[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+[32m[nodemon] restarting due to changes...[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] starting `node src/server.js`[39m
+[32m[nodemon] restarting due to changes...[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mGET /api/schools [32m200[0m 0.976 ms - 243[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 1.113 ms - -[0m
+[0mGET /api/admin/classes [32m200[0m 5.650 ms - -[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+[32m[nodemon] restarting due to changes...[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mGET /api/notifications/unread-count [32m200[0m 4.486 ms - 24[0m
+[0mGET /api/schools [36m304[0m 0.800 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.487 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.833 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 1.199 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.465 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.241 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.663 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.717 ms - -[0m
+[0mPOST /api/auth/login [32m200[0m 93.703 ms - 398[0m
+[0mGET /api/schools [32m200[0m 0.418 ms - 243[0m
+[0mPOST /api/admin/classes [32m200[0m 9.929 ms - 46[0m
+[0mPOST /api/admin/classes [32m200[0m 9.077 ms - 46[0m
+[0mPOST /api/auth/register [33m400[0m 64.099 ms - 45[0m
+[0mPOST /api/auth/register [32m201[0m 76.735 ms - 137[0m
+[0mGET /api/admin/class-applications?status=pending [32m200[0m 1.079 ms - 273[0m
+[0mPUT /api/admin/class-applications/11/review [32m200[0m 10.054 ms - 29[0m
+[0mPOST /api/auth/login [32m200[0m 84.280 ms - 522[0m
+[0mGET /api/classes/my-class [32m200[0m 1.269 ms - 294[0m
+[0mPOST /api/auth/register [33m400[0m 74.038 ms - 82[0m
+[0mPOST /api/auth/register [32m201[0m 83.524 ms - 125[0m
+[0mGET /api/admin/class-applications?status=pending [32m200[0m 0.584 ms - 516[0m
+[0mPUT /api/admin/class-applications/12/review [32m200[0m 9.177 ms - 29[0m
+[0mPUT /api/admin/class-applications/13/review [32m200[0m 7.960 ms - 29[0m
+[0mPOST /api/auth/login [32m200[0m 72.566 ms - 593[0m
+[0mPOST /api/auth/register [32m201[0m 79.475 ms - 110[0m
+[0mDELETE /api/admin/teachers/73 [32m200[0m 11.415 ms - 29[0m
+[0mDELETE /api/admin/teachers/74 [32m200[0m 10.176 ms - 29[0m
+[0mGET /api/admin/students?search=tmptest_stu_1789728487533 [32m200[0m 0.784 ms - 214[0m
+[0mDELETE /api/admin/students/75 [32m200[0m 10.337 ms - 41[0m
+[0mDELETE /api/admin/classes/11 [32m200[0m 8.409 ms - 29[0m
+[0mDELETE /api/admin/classes/12 [32m200[0m 7.760 ms - 29[0m
+[0mGET /api/admin/teachers [32m200[0m 0.610 ms - 15[0m
+[0mGET /api/admin/teachers [36m304[0m 0.566 ms - -[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mGET /api/notifications/unread-count [36m304[0m 4.274 ms - -[0m
+[0mGET /api/admin/classes [32m200[0m 1.561 ms - 639[0m
+[0mGET /api/admin/students [36m304[0m 1.294 ms - -[0m
+[0mGET /api/admin/students [36m304[0m 0.732 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.637 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.408 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 1.731 ms - -[0m
+[0mGET /api/schools [32m200[0m 0.735 ms - 243[0m
+[0mGET /api/admin/classes [36m304[0m 1.311 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 1.168 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.805 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.670 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.858 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 0.998 ms - -[0m
+[0mGET /api/admin/students [36m304[0m 0.822 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.334 ms - -[0m
+[0mGET /api/admin/students [36m304[0m 0.700 ms - -[0m
+[0mGET /api/admin/teachers [36m304[0m 0.669 ms - -[0m
+[0mGET /api/admin/teachers [36m304[0m 0.541 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.131 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.525 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.875 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.280 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.528 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.759 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.541 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.533 ms - -[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mGET /api/notifications/unread-count [36m304[0m 4.397 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.932 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 1.370 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.625 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.385 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.933 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.611 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.052 ms - -[0m
+[0mGET /api/admin/teachers?status=active [36m304[0m 0.996 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.664 ms - -[0m
+[0mGET /api/auth/me [32m200[0m 2.016 ms - 322[0m
+[0mGET /api/admin/settings/public [36m304[0m 2.250 ms - -[0m
+[0mGET /api/admin/statistics/public [32m200[0m 1.448 ms - 87[0m
+[0mGET /api/pets/species [36m304[0m 1.428 ms - -[0m
+[0mGET /api/schools [32m200[0m 0.602 ms - 243[0m
+[0mGET /api/leaderboard/level?limit=10 [32m200[0m 0.688 ms - 18[0m
+[0mGET /api/classes/public-list [32m200[0m 0.860 ms - 281[0m
+[0mGET /api/schools [36m304[0m 0.496 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.443 ms - -[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mPOST /api/auth/login [32m200[0m 103.847 ms - 398[0m
+[0mGET /api/schools [32m200[0m 1.042 ms - 243[0m
+[0mPOST /api/admin/classes [32m200[0m 11.045 ms - 46[0m
+[0mPOST /api/admin/classes [32m200[0m 7.433 ms - 46[0m
+[0mPOST /api/admin/teachers [32m200[0m 71.253 ms - 139[0m
+[0mPOST /api/admin/teachers [32m200[0m 71.194 ms - 125[0m
+[0mPOST /api/admin/teachers [33m400[0m 0.888 ms - 76[0m
+[0mPOST /api/admin/teachers [32m200[0m 78.918 ms - 88[0m
+[0mPOST /api/auth/login [32m200[0m 73.137 ms - 517[0m
+[0mPOST /api/auth/login [32m200[0m 71.452 ms - 512[0m
+[0mPOST /api/auth/register [33m400[0m 67.212 ms - 82[0m
+[0mDELETE /api/admin/teachers/76 [32m200[0m 11.742 ms - 29[0m
+[0mDELETE /api/admin/teachers/77 [32m200[0m 11.753 ms - 29[0m
+[0mDELETE /api/admin/teachers/78 [32m200[0m 9.655 ms - 29[0m
+[0mDELETE /api/admin/classes/13 [32m200[0m 7.942 ms - 29[0m
+[0mDELETE /api/admin/classes/14 [32m200[0m 8.545 ms - 29[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mPOST /api/auth/login [32m200[0m 103.375 ms - 398[0m
+[0mGET /api/admin/settings/public [36m304[0m 2.518 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 4.306 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 1.616 ms - 27[0m
+[0mGET /api/pets/all [36m304[0m 0.960 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 1.342 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.339 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 1.171 ms - 27[0m
+[0mGET /api/pets/all [36m304[0m 0.899 ms - -[0m
+[0mGET /api/admin/statistics [32m200[0m 2.991 ms - 563[0m
+[0mGET /api/admin/operational-stats [36m304[0m 2.611 ms - -[0m
+[0mGET /api/leaderboard/level [36m304[0m 0.834 ms - -[0m
+[0mGET /api/admin/statistics [36m304[0m 4.105 ms - -[0m
+[0mGET /api/admin/operational-stats [36m304[0m 5.525 ms - -[0m
+[0mGET /api/leaderboard/level [36m304[0m 0.523 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.278 ms - -[0m
+[0mGET /api/admin/students [36m304[0m 0.991 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.104 ms - -[0m
+[0mGET /api/admin/students [36m304[0m 0.910 ms - -[0m
+[0mGET /api/admin/teachers [36m304[0m 0.631 ms - -[0m
+[0mGET /api/admin/teachers [36m304[0m 0.499 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.683 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.015 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.535 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.588 ms - -[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+[32m[nodemon] restarting due to changes...[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+[32m[nodemon] restarting due to changes...[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+[32m[nodemon] restarting due to changes...[39m
+✅ Real SQLite Database initialized successfully
+[32m[nodemon] starting `node src/server.js`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mGET /api/notifications/unread-count [36m304[0m 5.032 ms - -[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mPOST /api/auth/login [32m200[0m 97.424 ms - 398[0m
+[0mGET /api/classes/public-list [32m200[0m 0.860 ms - 281[0m
+[0mPOST /api/auth/register [32m201[0m 71.094 ms - 110[0m
+[0mPOST /api/auth/register [33m400[0m 0.394 ms - 30[0m
+[0mPOST /api/auth/register [33m400[0m 0.485 ms - 30[0m
+[0mPOST /api/auth/register [33m400[0m 0.501 ms - 30[0m
+[0mPOST /api/admin/teachers [33m400[0m 1.890 ms - 30[0m
+[0mPOST /api/admin/students/import [32m200[0m 1.588 ms - 216[0m
+[0mPOST /api/admin/teachers [32m200[0m 67.701 ms - 88[0m
+[0mPUT /api/admin/teachers/80 [33m400[0m 0.964 ms - 30[0m
+[0mPUT /api/admin/teachers/80 [32m200[0m 22.957 ms - 38[0m
+[0mGET /api/admin/class-applications?status=pending [32m200[0m 0.815 ms - 255[0m
+[0mPUT /api/admin/class-applications/15/review [32m200[0m 8.279 ms - 29[0m
+[0mPOST /api/auth/login [32m200[0m 68.618 ms - 435[0m
+[0mGET /api/admin/students?search=tmptest_dup_1789728799409 [32m200[0m 0.779 ms - 220[0m
+[0mDELETE /api/admin/students/79 [32m200[0m 10.505 ms - 41[0m
+[0mDELETE /api/admin/teachers/80 [32m200[0m 10.049 ms - 29[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.363 ms - -[0m
+[0mGET /api/admin/teachers [36m304[0m 0.730 ms - -[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mPOST /api/auth/login [32m200[0m 100.299 ms - 398[0m
+[0mGET /api/classes/public-list [32m200[0m 0.967 ms - 281[0m
+[0mPOST /api/auth/register [32m201[0m 75.283 ms - 110[0m
+[0mPOST /api/auth/register [33m400[0m 0.805 ms - 30[0m
+[0mPOST /api/auth/register [33m400[0m 0.486 ms - 30[0m
+[0mPOST /api/auth/register [33m400[0m 0.464 ms - 30[0m
+[0mPOST /api/admin/teachers [33m400[0m 1.738 ms - 30[0m
+[0mPOST /api/admin/students/import [32m200[0m 2.013 ms - 216[0m
+[0mPOST /api/admin/teachers [32m200[0m 78.660 ms - 88[0m
+[0mPUT /api/admin/teachers/82 [33m400[0m 1.094 ms - 30[0m
+[0mPUT /api/admin/teachers/82 [32m200[0m 8.704 ms - 38[0m
+[0mGET /api/admin/class-applications?status=pending [32m200[0m 0.850 ms - 255[0m
+[0mPUT /api/admin/class-applications/16/review [32m200[0m 9.796 ms - 29[0m
+[0mPOST /api/auth/login [32m200[0m 78.768 ms - 435[0m
+[0mGET /api/admin/students?search=tmptest_dup_1789728820051 [32m200[0m 0.826 ms - 220[0m
+[0mDELETE /api/admin/students/81 [32m200[0m 9.465 ms - 41[0m
+[0mDELETE /api/admin/teachers/82 [32m200[0m 9.865 ms - 29[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mGET /api/notifications/unread-count [36m304[0m 5.458 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.310 ms - -[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+服务器运行在端口 3000
+环境：production
+[0mGET /api/notifications/unread-count [36m304[0m 4.965 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.890 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 2.083 ms - -[0m
+[0mGET /api/admin/students [36m304[0m 1.295 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 1.234 ms - -[0m
+[0mGET /api/admin/students [36m304[0m 1.302 ms - -[0m
+[0mGET /api/admin/teachers [36m304[0m 0.913 ms - -[0m
+[0mGET /api/admin/teachers [36m304[0m 0.629 ms - -[0m
+[0mGET /api/admin/announcements [32m200[0m 1.317 ms - 20[0m
+[0mGET /api/admin/classes [36m304[0m 1.496 ms - -[0m
+[0mGET /api/admin/announcements [36m304[0m 1.149 ms - -[0m
+[0mGET /api/admin/classes [36m304[0m 0.897 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.762 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 2.778 ms - -[0m
+[0mGET /api/admin/statistics/public [36m304[0m 1.081 ms - -[0m
+[0mGET /api/pets/species [36m304[0m 1.021 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.754 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [36m304[0m 0.968 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 1.114 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 1.476 ms - -[0m
+[0mGET /api/admin/statistics/public [36m304[0m 0.877 ms - -[0m
+[0mGET /api/pets/species [36m304[0m 0.923 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.983 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [36m304[0m 0.670 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.662 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.334 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.366 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.496 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.516 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.486 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.291 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.674 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.512 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.249 ms - -[0m
+[0mGET /api/auth/me [32m200[0m 0.885 ms - 322[0m
+[0mGET /api/auth/me [36m304[0m 1.194 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.023 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 1.081 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 1.349 ms - 27[0m
+[0mGET /api/pets/all [36m304[0m 0.729 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 0.668 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.819 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.649 ms - 27[0m
+[0mGET /api/pets/all [36m304[0m 0.485 ms - -[0m
+[0mGET /api/leaderboard/level [36m304[0m 0.602 ms - -[0m
+[0mGET /api/leaderboard/level [36m304[0m 0.423 ms - -[0m
+[0mGET /api/admin/statistics [36m304[0m 1.907 ms - -[0m
+[0mGET /api/admin/operational-stats [36m304[0m 1.839 ms - -[0m
+[0mGET /api/admin/statistics [36m304[0m 2.555 ms - -[0m
+[0mGET /api/admin/operational-stats [36m304[0m 1.508 ms - -[0m
+
+> class-pet-backend@1.0.0 dev
+> nodemon src/server.js
+
+[33m[nodemon] 3.1.14[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): *.*[39m
+[33m[nodemon] watching extensions: js,mjs,cjs,json[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[0mPOST /api/auth/login [32m200[0m 132.689 ms - 398[0m
+[0mGET /api/classes/public-list [32m200[0m 1.452 ms - 281[0m
+[0mGET /api/admin/system/status [32m200[0m 10.433 ms - 519[0m
+[0mPOST /api/admin/system/demo-data [32m200[0m 797.602 ms - 560[0m
+[0mGET /api/admin/system/status [32m200[0m 6.574 ms - 528[0m
+[0mGET /api/classes/public-list [32m200[0m 0.672 ms - 607[0m
+[0mPOST /api/admin/system/demo-data [32m200[0m 90.776 ms - 305[0m
+[0mGET /api/admin/system/status [32m200[0m 6.504 ms - 528[0m
+[0mPOST /api/auth/login [32m200[0m 88.392 ms - 642[0m
+✅ 数据库结构已是最新，无需迁移
+[0mPOST /api/admin/system/migrate [32m200[0m 15.773 ms - 169[0m
+[0mDELETE /api/admin/system/demo-data [32m200[0m 106.445 ms - 106[0m
+[0mGET /api/admin/system/status [32m200[0m 5.651 ms - 519[0m
+[0mGET /api/classes/public-list [32m200[0m 0.555 ms - 281[0m
+[0mPOST /api/auth/login [32m200[0m 86.666 ms - 398[0m
+[0mPOST /api/auth/login [32m200[0m 76.285 ms - 398[0m
+[0mGET /api/classes/public-list [32m200[0m 0.375 ms - 281[0m
+[0mGET /api/admin/system/status [32m200[0m 15.920 ms - 519[0m
+[0mPOST /api/admin/system/demo-data [32m200[0m 768.114 ms - 560[0m
+[0mGET /api/admin/system/status [32m200[0m 4.948 ms - 528[0m
+[0mGET /api/classes/public-list [32m200[0m 0.382 ms - 607[0m
+[0mPOST /api/admin/system/demo-data [32m200[0m 81.163 ms - 305[0m
+[0mGET /api/admin/system/status [32m200[0m 4.274 ms - 528[0m
+[0mPOST /api/auth/login [32m200[0m 75.657 ms - 644[0m
+✅ 数据库结构已是最新，无需迁移
+[0mPOST /api/admin/system/migrate [32m200[0m 12.741 ms - 169[0m
+[0mDELETE /api/admin/system/demo-data [32m200[0m 97.409 ms - 106[0m
+[0mGET /api/admin/system/status [32m200[0m 3.472 ms - 519[0m
+[0mGET /api/classes/public-list [32m200[0m 0.374 ms - 281[0m
+[0mPOST /api/auth/login [32m200[0m 72.767 ms - 398[0m
+[0mPOST /api/auth/login [32m200[0m 69.200 ms - 398[0m
+[0mGET /api/admin/system/status [32m200[0m 4.578 ms - 519[0m
+[0mGET /api/classes/public-list [32m200[0m 0.456 ms - 281[0m
+[0mPOST /api/admin/system/reset [33m400[0m 1.060 ms - 54[0m
+  ✓ 已创建管理员账号：admin / 111111（请登录后尽快修改密码）
+  ✓ 写入默认系统设置 7 项
+✅ 数据库结构已是最新，无需迁移
+[0mPOST /api/admin/system/reset [32m200[0m 565.344 ms - 196[0m
+[0mPOST /api/auth/login [32m200[0m 71.361 ms - 398[0m
+[0mGET /api/admin/system/status [32m200[0m 4.207 ms - 520[0m
+[0mPOST /api/admin/system/demo-data [32m200[0m 1149.422 ms - 588[0m
+
+> class-pet-backend@1.0.0 dev
+> nodemon src/server.js
+
+[33m[nodemon] 3.1.14[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): *.*[39m
+[33m[nodemon] watching extensions: js,mjs,cjs,json[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[0mGET /api/classes/public-list [32m200[0m 1.990 ms - 281[0m
+[0mPOST /api/auth/login [32m200[0m 94.231 ms - 398[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[0mPOST /api/auth/login [32m200[0m 87.649 ms - 398[0m
+[0mGET /api/admin/settings/public [32m200[0m 1.972 ms - 668[0m
+[0mGET /api/classes/public-list [32m200[0m 1.019 ms - 281[0m
+[0mGET /api/admin/statistics/public [32m200[0m 1.363 ms - 87[0m
+[0mGET /api/leaderboard/level?limit=10 [32m200[0m 0.605 ms - 18[0m
+[0mGET /api/schools [32m200[0m 0.591 ms - 243[0m
+[0mGET /api/admin/settings/public [36m304[0m 1.238 ms - -[0m
+[0mGET /api/classes/public-list [36m304[0m 0.393 ms - -[0m
+[0mGET /api/pets/species [32m200[0m 1.276 ms - -[0m
+[0mGET /api/admin/statistics/public [36m304[0m 1.288 ms - -[0m
+[0mGET /api/leaderboard/level?limit=10 [36m304[0m 0.788 ms - -[0m
+[0mGET /api/schools [36m304[0m 0.507 ms - -[0m
+[0mGET /api/pets/species [36m304[0m 0.637 ms - -[0m
+[0mGET /api/auth/me [32m200[0m 1.452 ms - 322[0m
+[0mGET /api/auth/me [36m304[0m 1.051 ms - -[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.855 ms - -[0m
+[0mGET /api/notifications/unread-count [32m200[0m 1.259 ms - 24[0m
+[0mGET /api/pets/my-pet [33m404[0m 1.395 ms - 27[0m
+[0mGET /api/pets/all [32m200[0m 1.021 ms - 11[0m
+[0mGET /api/admin/settings/public [36m304[0m 0.932 ms - -[0m
+[0mGET /api/notifications/unread-count [36m304[0m 1.235 ms - -[0m
+[0mGET /api/pets/my-pet [33m404[0m 0.887 ms - 27[0m
+[0mGET /api/pets/all [36m304[0m 0.607 ms - -[0m
+[0mGET /api/leaderboard/level [32m200[0m 0.595 ms - 18[0m
+[0mGET /api/leaderboard/level [36m304[0m 0.561 ms - -[0m
+[0mGET /api/admin/statistics [32m200[0m 2.649 ms - 563[0m
+[0mGET /api/admin/operational-stats [32m200[0m 2.512 ms - 222[0m
+[0mGET /api/admin/statistics [36m304[0m 2.266 ms - -[0m
+[0mGET /api/admin/operational-stats [36m304[0m 1.161 ms - -[0m
+[0mGET /api/admin/system/status [32m200[0m 6.454 ms - 519[0m
+[0mGET /api/admin/system/status [36m304[0m 5.477 ms - -[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+[32m[nodemon] restarting due to changes...[39m
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[32m[nodemon] starting `node src/server.js`[39m
+✅ Real SQLite Database initialized successfully
+✅ 数据库结构已是最新，无需迁移
+服务器运行在端口 3000
+环境：production
+[0mPOST /api/auth/login [32m200[0m 95.319 ms - 398[0m
+[0mGET /api/admin/system/status [32m200[0m 7.178 ms - 993[0m
+[0mPOST /api/admin/system/demo-data [32m200[0m 779.232 ms - 630[0m
+[0mGET /api/admin/system/status [32m200[0m 5.434 ms - -[0m
+[0mDELETE /api/admin/system/demo-data [32m200[0m 121.066 ms - 159[0m
+[0mGET /api/admin/system/status [32m200[0m 3.512 ms - 571[0m
+[0mPOST /api/admin/system/demo-data [32m200[0m 754.845 ms - 583[0m
+[0mGET /api/admin/system/status [32m200[0m 4.487 ms - 580[0m
+[0mPOST /api/admin/system/demo-data [32m200[0m 95.236 ms - 363[0m
+[0mPOST /api/admin/settings/site [32m200[0m 8.813 ms - 32[0m
+[0mDELETE /api/admin/system/demo-data [32m200[0m 100.709 ms - 130[0m
+[0mGET /api/admin/system/status [32m200[0m 3.316 ms - 619[0m
