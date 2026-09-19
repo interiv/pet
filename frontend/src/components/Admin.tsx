@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge, Switch, Alert, Empty, Spin, Divider, Progress, Checkbox } from 'antd';
-import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined, LineChartOutlined, FireOutlined, ClearOutlined, UploadOutlined, DownloadOutlined } from '@ant-design/icons';
+import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined, LineChartOutlined, FireOutlined, ClearOutlined, UploadOutlined, DownloadOutlined, FileExcelOutlined } from '@ant-design/icons';
 import { adminAPI, schoolAPI, assignmentAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import ClassInvitationManager from './ClassInvitationManager';
@@ -960,59 +960,59 @@ const StudentManagement: React.FC = () => {
     return classes.filter(c => myClassIds.includes(c.id));
   };
 
-  const handleDownloadTemplate = async (format: 'json' | 'csv') => {
+  const handleDownloadTemplate = async (format: 'json' | 'csv' | 'xlsx') => {
     try {
-      if (format === 'csv') {
-        const res = await adminAPI.getImportTemplate('csv');
-        const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = 'student_import_template.csv';
-        link.click();
-      } else {
-        const res = await adminAPI.getImportTemplate('json');
-        const dataStr = JSON.stringify(res.data.template, null, 2);
-        const blob = new Blob([dataStr], { type: 'application/json' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = 'student_import_template.json';
-        link.click();
+      if (format === 'xlsx') {
+        await downloadExcelTemplate();
+        message.success('Excel 模板下载成功（用 Excel 打开填好后，可直接上传 .xlsx 文件）');
+        return;
       }
-      message.success('模板下载成功');
-    } catch (error) {
-      message.error('下载模板失败');
+
+      const res = await adminAPI.getImportTemplate(format);
+      const isCsv = format === 'csv';
+      const content = isCsv ? res.data : JSON.stringify(res.data.template, null, 2);
+      const blob = new Blob([content], { type: isCsv ? 'text/csv;charset=utf-8;' : 'application/json' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = isCsv ? '学生导入模板.csv' : '学生导入模板.json';
+      link.click();
+      URL.revokeObjectURL(link.href);
+      message.success(isCsv ? 'CSV 模板下载成功（可直接用 Excel 打开编辑）' : 'JSON 模板下载成功');
+    } catch (error: any) {
+      message.error(`下载模板失败：${error?.response?.data?.error || error?.message || '请检查网络或登录状态'}`);
     }
   };
 
-  const handleFileUpload = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        let students;
-        if (file.name.endsWith('.json')) {
-          students = JSON.parse(e.target?.result as string);
-        } else if (file.name.endsWith('.csv')) {
-          const csv = e.target?.result as string;
-          const lines = csv.split('\n');
-          const headers = lines[0].split(',').map(h => h.trim());
-          students = lines.slice(1).filter(line => line.trim()).map(line => {
-            const values = line.split(',').map(v => v.trim());
-            const student: any = {};
-            headers.forEach((header, index) => {
-              student[header] = values[index] || '';
-            });
-            return student;
-          });
-        } else {
-          throw new Error('不支持的文件格式');
-        }
-        importForm.setFieldValue('students', JSON.stringify(students, null, 2));
-        message.success(`成功解析 ${students.length} 个学生`);
-      } catch (error) {
-        message.error('解析文件失败，请检查文件格式');
+  const handleFileUpload = async (file: File) => {
+    try {
+      const ext = (file.name.split('.').pop() || '').toLowerCase();
+      let rows: any[] = [];
+
+      if (ext === 'xlsx' || ext === 'xls') {
+        // Excel：用 SheetJS 解析第一个工作表
+        const XLSX = await import('xlsx');
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(buffer, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      } else if (ext === 'csv') {
+        rows = parseCsvText(await file.text());
+      } else if (ext === 'json') {
+        rows = JSON.parse(await file.text());
+      } else {
+        throw new Error('不支持的文件格式，请使用 .xlsx / .xls / .csv / .json');
       }
-    };
-    reader.readAsText(file);
+
+      const students = normalizeStudentRows(Array.isArray(rows) ? rows : []);
+      if (students.length === 0) {
+        throw new Error('没有解析到有效的学生数据（请确认表头包含：用户名、密码，或 username、password）');
+      }
+
+      importForm.setFieldValue('students', JSON.stringify(students, null, 2));
+      message.success(`成功解析 ${students.length} 个学生，确认无误后点「确定」导入`);
+    } catch (error: any) {
+      message.error(`解析文件失败：${error?.message || '请检查文件格式'}`);
+    }
     return false;
   };
 
@@ -1258,17 +1258,25 @@ const StudentManagement: React.FC = () => {
           
           <div style={{ marginBottom: 16 }}>
             <Divider orientation="left">下载模板</Divider>
-            <Space>
-              <Button icon={<DownloadOutlined />} onClick={() => handleDownloadTemplate('json')}>JSON模板</Button>
-              <Button icon={<DownloadOutlined />} onClick={() => handleDownloadTemplate('csv')}>CSV模板</Button>
+            <Space wrap>
+              <Button type="primary" ghost icon={<FileExcelOutlined />} onClick={() => handleDownloadTemplate('xlsx')}>
+                Excel 模板（推荐）
+              </Button>
+              <Button icon={<DownloadOutlined />} onClick={() => handleDownloadTemplate('csv')}>CSV 模板</Button>
+              <Button icon={<DownloadOutlined />} onClick={() => handleDownloadTemplate('json')}>JSON 模板</Button>
             </Space>
+            <div style={{ color: '#888', fontSize: 12, marginTop: 8, lineHeight: 1.9 }}>
+              · <b>Excel 模板（.xlsx）</b>：用 Excel / WPS 打开填好，保存后直接上传这个文件即可；<br />
+              · <b>CSV 模板</b>：其实就是"表格文件"，Excel 也能直接打开编辑，改完另存为 CSV 再上传；<br />
+              · 表头支持中文（用户名、密码、邮箱、姓名）或英文（username、password、email、real_name），邮箱和姓名可以留空。
+            </div>
           </div>
           
           <Form.Item 
             name="students" 
             label="学生数据" 
             rules={[{ required: true, message: '请输入学生数据' }]}
-            extra="支持 JSON 数组或 CSV 文件导入。每行一个学生，字段包括：username, password, email, real_name"
+            extra="可以直接在下面编辑数据（JSON 格式），也可以在上面下载模板、填好后上传 Excel / CSV / JSON 文件"
           >
             <Input.TextArea 
               rows={10} 
@@ -1277,11 +1285,15 @@ const StudentManagement: React.FC = () => {
           </Form.Item>
           
           <div style={{ marginBottom: 16 }}>
-            <Divider orientation="left">或上传文件</Divider>
+            <Divider orientation="left">或上传文件（Excel / CSV / JSON）</Divider>
             <input 
               type="file" 
-              accept=".json,.csv" 
-              onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+              accept=".xlsx,.xls,.csv,.json" 
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFileUpload(f);
+                e.target.value = '';
+              }}
             />
           </div>
         </Form>
@@ -2657,6 +2669,83 @@ const CleanData: React.FC = () => {
     </Card>
   );
 };
+
+// 学生导入：表头兼容（中文 Excel 表头 / 英文字段名都支持）
+const STUDENT_HEADER_MAP: Record<string, string> = {
+  username: 'username', '用户名': 'username', '账号': 'username', '学号': 'username', '登录名': 'username',
+  password: 'password', '密码': 'password',
+  email: 'email', '邮箱': 'email', '电子邮箱': 'email',
+  real_name: 'real_name', '姓名': 'real_name', '真实姓名': 'real_name', '名字': 'real_name', '学生姓名': 'real_name',
+};
+
+// 解析 CSV 文本（支持引号包裹、字段内逗号、BOM、\r\n）
+function parseCsvText(text: string): Record<string, string>[] {
+  const clean = String(text || '').replace(/^\uFEFF/, '');
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (clean[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(field); field = '';
+    } else if (ch === '\n') {
+      row.push(field); rows.push(row); row = []; field = '';
+    } else if (ch !== '\r') {
+      field += ch;
+    }
+  }
+  if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
+
+  const nonEmpty = rows.filter((r) => r.some((c) => String(c).trim() !== ''));
+  if (nonEmpty.length < 2) return [];
+  const headers = nonEmpty[0].map((h) => String(h).trim());
+  return nonEmpty.slice(1).map((r) => {
+    const obj: Record<string, string> = {};
+    headers.forEach((h, i) => { obj[h] = String(r[i] ?? '').trim(); });
+    return obj;
+  });
+}
+
+// 把各种来源的行数据统一成后端需要的字段（username / password / email / real_name）
+function normalizeStudentRows(rows: any[]): any[] {
+  return (rows || [])
+    .map((row) => {
+      const out: any = {};
+      Object.keys(row || {}).forEach((key) => {
+        const k = String(key).trim();
+        const mapped = STUDENT_HEADER_MAP[k.toLowerCase()] || STUDENT_HEADER_MAP[k];
+        if (mapped) out[mapped] = typeof row[key] === 'string' ? row[key].trim() : row[key];
+      });
+      return out;
+    })
+    .filter((s) => s.username || s.password || s.real_name);
+}
+
+// 生成并下载 Excel(.xlsx) 学生导入模板
+async function downloadExcelTemplate() {
+  const XLSX = await import('xlsx');
+  const worksheet = XLSX.utils.json_to_sheet(
+    [
+      { '用户名': 'student1', '密码': '111111', '邮箱': 'student1@example.com', '姓名': '张三' },
+      { '用户名': 'student2', '密码': '111111', '邮箱': 'student2@example.com', '姓名': '李四' },
+    ],
+    { header: ['用户名', '密码', '邮箱', '姓名'] }
+  );
+  worksheet['!cols'] = [{ wch: 16 }, { wch: 12 }, { wch: 26 }, { wch: 12 }];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, '学生名单');
+  XLSX.writeFile(workbook, '学生导入模板.xlsx');
+}
 
 // ==================== 系统数据（数据库结构 + 演示数据）====================
 const SystemData: React.FC = () => {

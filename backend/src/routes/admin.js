@@ -317,10 +317,55 @@ router.get('/students', authenticateToken, (req, res) => {
   }
 });
 
+// 下载学生导入模板（班主任或管理员）
+// 必须放在 /students/:id 之前，否则会被 :id 抢先匹配导致下载失败
+router.get('/students/import-template', authenticateToken, (req, res) => {
+  try {
+    const { format = 'json' } = req.query;
+
+    if (format === 'json') {
+      const template = [
+        {
+          username: 'student1',
+          password: '111111',
+          email: 'student1@example.com',
+          real_name: '张三'
+        },
+        {
+          username: 'student2',
+          password: '111111',
+          email: 'student2@example.com',
+          real_name: '李四'
+        }
+      ];
+      res.json({ template });
+    } else if (format === 'csv') {
+      // CSV 可直接用 Excel 打开编辑；开头加 BOM，否则 Excel 打开中文会乱码
+      const header = '用户名,密码,邮箱,姓名\n';
+      const rows = [
+        'student1,111111,student1@example.com,张三',
+        'student2,111111,student2@example.com,李四'
+      ].join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename=student_import_template.csv');
+      res.send('\uFEFF' + header + rows);
+    } else {
+      res.status(400).json({ error: '不支持的格式，请使用 json 或 csv' });
+    }
+  } catch (error) {
+    console.error('获取导入模板失败:', error);
+    res.status(500).json({ error: '获取模板失败' });
+  }
+});
+
 // 获取学生详情（含宠物、物品、装备）
 router.get('/students/:id', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
+    // 防御：学生 ID 必须是数字，避免把 /students/xxx 这类路径当成 ID
+    if (!/^\d+$/.test(String(id))) {
+      return res.status(400).json({ error: '学生 ID 无效' });
+    }
     const userId = req.user.userId;
     const userRole = req.user.role;
 
@@ -1937,44 +1982,8 @@ router.post('/students/import', authenticateToken, async (req, res) => {
   }
 });
 
-// 教师下载导入模板（班主任或管理员）
-router.get('/students/import-template', authenticateToken, (req, res) => {
-  try {
-    const { format = 'json' } = req.query;
-
-    if (format === 'json') {
-      const template = [
-        {
-          username: 'student1',
-          password: '111111',
-          email: 'student1@example.com',
-          real_name: '张三'
-        },
-        {
-          username: 'student2',
-          password: '111111',
-          email: 'student2@example.com',
-          real_name: '李四'
-        }
-      ];
-      res.json({ template });
-    } else if (format === 'csv') {
-      const header = 'username,password,email,real_name\n';
-      const rows = [
-        'student1,111111,student1@example.com,张三',
-        'student2,111111,student2@example.com,李四'
-      ].join('\n');
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', 'attachment; filename=student_import_template.csv');
-      res.send(header + rows);
-    } else {
-      res.status(400).json({ error: '不支持的格式，请使用 json 或 csv' });
-    }
-  } catch (error) {
-    console.error('获取导入模板失败:', error);
-    res.status(500).json({ error: '获取模板失败' });
-  }
-});
+// 注：「下载学生导入模板」路由已上移到 /students/:id 之前，
+// 否则 /students/import-template 会被 /students/:id 抢先匹配，导致"下载模板失败"。
 
 // ==================== 网站设置 ====================
 
