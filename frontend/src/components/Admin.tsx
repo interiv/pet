@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge, Switch, Alert, Empty, Spin, Divider, Progress, Checkbox } from 'antd';
 import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined, LineChartOutlined, FireOutlined, ClearOutlined, UploadOutlined, DownloadOutlined, FileExcelOutlined } from '@ant-design/icons';
 import { adminAPI, schoolAPI, assignmentAPI } from '../utils/api';
@@ -861,6 +861,7 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
 
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
+    { title: '姓名', dataIndex: 'real_name', key: 'real_name', render: (v: string) => v || <span style={{ color: '#bbb' }}>—</span> },
     { title: '用户名', dataIndex: 'username', key: 'username' },
     { title: '邮箱', dataIndex: 'email', key: 'email' },
     { title: '注册时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => new Date(v).toLocaleDateString() },
@@ -942,8 +943,16 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
       >
         <Form form={createForm} layout="vertical">
           <Form.Item
+            name="real_name"
+            label="姓名"
+            rules={[{ required: true, message: '请输入教师姓名' }, { max: 20, message: '姓名最多 20 个字符' }]}
+          >
+            <Input placeholder="教师姓名" />
+          </Form.Item>
+          <Form.Item
             name="username"
-            label="用户名"
+            label="用户名（登录账号）"
+            tooltip="用于登录的账号，可以和姓名不一样"
             rules={[
               { required: true, message: '请输入用户名' },
               { min: 3, message: '用户名至少 3 个字符' }
@@ -1033,7 +1042,8 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
 
       <Modal title="编辑教师" open={editModalVisible} onOk={handleUpdate} onCancel={() => setEditModalVisible(false)}>
         <Form form={form} layout="vertical">
-          <Form.Item name="username" label="用户名"><Input /></Form.Item>
+          <Form.Item name="real_name" label="姓名"><Input placeholder="教师姓名" /></Form.Item>
+          <Form.Item name="username" label="用户名（登录账号）"><Input /></Form.Item>
           <Form.Item name="email" label="邮箱"><Input /></Form.Item>
           <Form.Item name="status" label="状态">
             <Select>
@@ -1068,6 +1078,15 @@ const StudentManagement: React.FC = () => {
   const [form] = Form.useForm();
   const [goldForm] = Form.useForm();
   const [importForm] = Form.useForm();
+  // 粘贴名单导入
+  const [importMode, setImportMode] = useState<'paste' | 'file'>('paste');
+  const [pasteText, setPasteText] = useState('');
+  const [pastePrefix, setPastePrefix] = useState('stu');
+  const [generating, setGenerating] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [generatedAccounts, setGeneratedAccounts] = useState<any[] | null>(null);
+  const [pasteWarnings, setPasteWarnings] = useState<any>(null);
+  const [aiFallbackMsg, setAiFallbackMsg] = useState<string | null>(null);
 
   useEffect(() => {
     loadClasses();
@@ -1186,6 +1205,129 @@ const StudentManagement: React.FC = () => {
     }
   };
 
+  // ==================== 粘贴名单 → 生成账号 ====================
+
+  // 实时预估：清洗规则与后端保持一致（去空行、去首尾空格、去行首序号、超长行忽略）
+  const pastePreview = useMemo(() => {
+    const lines = pasteText.split(/\r?\n/);
+    const toHalf = (s: string) => s.replace(/[\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+    let empty = 0;
+    let invalid = 0;
+    const names: string[] = [];
+    for (const line of lines) {
+      let s = toHalf(line).replace(/\u3000/g, ' ').trim();
+      if (!s) { empty += 1; continue; }
+      s = s.replace(/^[(\[（【]?\d+[)\]）】]?\s*[.、,，:：-]?\s*/, '').trim();
+      const parts = s.split(/[,，;；\t]+/).map((p) => p.trim()).filter(Boolean);
+      if (parts.length === 2) s = parts[1];
+      else if (parts.length > 2) {
+        const noDigit = parts.filter((p) => !/\d/.test(p));
+        s = noDigit.length ? noDigit[noDigit.length - 1] : parts[parts.length - 1];
+      }
+      s = s.replace(/^["'“”‘’【】\[\]()（）\s]+|["'“”‘’【】\[\]()（）\s]+$/g, '').trim();
+      if (!s) { empty += 1; continue; }
+      if (s.length > 20) { invalid += 1; continue; }
+      names.push(s);
+    }
+    const counter = new Map<string, number>();
+    names.forEach((n) => counter.set(n, (counter.get(n) || 0) + 1));
+    const duplicates = Array.from(counter.entries()).filter(([, c]) => c > 1).map(([n]) => n);
+    return { lines: lines.length, empty, invalid, names, duplicates };
+  }, [pasteText]);
+
+  const handleGenerateAccounts = async (mode: 'ai' | 'sequence') => {
+    const classId = importForm.getFieldValue('class_id');
+    if (!classId) { message.warning('请先选择班级'); return; }
+    if (!pasteText.trim()) { message.warning('请先粘贴学生姓名'); return; }
+    setGenerating(true);
+    setAiFallbackMsg(null);
+    try {
+      const res = await adminAPI.generateStudentAccounts({ names: pasteText, mode, prefix: pastePrefix, class_id: classId });
+      setGeneratedAccounts(res.data.accounts || []);
+      setPasteWarnings({
+        duplicates: res.data.duplicate_names || [],
+        aiMissing: res.data.ai_fallback_names || []
+      });
+      message.success(res.data.message || `已生成 ${res.data.count} 个账号`);
+    } catch (error: any) {
+      const d = error?.response?.data;
+      if (d?.can_fallback) {
+        setAiFallbackMsg(d.error || 'AI 生成账号失败');
+      } else {
+        message.error(d?.error || '生成账号失败');
+      }
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const updateAccount = (idx: number, field: 'username' | 'password', value: string) => {
+    setGeneratedAccounts((prev) => (prev || []).map((a, i) => (i === idx ? { ...a, [field]: value } : a)));
+  };
+
+  const handlePasteImport = async () => {
+    const classId = importForm.getFieldValue('class_id');
+    if (!classId) { message.warning('请先选择班级'); return; }
+    const list = (generatedAccounts || []).filter((a) => a.username && a.password);
+    if (list.length === 0) { message.warning('请先生成账号'); return; }
+    const bad = list.find((a) => !/^[a-zA-Z0-9_]{3,20}$/.test(String(a.username).trim()));
+    if (bad) { message.error(`账号「${bad.username}」格式不合法（3-20 位字母、数字或下划线）`); return; }
+
+    setImporting(true);
+    try {
+      const res = await adminAPI.importStudents(classId, list.map((a) => ({
+        username: String(a.username).trim(),
+        password: a.password,
+        real_name: a.real_name
+      })));
+      const r = res.data?.results || {};
+      message.success(res.data?.message || `导入完成：成功 ${r.success?.length ?? 0} 个`);
+      const problems = [...(r.failed || []), ...(r.skipped || [])];
+      if (problems.length > 0) {
+        Modal.warning({
+          title: '部分学生未导入',
+          width: 520,
+          content: (
+            <div style={{ maxHeight: 260, overflow: 'auto' }}>
+              {problems.map((p: any, i: number) => (
+                <div key={i}>{p.real_name || p.username}：{p.error}</div>
+              ))}
+            </div>
+          )
+        });
+      }
+      loadStudents();
+    } catch (error: any) {
+      message.error(error?.response?.data?.error || '导入失败');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const closeImportModal = () => {
+    setImportModalVisible(false);
+    importForm.resetFields();
+    setGeneratedAccounts(null);
+    setPasteText('');
+    setPasteWarnings(null);
+    setAiFallbackMsg(null);
+  };
+
+  // 下载「姓名 + 账号 + 密码」名单（CSV，Excel 可直接打开）
+  const handleDownloadAccounts = () => {
+    const list = (generatedAccounts || []).filter((a) => a.username);
+    if (list.length === 0) { message.warning('还没有可下载的账号'); return; }
+    const cls = getManageableClasses().find((c: any) => c.id === importForm.getFieldValue('class_id'));
+    const csv = '\uFEFF' + ['姓名,登录账号,密码', ...list.map((a) => `${a.real_name || ''},${a.username},${a.password}`)].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${cls?.name || '学生'}账号密码名单.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    message.success('名单已下载，可打印或发给学生');
+  };
+
   const viewDetail = async (id: number) => {
     setDetailModalVisible(true);
     setSelectedStudent(students.find(s => s.id === id));
@@ -1248,6 +1390,7 @@ const StudentManagement: React.FC = () => {
 
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
+    { title: '姓名', dataIndex: 'real_name', key: 'real_name', render: (v: string) => v || <span style={{ color: '#bbb' }}>—</span> },
     { title: '用户名', dataIndex: 'username', key: 'username' },
     { title: '班级', dataIndex: 'class_name', key: 'class_name', render: (v: string) => v || '未分配' },
     { title: '金币', dataIndex: 'gold', key: 'gold', render: (v: number) => <span style={{ color: '#faad14' }}>{v}</span> },
@@ -1354,7 +1497,8 @@ const StudentManagement: React.FC = () => {
 
       <Modal title="编辑学生" open={editModalVisible} onOk={handleUpdate} onCancel={() => setEditModalVisible(false)}>
         <Form form={form} layout="vertical">
-          <Form.Item name="username" label="用户名"><Input /></Form.Item>
+          <Form.Item name="real_name" label="姓名"><Input placeholder="学生姓名" /></Form.Item>
+          <Form.Item name="username" label="用户名（登录账号）"><Input /></Form.Item>
           <Form.Item name="email" label="邮箱"><Input /></Form.Item>
           <Form.Item name="class_id" label="班级">
             <Select allowClear onChange={v => form.setFieldValue('class_id', v)}>
@@ -1382,9 +1526,26 @@ const StudentManagement: React.FC = () => {
       <Modal 
         title="批量导入学生" 
         open={importModalVisible} 
-        onOk={handleImport} 
-        onCancel={() => { setImportModalVisible(false); importForm.resetFields(); }}
-        width={isMobile ? '95vw' : 700}
+        onCancel={closeImportModal}
+        width={isMobile ? '95vw' : 780}
+        footer={[
+          <Button key="cancel" onClick={closeImportModal}>取消</Button>,
+          importMode === 'paste' && generatedAccounts ? (
+            <Button key="download" icon={<DownloadOutlined />} onClick={handleDownloadAccounts}>下载名单</Button>
+          ) : null,
+          importMode === 'paste' ? (
+            <Button
+              key="pasteOk"
+              type="primary"
+              loading={generating || importing}
+              onClick={() => (generatedAccounts ? handlePasteImport() : handleGenerateAccounts('ai'))}
+            >
+              {generatedAccounts ? `确认导入（${generatedAccounts.length} 人）` : 'AI 生成账号'}
+            </Button>
+          ) : (
+            <Button key="fileOk" type="primary" onClick={handleImport}>确定导入</Button>
+          )
+        ]}
       >
         <Form form={importForm} layout="vertical">
           <Form.Item 
@@ -1392,51 +1553,192 @@ const StudentManagement: React.FC = () => {
             label="选择班级" 
             rules={[{ required: true, message: '请选择班级' }]}
           >
-            <Select placeholder="请选择班级">
+            <Select
+              placeholder="请选择班级"
+              onChange={() => { setGeneratedAccounts(null); setPasteWarnings(null); setAiFallbackMsg(null); }}
+            >
               {getManageableClasses().map(c => <Select.Option key={c.id} value={c.id}>{c.name}</Select.Option>)}
             </Select>
           </Form.Item>
-          
-          <div style={{ marginBottom: 16 }}>
-            <Divider orientation="left">下载模板</Divider>
-            <Space wrap>
-              <Button type="primary" ghost icon={<FileExcelOutlined />} onClick={() => handleDownloadTemplate('xlsx')}>
-                Excel 模板（推荐）
-              </Button>
-              <Button icon={<DownloadOutlined />} onClick={() => handleDownloadTemplate('csv')}>CSV 模板</Button>
-              <Button icon={<DownloadOutlined />} onClick={() => handleDownloadTemplate('json')}>JSON 模板</Button>
-            </Space>
-            <div style={{ color: '#888', fontSize: 12, marginTop: 8, lineHeight: 1.9 }}>
-              · <b>Excel 模板（.xlsx）</b>：用 Excel / WPS 打开填好，保存后直接上传这个文件即可；<br />
-              · <b>CSV 模板</b>：其实就是"表格文件"，Excel 也能直接打开编辑，改完另存为 CSV 再上传；<br />
-              · 表头支持中文（用户名、密码、邮箱、姓名）或英文（username、password、email、real_name），邮箱和姓名可以留空。
-            </div>
-          </div>
-          
-          <Form.Item 
-            name="students" 
-            label="学生数据" 
-            rules={[{ required: true, message: '请输入学生数据' }]}
-            extra="可以直接在下面编辑数据（JSON 格式），也可以在上面下载模板、填好后上传 Excel / CSV / JSON 文件"
-          >
-            <Input.TextArea 
-              rows={10} 
-              placeholder='[{"username": "student1", "password": "111111", "email": "student1@example.com", "real_name": "张三"}]'
-            />
-          </Form.Item>
-          
-          <div style={{ marginBottom: 16 }}>
-            <Divider orientation="left">或上传文件（Excel / CSV / JSON）</Divider>
-            <input 
-              type="file" 
-              accept=".xlsx,.xls,.csv,.json" 
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) handleFileUpload(f);
-                e.target.value = '';
-              }}
-            />
-          </div>
+
+          <Tabs
+            activeKey={importMode}
+            onChange={(k) => setImportMode(k as 'paste' | 'file')}
+            items={[
+              {
+                key: 'paste',
+                label: '粘贴姓名生成账号（推荐）',
+                children: (
+                  <div>
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 12 }}
+                      message="只需粘贴学生姓名，一行一个"
+                      description="系统会自动去掉空行、前后空格和行首序号，再由 AI 生成登录账号（拼音）+ 随机 6 位数字密码。登录账号与姓名可以不一样。"
+                    />
+
+                    <Input.TextArea
+                      rows={8}
+                      value={pasteText}
+                      onChange={(e) => {
+                        setPasteText(e.target.value);
+                        setGeneratedAccounts(null);
+                        setPasteWarnings(null);
+                        setAiFallbackMsg(null);
+                      }}
+                      placeholder={'张三\n李四\n王五\n\n也支持带序号的名单：1. 张三 / 2、李四 / 20250101,钱七'}
+                    />
+
+                    <div style={{ margin: '8px 0', color: '#666', fontSize: 13 }}>
+                      已粘贴 {pastePreview.lines} 行 → 有效 <b>{pastePreview.names.length}</b> 人
+                      {pastePreview.empty > 0 && `，忽略空行 ${pastePreview.empty} 行`}
+                      {pastePreview.invalid > 0 && `，忽略疑似非姓名 ${pastePreview.invalid} 行`}
+                      {pastePreview.duplicates.length > 0 && (
+                        <span style={{ color: '#fa8c16' }}>，重名 {pastePreview.duplicates.length} 个</span>
+                      )}
+                    </div>
+
+                    {pastePreview.duplicates.length > 0 && (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        style={{ marginBottom: 12 }}
+                        message={`检测到重名：${pastePreview.duplicates.slice(0, 10).join('、')}`}
+                        description="同名学生真实存在时会各自生成账号；如果是重复粘贴，请删掉多余的那行再生成。"
+                      />
+                    )}
+
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                      <span style={{ color: '#666', fontSize: 13 }}>序号模式账号前缀：</span>
+                      <Input
+                        value={pastePrefix}
+                        onChange={(e) => setPastePrefix(e.target.value)}
+                        style={{ width: 110 }}
+                        placeholder="stu"
+                      />
+                      <Button onClick={() => handleGenerateAccounts('sequence')} loading={generating}>按序号生成账号</Button>
+                      <span style={{ color: '#999', fontSize: 12 }}>（AI 不可用时用：生成 stu001、stu002…）</span>
+                    </div>
+
+                    {aiFallbackMsg && (
+                      <Alert
+                        type="error"
+                        showIcon
+                        style={{ marginBottom: 12 }}
+                        message="AI 生成账号不可用"
+                        description={
+                          <div>
+                            <div>{aiFallbackMsg}</div>
+                            <Button
+                              type="primary"
+                              size="small"
+                              style={{ marginTop: 8 }}
+                              onClick={() => handleGenerateAccounts('sequence')}
+                            >
+                              改用「按序号生成账号」
+                            </Button>
+                            <span style={{ marginLeft: 8, color: '#888' }}>生成后可在下方逐条修改账号</span>
+                          </div>
+                        }
+                      />
+                    )}
+
+                    {generatedAccounts && (
+                      <div>
+                        <Divider orientation="left">生成结果（{generatedAccounts.length} 人，可直接修改账号/密码）</Divider>
+                        {(pasteWarnings?.aiMissing?.length || 0) > 0 && (
+                          <Alert
+                            type="warning"
+                            showIcon
+                            style={{ marginBottom: 8 }}
+                            message={`有 ${pasteWarnings.aiMissing.length} 个姓名 AI 未返回账号，已用序号兜底（可在下方手动修改）`}
+                          />
+                        )}
+                        <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 6 }}>
+                          <Table
+                            size="small"
+                            pagination={false}
+                            rowKey={(_: any, idx?: number) => String(idx)}
+                            dataSource={generatedAccounts}
+                            columns={[
+                              { title: '姓名', dataIndex: 'real_name', width: 90 },
+                              {
+                                title: '登录账号',
+                                dataIndex: 'username',
+                                render: (v: string, _r: any, idx: number) => (
+                                  <Input size="small" value={v} onChange={(e) => updateAccount(idx, 'username', e.target.value)} />
+                                )
+                              },
+                              {
+                                title: '密码',
+                                dataIndex: 'password',
+                                width: 140,
+                                render: (v: string, _r: any, idx: number) => (
+                                  <Input size="small" value={v} onChange={(e) => updateAccount(idx, 'password', e.target.value)} />
+                                )
+                              }
+                            ]}
+                          />
+                        </div>
+                        <div style={{ color: '#888', fontSize: 12, marginTop: 8 }}>
+                          确认无误后点右下角「确认导入（{generatedAccounts.length} 人）」写入系统；导入后可用「下载名单」把账号密码发给学生。
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              },
+              {
+                key: 'file',
+                label: '文件 / 表格导入',
+                children: (
+                  <div>
+                    <div style={{ marginBottom: 16 }}>
+                      <Divider orientation="left">下载模板</Divider>
+                      <Space wrap>
+                        <Button type="primary" ghost icon={<FileExcelOutlined />} onClick={() => handleDownloadTemplate('xlsx')}>
+                          Excel 模板（推荐）
+                        </Button>
+                        <Button icon={<DownloadOutlined />} onClick={() => handleDownloadTemplate('csv')}>CSV 模板</Button>
+                        <Button icon={<DownloadOutlined />} onClick={() => handleDownloadTemplate('json')}>JSON 模板</Button>
+                      </Space>
+                      <div style={{ color: '#888', fontSize: 12, marginTop: 8, lineHeight: 1.9 }}>
+                        · <b>Excel 模板（.xlsx）</b>：用 Excel / WPS 打开填好，保存后直接上传这个文件即可；<br />
+                        · <b>CSV 模板</b>：其实就是"表格文件"，Excel 也能直接打开编辑，改完另存为 CSV 再上传；<br />
+                        · 表头支持中文（用户名、密码、邮箱、姓名）或英文（username、password、email、real_name），邮箱和姓名可以留空。
+                      </div>
+                    </div>
+
+                    <Form.Item 
+                      name="students" 
+                      label="学生数据" 
+                      rules={[{ required: true, message: '请输入学生数据' }]}
+                      extra="可以直接在下面编辑数据（JSON 格式），也可以在上面下载模板、填好后上传 Excel / CSV / JSON 文件"
+                    >
+                      <Input.TextArea 
+                        rows={10} 
+                        placeholder='[{"username": "student1", "password": "111111", "email": "student1@example.com", "real_name": "张三"}]'
+                      />
+                    </Form.Item>
+
+                    <div style={{ marginBottom: 16 }}>
+                      <Divider orientation="left">或上传文件（Excel / CSV / JSON）</Divider>
+                      <input 
+                        type="file" 
+                        accept=".xlsx,.xls,.csv,.json" 
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) handleFileUpload(f);
+                          e.target.value = '';
+                        }}
+                      />
+                    </div>
+                  </div>
+                )
+              }
+            ]}
+          />
         </Form>
       </Modal>
     </div>

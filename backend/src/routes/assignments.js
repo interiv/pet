@@ -1541,7 +1541,7 @@ router.get('/:id/statistics', authenticateToken, authorizeRole('teacher', 'admin
     });
 
     const studentResults = db.prepare(`
-      SELECT s.id as submission_id, u.id as user_id, u.username, s.total_score, s.gold_reward, s.submitted_at, s.review_status
+      SELECT s.id as submission_id, u.id as user_id, u.username, u.real_name, s.total_score, s.gold_reward, s.submitted_at, s.review_status
       FROM submissions s
       JOIN users u ON s.user_id = u.id
       WHERE s.assignment_id = ?

@@ -489,7 +489,7 @@ router.post('/invitations/validate', (req, res) => {
 // 通过邀请码注册（新用户）
 router.post('/register-with-invite', async (req, res) => {
   try {
-    const { username, password, email, role, invitation_code } = req.body;
+    const { username, password, email, real_name, role, invitation_code } = req.body;
 
     // 用户名统一去掉首尾空格
     const uname = String(username || '').trim();
@@ -537,9 +537,9 @@ router.post('/register-with-invite', async (req, res) => {
 
     // 插入新用户
     const result = db.prepare(`
-      INSERT INTO users (username, password_hash, email, role, class_id, status)
-      VALUES (?, ?, ?, ?, ?, 'active')
-    `).run(uname, passwordHash, email, role || 'student', invitation.class_id);
+      INSERT INTO users (username, password_hash, email, real_name, role, class_id, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'active')
+    `).run(uname, passwordHash, email, String(real_name || '').trim() || null, role || 'student', invitation.class_id);
 
     const userId = result.lastInsertRowid;
 

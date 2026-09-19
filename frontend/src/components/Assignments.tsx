@@ -1709,7 +1709,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     scroll={{ x: true, y: 300 }}
                     columns={[
                       { title: '排名', key: 'rank', render: (_: any, __: any, i: number) => i + 1 },
-                      { title: '姓名', dataIndex: 'username' },
+                      { title: '姓名', dataIndex: 'real_name', render: (v: string, r: any) => v || r.username },
                       { title: '得分', dataIndex: 'total_score', render: (s: number) => s !== null ? s : '未批改' },
                       { title: '金币', dataIndex: 'gold_reward', render: (g: number) => g ? `+${g}` : 0 },
                       { title: '状态', dataIndex: 'review_status', render: (s: string) => s === 'completed' ? <Badge status="success" text="已完成" /> : s === 'reviewing' ? <Badge status="processing" text="评阅中" /> : <Badge status="default" text="待处理" /> },

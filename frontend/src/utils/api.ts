@@ -285,6 +285,7 @@ export const adminAPI = {
   createTeacher: (data: {
     username: string;
     password: string;
+    real_name?: string;
     email?: string;
     class_id?: number;
     class_ids?: number[];
@@ -304,6 +305,9 @@ export const adminAPI = {
   deleteStudent: (id: number, action: 'delete' | 'disable') => api.delete(`/admin/students/${id}`, { data: { action } }),
   importStudents: (classId: number, students: any[]) => api.post('/admin/students/import', { class_id: classId, students }),
   getImportTemplate: (format?: 'json' | 'csv') => api.get('/admin/students/import-template', { params: { format } }),
+  // 粘贴姓名 → 生成账号密码（mode: ai=AI 生成拼音账号；sequence=按前缀+序号，AI 不可用时用）
+  generateStudentAccounts: (data: { names: string; mode?: 'ai' | 'sequence'; prefix?: string; class_id?: number }) =>
+    api.post('/admin/students/generate-accounts', data),
 
   // 班级管理
   getClasses: () => api.get('/admin/classes'),

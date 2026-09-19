@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { getChinaDate } = require('../config/timezone');
+const { getAIConfig, isAIConfigured, getAITimeoutMs } = require('../config/ai');
 
 const requireAdmin = (req, res, next) => {
   if (req.user.role !== 'admin') {
@@ -149,7 +150,7 @@ router.get('/teachers', authenticateToken, (req, res) => {
       return res.status(403).json({ error: '无权访问教师列表' });
     }
     const { status, search } = req.query;
-    let sql = `SELECT id, username, email, avatar, created_at, last_login, status FROM users WHERE role = 'teacher'`;
+    let sql = `SELECT id, username, real_name, email, avatar, created_at, last_login, status FROM users WHERE role = 'teacher'`;
     const params = [];
     
     if (status) {
@@ -157,8 +158,8 @@ router.get('/teachers', authenticateToken, (req, res) => {
       params.push(status);
     }
     if (search) {
-      sql += ` AND (username LIKE ? OR email LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`);
+      sql += ` AND (username LIKE ? OR email LIKE ? OR real_name LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
     sql += ` ORDER BY created_at DESC`;
     
@@ -225,7 +226,9 @@ router.post('/approve-teacher', authenticateToken, requireAdmin, (req, res) => {
 // 可选：同时指定班级与身份（head_teacher=班主任 / teacher=任课教师）
 router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { username, password, email, class_id, class_ids, teacher_identity } = req.body;
+    const { username, password, email, real_name, class_id, class_ids, teacher_identity } = req.body;
+    // 真实姓名：与登录账号分离（可空，兼容旧版前端）
+    const realName = String(real_name || '').trim() || null;
 
     if (!username || !password) {
       return res.status(400).json({ error: '用户名和密码为必填项' });
@@ -274,9 +277,9 @@ router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
     // 创建账号 + 班级归属（同一事务）
     const createTeacher = db.transaction(() => {
       const result = db.prepare(`
-        INSERT INTO users (username, password_hash, email, role, status, created_at)
-        VALUES (?, ?, ?, 'teacher', 'active', datetime('now'))
-      `).run(String(username).trim(), passwordHash, email || null);
+        INSERT INTO users (username, password_hash, email, real_name, role, status, created_at)
+        VALUES (?, ?, ?, ?, 'teacher', 'active', datetime('now'))
+      `).run(String(username).trim(), passwordHash, email || null, realName);
 
       const teacherId = result.lastInsertRowid;
 
@@ -317,7 +320,7 @@ router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
 router.put('/teachers/:id', authenticateToken, requireAdmin, (req, res) => {
   try {
     const { id } = req.params;
-    const { username, email, avatar, status } = req.body;
+    const { username, email, avatar, status, real_name } = req.body;
     
     const teacher = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher'`).get(id);
     if (!teacher) {
@@ -341,6 +344,8 @@ router.put('/teachers/:id', authenticateToken, requireAdmin, (req, res) => {
     if (email !== undefined) { updates.push('email = ?'); params.push(email); }
     if (avatar !== undefined) { updates.push('avatar = ?'); params.push(avatar); }
     if (status !== undefined) { updates.push('status = ?'); params.push(status); }
+    // 真实姓名（与登录账号分离）：传空字符串表示清空
+    if (real_name !== undefined) { updates.push('real_name = ?'); params.push(String(real_name || '').trim() || null); }
     
     if (updates.length === 0) {
       return res.status(400).json({ error: '没有要更新的字段' });
@@ -394,7 +399,7 @@ router.get('/students', authenticateToken, (req, res) => {
       return res.status(403).json({ error: '无权访问学生列表' });
     }
 
-    let sql = `SELECT u.id, u.username, u.email, u.avatar, u.class_id, u.gold, u.created_at, u.last_login, u.status, c.name as class_name 
+    let sql = `SELECT u.id, u.username, u.real_name, u.email, u.avatar, u.class_id, u.gold, u.created_at, u.last_login, u.status, c.name as class_name 
                FROM users u LEFT JOIN classes c ON u.class_id = c.id WHERE u.role = 'student'`;
     const params = [];
     
@@ -418,8 +423,8 @@ router.get('/students', authenticateToken, (req, res) => {
       params.push(class_id);
     }
     if (search) {
-      sql += ` AND (u.username LIKE ? OR u.email LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`);
+      sql += ` AND (u.username LIKE ? OR u.email LIKE ? OR u.real_name LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
     sql += ` ORDER BY u.created_at DESC`;
     
@@ -529,7 +534,7 @@ router.get('/students/:id', authenticateToken, (req, res) => {
 router.put('/students/:id', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
-    const { username, email, avatar, class_id, status } = req.body;
+    const { username, real_name, email, avatar, class_id, status } = req.body;
     const userId = req.user.userId;
     const userRole = req.user.role;
 
@@ -565,6 +570,7 @@ router.put('/students/:id', authenticateToken, (req, res) => {
       }
       updates.push('username = ?'); params.push(uname);
     }
+    if (real_name !== undefined) { updates.push('real_name = ?'); params.push(String(real_name || '').trim() || null); }
     if (email !== undefined) { updates.push('email = ?'); params.push(email); }
     if (avatar !== undefined) { updates.push('avatar = ?'); params.push(avatar); }
     if (class_id !== undefined) { updates.push('class_id = ?'); params.push(class_id); }
@@ -1985,6 +1991,279 @@ router.get('/shop-records', authenticateToken, (req, res) => {
   }
 });
 
+// ==================== 粘贴姓名 → 生成学生账号 ====================
+
+const USERNAME_MAX_LEN = 20;
+
+// 清洗粘贴的姓名（支持多行文本或数组）
+// - 去掉空行、首尾空格（含全角空格）
+// - 去掉行首序号："1. 张三" / "1、张三" / "(1)张三" / "1 张三"
+// - 常见两列格式（学号,姓名）自动取姓名列；多列时优先取不含数字的一列
+// - 不去重：同名学生真实存在，重复粘贴由前端提示用户确认
+function cleanStudentNames(input) {
+  const lines = Array.isArray(input) ? input : String(input || '').split(/\r?\n/);
+  const stats = { input_lines: 0, empty: 0, invalid: 0 };
+  const names = [];
+
+  // 全角数字/字母转半角（如 "２、李四" → "2、李四"），否则行首序号识别不到
+  const toHalfWidth = (str) => str.replace(/[\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A]/g, (c) =>
+    String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+
+  for (const line of lines) {
+    stats.input_lines += 1;
+
+    let s = toHalfWidth(String(line === null || line === undefined ? '' : line))
+      .replace(/\u3000/g, ' ') // 全角空格
+      .trim();
+    if (!s) { stats.empty += 1; continue; }
+
+    // 行首序号
+    s = s.replace(/^[(\[（【]?\d+[)\]）】]?\s*[.、,，:：-]?\s*/, '').trim();
+
+    // 分隔符取列
+    const parts = s.split(/[,，;；\t]+/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 2) {
+      s = parts[1];
+    } else if (parts.length > 2) {
+      const noDigit = parts.filter((p) => !/\d/.test(p));
+      s = noDigit.length ? noDigit[noDigit.length - 1] : parts[parts.length - 1];
+    }
+
+    // 去掉包裹的引号 / 括号
+    s = s.replace(/^["'“”‘’【】\[\]()（）\s]+|["'“”‘’【】\[\]()（）\s]+$/g, '').trim();
+
+    if (!s) { stats.empty += 1; continue; }
+    if (s.length > 20) { stats.invalid += 1; continue; } // 明显不是姓名的超长内容
+
+    names.push(s);
+  }
+
+  return { names, stats };
+}
+
+// 找出重名（可能是同名学生，也可能是重复粘贴，交给用户确认）
+function findDuplicateNames(names) {
+  const counter = new Map();
+  names.forEach((n) => counter.set(n, (counter.get(n) || 0) + 1));
+  return Array.from(counter.entries()).filter(([, c]) => c > 1).map(([n]) => n);
+}
+
+// 账号名合法化：小写字母/数字，必须以字母开头
+function sanitizeUsername(raw, fallback = 'stu') {
+  let s = String(raw || '').toLowerCase().replace(/[^a-z0-9_]/g, '');
+  s = s.replace(/^[^a-z]+/, ''); // 必须以字母开头
+  s = s.slice(0, USERNAME_MAX_LEN);
+  return s || fallback;
+}
+
+function sanitizeSequencePrefix(prefix) {
+  const p = sanitizeUsername(prefix, 'stu').replace(/_/g, '');
+  return p.slice(0, 12) || 'stu';
+}
+
+function isUsernameTaken(username) {
+  return Boolean(db.prepare('SELECT 1 FROM users WHERE username = ? COLLATE NOCASE').get(username));
+}
+
+// 保证账号唯一（本批内不重复 + 不与数据库已有账号冲突）
+function ensureUniqueUsername(base, used) {
+  const clean = sanitizeUsername(base);
+  let candidate = clean;
+  let i = 1;
+  while (used.has(candidate) || isUsernameTaken(candidate)) {
+    i += 1;
+    candidate = `${clean}${i}`.slice(0, USERNAME_MAX_LEN);
+    if (i > 500) { candidate = `${clean}${Date.now() % 100000}`.slice(0, USERNAME_MAX_LEN); break; }
+  }
+  used.add(candidate);
+  return candidate;
+}
+
+// 随机 6 位数字密码（100000-999999，不会以 0 开头，与系统默认 6 位密码一致）
+function randomPassword() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+// 从 AI 返回的文本里提取 JSON 数组（容忍 markdown 代码块 / 前后多余文字）
+function parseJSONArray(text) {
+  const raw = String(text || '').replace(/```json/gi, '').replace(/```/g, '').trim();
+  const start = raw.indexOf('[');
+  const end = raw.lastIndexOf(']');
+  if (start === -1 || end === -1 || end < start) return [];
+  try {
+    const parsed = JSON.parse(raw.slice(start, end + 1));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// 调用 AI 批量生成账号（每批 20 人，避免单次响应过长被截断）
+const AI_USERNAME_BATCH_SIZE = 20;
+
+async function generateUsernamesByAI(names) {
+  const axios = require('axios');
+  const config = getAIConfig();
+  // 账号生成属于轻量任务：最多等 60 秒，避免用户长时间干等
+  const timeoutMs = Math.min(getAITimeoutMs(config), 60000);
+  const map = new Map(); // 姓名 → 账号
+  const tokens = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+  for (let i = 0; i < names.length; i += AI_USERNAME_BATCH_SIZE) {
+    const batch = names.slice(i, i + AI_USERNAME_BATCH_SIZE);
+    const listText = batch.map((n, idx) => `${idx + 1}. ${n}`).join('\n');
+    const prompt = `你是学校系统的账号生成助手。请为下列学生姓名分别生成一个登录账号（用户名）。
+
+要求：
+1. 账号使用姓名对应的汉语拼音，全部小写，只允许字母和数字，必须以字母开头，长度 4-20
+2. 不要包含中文、空格、横线或其他特殊符号
+3. 同一批内账号不能重复；遇到同名时用数字后缀区分（例如 zhangwei、zhangwei2）
+4. 只输出严格 JSON 数组，不要任何解释、markdown 代码块或多余文字
+5. 输出格式：[{"name":"张三","username":"zhangsan"}]
+
+学生姓名：
+${listText}`;
+
+    const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
+      model: config.ai_model,
+      messages: [{ role: 'user', content: prompt }]
+    }, {
+      headers: {
+        'Authorization': `Bearer ${config.ai_api_key}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: timeoutMs
+    });
+
+    const usage = response.data?.usage || {};
+    tokens.promptTokens += usage.prompt_tokens || 0;
+    tokens.completionTokens += usage.completion_tokens || 0;
+    tokens.totalTokens += usage.total_tokens || 0;
+
+    const content = response.data?.choices?.[0]?.message?.content || '';
+    for (const item of parseJSONArray(content)) {
+      if (item && item.name && item.username) {
+        map.set(String(item.name).trim(), String(item.username));
+      }
+    }
+  }
+
+  return { map, tokens };
+}
+
+// 粘贴姓名生成学生账号（管理员 / 班主任）
+// mode = 'ai'（默认，AI 生成拼音账号） | 'sequence'（按前缀+序号，AI 不可用时的兜底）
+router.post('/students/generate-accounts', authenticateToken, async (req, res) => {
+  const startedAt = Date.now();
+  try {
+    const { names, mode = 'ai', prefix = 'stu', class_id } = req.body;
+
+    // 权限：学生禁止；教师需为班主任
+    if (req.user.role === 'student') {
+      return res.status(403).json({ error: '权限不足' });
+    }
+    if (req.user.role !== 'admin') {
+      const isHeadTeacher = class_id
+        ? db.prepare(`SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'`)
+          .get(req.user.userId, parseInt(class_id))
+        : db.prepare(`SELECT 1 FROM class_teachers WHERE teacher_id = ? AND role = 'head_teacher'`)
+          .get(req.user.userId);
+      if (!isHeadTeacher) {
+        return res.status(403).json({ error: '需要班主任或管理员权限' });
+      }
+    }
+
+    const { names: cleanedNames, stats } = cleanStudentNames(names);
+    if (cleanedNames.length === 0) {
+      return res.status(400).json({ error: '没有解析到有效的姓名，请检查粘贴内容', stats });
+    }
+    if (cleanedNames.length > 200) {
+      return res.status(400).json({ error: '一次最多生成 200 个账号，请分批处理', stats });
+    }
+
+    const useAI = mode !== 'sequence';
+    const aiUsernames = new Map();
+    let aiConfig = null;
+
+    if (useAI) {
+      ensureSettingsTable(); // 确保 settings / token_usage 表存在
+      aiConfig = getAIConfig();
+      if (!isAIConfigured(aiConfig)) {
+        console.log('⚠️ AI 未配置，无法生成账号');
+        return res.status(400).json({
+          error: 'AI 功能当前不可用：管理员尚未在「AI设置」中完成模型配置，可改用「按序号生成账号」',
+          can_fallback: true,
+          stats
+        });
+      }
+
+      try {
+        const { map, tokens } = await generateUsernamesByAI(cleanedNames);
+        for (const [name, username] of map) aiUsernames.set(name, username);
+
+        // 记录 Token 用量（失败不影响主流程）
+        try {
+          db.prepare(`
+            INSERT INTO token_usage (user_id, date, prompt_tokens, completion_tokens, total_tokens, model, subject, topic, question_count, duration_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            req.user.userId, getChinaDate(),
+            tokens.promptTokens, tokens.completionTokens, tokens.totalTokens,
+            aiConfig.ai_model, '账号生成', '粘贴姓名生成学生账号', cleanedNames.length, Date.now() - startedAt
+          );
+        } catch (logErr) {
+          console.error('⚠️ Token 使用记录写入失败:', logErr.message);
+        }
+      } catch (aiError) {
+        const detail = aiError?.response?.data?.error?.message
+          || aiError?.response?.data?.message
+          || aiError?.message
+          || '未知错误';
+        console.error('❌ AI 生成账号失败:', detail);
+        return res.status(502).json({
+          error: `AI 生成账号失败：${detail}。可改用「按序号生成账号」`,
+          can_fallback: true,
+          stats
+        });
+      }
+    }
+
+    // 生成账号 + 随机密码
+    const used = new Set();
+    const aiMissingNames = [];
+    const seqPrefix = sanitizeSequencePrefix(prefix);
+
+    const accounts = cleanedNames.map((realName, idx) => {
+      let base = aiUsernames.get(realName);
+      if (!base) {
+        if (useAI) aiMissingNames.push(realName);
+        base = `${seqPrefix}${String(idx + 1).padStart(3, '0')}`;
+      }
+      return {
+        real_name: realName,
+        username: ensureUniqueUsername(base, used),
+        password: randomPassword()
+      };
+    });
+
+    const duplicateNames = findDuplicateNames(cleanedNames);
+    console.log(`✅ 生成学生账号 ${accounts.length} 个（模式：${useAI ? 'AI' : '序号'}）`);
+
+    res.json({
+      mode: useAI ? 'ai' : 'sequence',
+      count: accounts.length,
+      accounts,
+      stats,
+      duplicate_names: duplicateNames,
+      ai_fallback_names: aiMissingNames,
+      message: `已生成 ${accounts.length} 个账号`
+    });
+  } catch (error) {
+    console.error('生成学生账号失败:', error);
+    res.status(500).json({ error: '生成账号失败: ' + error.message });
+  }
+});
+
 // ==================== 教师端一键导入学生 ====================
 
 // 教师批量导入学生（班主任或管理员）
@@ -2047,20 +2326,17 @@ router.post('/students/import', authenticateToken, async (req, res) => {
       // 密码加密
       const passwordHash = bcrypt.hashSync(password, 10);
 
-      // 创建用户
+      // 创建用户（含真实姓名）
       const result = db.prepare(`
-        INSERT INTO users (username, password_hash, email, role, class_id, status, created_at)
-        VALUES (?, ?, ?, 'student', ?, 'active', datetime('now'))
-      `).run(uname, passwordHash, email || null, classId);
-
-      // 如果有真实姓名字段，可以保存到某个地方
-      // 这里可以扩展
+        INSERT INTO users (username, password_hash, email, real_name, role, class_id, status, created_at)
+        VALUES (?, ?, ?, ?, 'student', ?, 'active', datetime('now'))
+      `).run(uname, passwordHash, email || null, String(real_name || '').trim() || null, classId);
 
       results.success.push({
         id: result.lastInsertRowid,
         username,
         email: email || null,
-        real_name: real_name || null
+        real_name: String(real_name || '').trim() || null
       });
     });
 

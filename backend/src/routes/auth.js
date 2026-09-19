@@ -10,10 +10,12 @@ const { getChinaDate } = require('../config/timezone');
 // 用户注册
 router.post('/register', async (req, res) => {
   try {
-    const { username, password, email, role = 'student', requested_class_id, requested_class_ids, teacher_type } = req.body;
+    const { username, password, email, real_name, role = 'student', requested_class_id, requested_class_ids, teacher_type } = req.body;
 
     // 用户名统一去掉首尾空格，避免 " abc" 与 "abc" 被当作两个账号
     const uname = String(username || '').trim();
+    // 真实姓名：与登录账号分离（可空，兼容尚未升级的旧版前端）
+    const realName = String(real_name || '').trim() || null;
 
     // 验证必填字段
     if (!uname || !password) {
@@ -84,9 +86,9 @@ router.post('/register', async (req, res) => {
     // 创建用户 + 班级申请（同一事务：任一步失败则整体回滚，避免"账号已建但申请缺失"）
     const createUserWithApplications = db.transaction(() => {
       const result = db.prepare(`
-        INSERT INTO users (username, password_hash, email, role, status)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(uname, passwordHash, email, role, status);
+        INSERT INTO users (username, password_hash, email, real_name, role, status)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(uname, passwordHash, email, realName, role, status);
 
       const newUserId = result.lastInsertRowid;
 
@@ -284,6 +286,7 @@ router.post('/login', async (req, res) => {
       user: {
         id: user.id,
         username: user.username,
+        real_name: user.real_name,
         email: user.email,
         role: user.role,
         class_id: user.class_id,
@@ -304,7 +307,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', authenticateToken, (req, res) => {
   try {
     const user = db.prepare(`
-      SELECT u.id, u.username, u.email, u.role, u.class_id, u.avatar, u.created_at, u.last_login,
+      SELECT u.id, u.username, u.real_name, u.email, u.role, u.class_id, u.avatar, u.created_at, u.last_login,
              u.gold, u.total_gold_earned,
              c.slug AS class_slug, c.name AS class_name, c.school_id,
              s.name AS school_name, s.theme_color AS school_theme

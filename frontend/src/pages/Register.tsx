@@ -149,8 +149,23 @@ const Register: React.FC = () => {
           size="large"
         >
           <Form.Item
+            name="real_name"
+            label="姓名"
+            rules={[
+              { required: true, message: '请输入姓名!' },
+              { max: 20, message: '姓名最多 20 个字符!' }
+            ]}
+          >
+            <Input
+              prefix={<UserOutlined />}
+              placeholder="真实姓名（老师/同学怎么称呼你）"
+            />
+          </Form.Item>
+
+          <Form.Item
             name="username"
-            label="用户名"
+            label="用户名（登录账号）"
+            tooltip="用于登录的账号，可以和姓名不一样"
             rules={[
               { required: true, message: '请输入用户名!' },
               { min: 3, message: '用户名至少 3 个字符!' }
@@ -158,7 +173,7 @@ const Register: React.FC = () => {
           >
             <Input
               prefix={<UserOutlined />}
-              placeholder="用户名"
+              placeholder="用户名（登录账号）"
             />
           </Form.Item>
 
