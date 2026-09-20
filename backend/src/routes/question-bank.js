@@ -94,7 +94,7 @@ router.get('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res)
           THEN ROUND(CAST(SUM(CASE WHEN qa.is_correct = 0 THEN 1 ELSE 0 END) AS REAL) * 100.0 / COUNT(qa.id), 1)
           ELSE 0
         END as error_rate,
-        u.username as creator_name
+        COALESCE(u.real_name, u.username) as creator_name
       FROM question_bank qb
       LEFT JOIN question_answers qa ON qb.id = qa.question_bank_id
       LEFT JOIN users u ON qb.created_by = u.id
@@ -144,7 +144,7 @@ router.get('/:id', authenticateToken, authorizeRole('teacher', 'admin'), (req, r
           THEN ROUND(CAST(SUM(CASE WHEN qa.is_correct = 0 THEN 1 ELSE 0 END) AS REAL) * 100.0 / COUNT(qa.id), 1)
           ELSE 0
         END as error_rate,
-        u.username as creator_name
+        COALESCE(u.real_name, u.username) as creator_name
       FROM question_bank qb
       LEFT JOIN question_answers qa ON qb.id = qa.question_bank_id
       LEFT JOIN users u ON qb.created_by = u.id

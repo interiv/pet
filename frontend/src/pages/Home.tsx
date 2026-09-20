@@ -607,8 +607,8 @@ const Home: React.FC = () => {
               >
                 退出班级
               </Button>
-              {!isMobile && <span style={{ color: 'rgba(255,255,255,0.85)' }}>欢迎，{user?.username}</span>}
-              {isMobile && <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13, maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.username}</span>}
+              {!isMobile && <span style={{ color: 'rgba(255,255,255,0.85)' }}>欢迎，{user?.real_name || user?.username}</span>}
+              {isMobile && <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13, maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.real_name || user?.username}</span>}
               <Dropdown menu={userMenu} placement="bottomRight">
                 <Avatar 
                   size={isMobile ? 32 : 40} 

@@ -175,7 +175,7 @@ router.get('/teachers', authenticateToken, (req, res) => {
 router.get('/pending-teachers', authenticateToken, requireAdmin, (req, res) => {
   try {
     const teachers = db.prepare(`
-      SELECT id, username, email, created_at, status 
+      SELECT id, username, real_name, email, created_at, status 
       FROM users 
       WHERE role = 'teacher' AND status = 'pending_approval'
     `).all();
@@ -192,7 +192,7 @@ router.post('/approve-teacher', authenticateToken, requireAdmin, (req, res) => {
   try {
     const { teacher_id, action } = req.body;
 
-    const teacher = db.prepare(`SELECT id, username FROM users WHERE id = ? AND role = 'teacher'`).get(teacher_id);
+    const teacher = db.prepare(`SELECT id, username, real_name FROM users WHERE id = ? AND role = 'teacher'`).get(teacher_id);
     if (!teacher) {
       return res.status(404).json({ error: '教师不存在' });
     }
@@ -204,7 +204,7 @@ router.post('/approve-teacher', authenticateToken, requireAdmin, (req, res) => {
       });
       const { applied, skipped } = run();
 
-      const parts = [`教师 ${teacher.username} 审批通过`];
+      const parts = [`教师 ${teacher.real_name || teacher.username} 审批通过`];
       if (applied.length > 0) parts.push(`已加入班级：${applied.join('、')}`);
       if (skipped.length > 0) parts.push(`未处理的申请：${skipped.join('；')}`);
       if (applied.length === 0 && skipped.length === 0) parts.push('该教师没有待处理的班级申请');
@@ -493,7 +493,7 @@ router.get('/students/:id', authenticateToken, (req, res) => {
     }
 
     const student = db.prepare(`
-      SELECT u.id, u.username, u.email, u.avatar, u.class_id, u.gold, u.created_at, u.last_login, u.status, c.name as class_name
+      SELECT u.id, u.username, u.real_name, u.email, u.avatar, u.class_id, u.gold, u.created_at, u.last_login, u.status, c.name as class_name
       FROM users u LEFT JOIN classes c ON u.class_id = c.id
       WHERE u.id = ? AND u.role = 'student'
     `).get(id);
@@ -530,11 +530,62 @@ router.get('/students/:id', authenticateToken, (req, res) => {
   }
 });
 
+// 批量重置学生密码（管理员 或 本班班主任）；不传 password 时自动生成随机 6 位数字密码
+// 用于「导出并重置密码」：返回每个学生的新明文密码，便于打印发放
+router.post('/students/reset-passwords', authenticateToken, (req, res) => {
+  try {
+    const { student_ids, password } = req.body || {};
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    if (userRole === 'student') {
+      return res.status(403).json({ error: '无权重置学生密码' });
+    }
+
+    const ids = Array.isArray(student_ids) ? student_ids.map((v) => Number(v)).filter(Boolean) : [];
+    if (ids.length === 0) {
+      return res.status(400).json({ error: '请选择要重置密码的学生' });
+    }
+
+    const fixedPwd = (password === undefined || password === null || String(password).trim() === '')
+      ? null
+      : String(password).trim();
+    if (fixedPwd && fixedPwd.length < 6) {
+      return res.status(400).json({ error: '密码至少 6 位' });
+    }
+
+    const updateStmt = db.prepare(`UPDATE users SET password_hash = ? WHERE id = ? AND role = 'student'`);
+    const results = [];
+
+    for (const id of ids) {
+      const student = db.prepare(`SELECT id, username, real_name, class_id FROM users WHERE id = ? AND role = 'student'`).get(id);
+      if (!student) continue;
+
+      // 班主任只能重置本班学生
+      if (userRole === 'teacher') {
+        const isHeadTeacher = db.prepare(
+          `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'`
+        ).get(userId, student.class_id);
+        if (!isHeadTeacher) continue;
+      }
+
+      const pwd = fixedPwd || String(Math.floor(100000 + Math.random() * 900000));
+      updateStmt.run(bcrypt.hashSync(pwd, 10), student.id);
+      results.push({ id: student.id, username: student.username, real_name: student.real_name, password: pwd });
+    }
+
+    res.json({ message: `已重置 ${results.length} 个学生的密码`, results });
+  } catch (error) {
+    console.error('重置学生密码失败:', error);
+    res.status(500).json({ error: '重置学生密码失败' });
+  }
+});
+
 // 更新学生信息（管理员 或 本班班主任）
 router.put('/students/:id', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
-    const { username, real_name, email, avatar, class_id, status } = req.body;
+    const { username, real_name, email, avatar, class_id, status, password } = req.body;
     const userId = req.user.userId;
     const userRole = req.user.role;
 
@@ -575,6 +626,14 @@ router.put('/students/:id', authenticateToken, (req, res) => {
     if (avatar !== undefined) { updates.push('avatar = ?'); params.push(avatar); }
     if (class_id !== undefined) { updates.push('class_id = ?'); params.push(class_id); }
     if (status !== undefined) { updates.push('status = ?'); params.push(status); }
+    // 重置密码（可选）：只有传入非空密码时才更新，密码以 bcrypt 哈希存储
+    if (password !== undefined && password !== null && String(password).trim() !== '') {
+      const pwd = String(password).trim();
+      if (pwd.length < 6) {
+        return res.status(400).json({ error: '密码至少 6 位' });
+      }
+      updates.push('password_hash = ?'); params.push(bcrypt.hashSync(pwd, 10));
+    }
     
     if (updates.length === 0) {
       return res.status(400).json({ error: '没有要更新的字段' });
@@ -582,7 +641,7 @@ router.put('/students/:id', authenticateToken, (req, res) => {
     
     params.push(id);
     db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-    res.json({ message: '学生信息更新成功' });
+    res.json({ message: password ? '学生信息更新成功，密码已重置' : '学生信息更新成功' });
   } catch (error) {
     console.error('更新学生信息失败:', error);
     res.status(500).json({ error: '更新学生信息失败' });
@@ -684,7 +743,7 @@ router.get('/classes', authenticateToken, (req, res) => {
     let classes;
     if (userRole === 'admin') {
       classes = db.prepare(`
-        SELECT c.*, u.username as teacher_name, s.name AS school_name,
+        SELECT c.*, COALESCE(u.real_name, u.username) as teacher_name, s.name AS school_name,
           (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') as student_count,
           (SELECT COALESCE(SUM(exp), 0) FROM pets WHERE user_id IN (SELECT id FROM users WHERE class_id = c.id AND role = 'student')) as total_exp,
           (SELECT COALESCE(SUM(gold), 0) FROM users WHERE class_id = c.id AND role = 'student') as total_gold
@@ -695,7 +754,7 @@ router.get('/classes', authenticateToken, (req, res) => {
       `).all();
     } else {
       classes = db.prepare(`
-        SELECT c.*, u.username as teacher_name, s.name AS school_name,
+        SELECT c.*, COALESCE(u.real_name, u.username) as teacher_name, s.name AS school_name,
           (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') as student_count,
           (SELECT COALESCE(SUM(exp), 0) FROM pets WHERE user_id IN (SELECT id FROM users WHERE class_id = c.id AND role = 'student')) as total_exp,
           (SELECT COALESCE(SUM(gold), 0) FROM users WHERE class_id = c.id AND role = 'student') as total_gold
@@ -710,7 +769,7 @@ router.get('/classes', authenticateToken, (req, res) => {
 
     const classesWithTeachers = classes.map(cls => {
       const teachers = db.prepare(`
-        SELECT ct.id as class_teacher_id, ct.role, u.id as teacher_id, u.username
+        SELECT ct.id as class_teacher_id, ct.role, u.id as teacher_id, u.username, u.real_name
         FROM class_teachers ct
         JOIN users u ON ct.teacher_id = u.id
         WHERE ct.class_id = ?
@@ -845,7 +904,7 @@ router.get('/class-applications', authenticateToken, (req, res) => {
     const { class_id, status } = req.query;
 
     let sql = `
-      SELECT ca.*, u.username, u.email, c.name as class_name
+      SELECT ca.*, u.username, u.real_name, u.email, c.name as class_name
       FROM class_applications ca
       JOIN users u ON ca.user_id = u.id
       JOIN classes c ON ca.class_id = c.id
@@ -1067,7 +1126,7 @@ router.get('/unassigned-students', authenticateToken, (req, res) => {
       return res.status(403).json({ error: '无权查看' });
     }
     const students = db.prepare(`
-      SELECT id, username, email, avatar, created_at, status
+      SELECT id, username, real_name, email, avatar, created_at, status
       FROM users
       WHERE role = 'student' AND (class_id IS NULL OR status = 'pending_approval')
       ORDER BY created_at DESC
@@ -1143,7 +1202,7 @@ router.delete('/classes/:id', authenticateToken, requireAdmin, (req, res) => {
 router.get('/announcements', authenticateToken, requireAdmin, (req, res) => {
   try {
     const announcements = db.prepare(`
-      SELECT a.*, u.username as publisher_name, c.name as class_name
+      SELECT a.*, COALESCE(u.real_name, u.username) as publisher_name, c.name as class_name
       FROM announcements a 
       LEFT JOIN users u ON a.publisher_id = u.id
       LEFT JOIN classes c ON a.class_id = c.id
@@ -1338,13 +1397,13 @@ router.get('/statistics', authenticateToken, (req, res) => {
 
       const topClasses = db.prepare(`
         SELECT c.id, c.name, c.total_exp, c.student_count,
-          (SELECT u.username FROM class_teachers ct JOIN users u ON ct.teacher_id = u.id WHERE ct.class_id = c.id AND ct.role = 'head_teacher' LIMIT 1) as teacher_name
+          (SELECT COALESCE(u.real_name, u.username) FROM class_teachers ct JOIN users u ON ct.teacher_id = u.id WHERE ct.class_id = c.id AND ct.role = 'head_teacher' LIMIT 1) as teacher_name
         FROM classes c
         ORDER BY c.total_exp DESC LIMIT 5
       `).all();
 
       const recentRegistrations = db.prepare(`
-        SELECT id, username, role, created_at FROM users ORDER BY created_at DESC LIMIT 10
+        SELECT id, username, real_name, role, created_at FROM users ORDER BY created_at DESC LIMIT 10
       `).all();
 
       const topSellingItems = db.prepare(`
@@ -1463,6 +1522,7 @@ router.get('/operational-stats', authenticateToken, (req, res) => {
         SELECT
           u.id as teacher_id,
           u.username,
+          u.real_name,
           u.avatar,
           COUNT(DISTINCT a.id) as assignment_count,
           (SELECT COUNT(*) FROM submissions s JOIN assignments a2 ON s.assignment_id = a2.id WHERE a2.teacher_id = u.id AND s.submitted_at >= DATE('now', '-30 days', 'localtime')) as submission_count,
@@ -1479,23 +1539,23 @@ router.get('/operational-stats', authenticateToken, (req, res) => {
     // 最近系统事件（最近注册、最近作业发布、最近公告）
     const recentEvents = [];
 
-    const recentRegs = db.prepare(`SELECT id, username, role, created_at as time, 'register' as event_type FROM users ORDER BY created_at DESC LIMIT 5`).all();
+    const recentRegs = db.prepare(`SELECT id, username, real_name, role, created_at as time, 'register' as event_type FROM users ORDER BY created_at DESC LIMIT 5`).all();
     recentRegs.forEach(r => recentEvents.push({
       type: 'register',
       time: r.time,
-      message: `新${r.role === 'teacher' ? '教师' : '学生'}注册：${r.username}`
+      message: `新${r.role === 'teacher' ? '教师' : '学生'}注册：${r.real_name || r.username}`
     }));
 
     try {
       const recentAssign = db.prepare(`
-        SELECT a.id, a.title, u.username, a.created_at as time
+        SELECT a.id, a.title, u.username, u.real_name, a.created_at as time
         FROM assignments a JOIN users u ON a.teacher_id = u.id
         ORDER BY a.created_at DESC LIMIT 5
       `).all();
       recentAssign.forEach(a => recentEvents.push({
         type: 'assignment',
         time: a.time,
-        message: `${a.username} 发布了作业「${a.title}」`
+        message: `${a.real_name || a.username} 发布了作业「${a.title}」`
       }));
     } catch (e) { /* assignments table may not exist */ }
 
@@ -1563,6 +1623,7 @@ router.get('/classes/:id/teacher-activity', authenticateToken, (req, res) => {
         SELECT
           u.id as teacher_id,
           u.username,
+          u.real_name,
           u.avatar,
           ct.role as class_role,
           COUNT(DISTINCT a.id) as total_assignments,
@@ -1606,6 +1667,7 @@ router.get('/classes/:id/teacher-activity', authenticateToken, (req, res) => {
         SELECT
           u.id as user_id,
           u.username,
+          u.real_name,
           u.avatar,
           COUNT(DISTINCT CASE WHEN kps.accuracy < 60 THEN kps.knowledge_point END) as weak_kp_count,
           COUNT(DISTINCT kps.knowledge_point) as total_kp_count,
@@ -1624,7 +1686,7 @@ router.get('/classes/:id/teacher-activity', authenticateToken, (req, res) => {
     let inactiveStudents = [];
     try {
       inactiveStudents = db.prepare(`
-        SELECT u.id, u.username, u.avatar, u.last_login
+        SELECT u.id, u.username, u.real_name, u.avatar, u.last_login
         FROM users u
         WHERE u.role = 'student' AND u.class_id = ?
           AND (u.last_login IS NULL OR u.last_login < DATE('now', '-7 days', 'localtime'))
@@ -1644,7 +1706,7 @@ router.get('/classes/:id/teacher-activity', authenticateToken, (req, res) => {
     try {
       recentSubmissions = db.prepare(`
         SELECT s.id, s.total_score, s.total_max_score, s.submitted_at,
-               u.username as student_name,
+               COALESCE(u.real_name, u.username) as student_name,
                a.title as assignment_title, a.subject
         FROM submissions s
         JOIN users u ON s.user_id = u.id
@@ -1839,8 +1901,8 @@ router.get('/battles', authenticateToken, (req, res) => {
       SELECT b.*,
         p1.user_id as challenger_id,
         p2.user_id as defender_id,
-        u1.username as challenger_name,
-        u2.username as defender_name,
+        COALESCE(u1.real_name, u1.username) as challenger_name,
+        COALESCE(u2.real_name, u2.username) as defender_name,
         c.name as class_name
       FROM battles b
       JOIN pets p1 ON b.pet1_id = p1.id
@@ -1891,7 +1953,7 @@ router.get('/assignments', authenticateToken, (req, res) => {
 
     let sql = `
       SELECT a.*,
-        u.username as creator_name,
+        COALESCE(u.real_name, u.username) as creator_name,
         c.name as class_name
       FROM assignments a
       JOIN users u ON a.teacher_id = u.id
@@ -1954,7 +2016,7 @@ router.get('/shop-records', authenticateToken, (req, res) => {
 
     let sql = `
       SELECT ui.*,
-        u.username as buyer_name,
+        COALESCE(u.real_name, u.username) as buyer_name,
         i.name as item_name,
         i.rarity,
         c.name as class_name

@@ -149,7 +149,7 @@ const LandingPage: React.FC = () => {
               {(isStudent && user?.class_slug) || isTeacher ? (
                 <Button type="primary" ghost icon={<RocketOutlined />} size={isMobile ? 'small' : 'middle'} onClick={handleEnterClass}>进入班级</Button>
               ) : null}
-              {!isMobile && <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14 }}>欢迎，{user?.username}</span>}
+              {!isMobile && <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14 }}>欢迎，{user?.real_name || user?.username}</span>}
               <Button icon={<LogoutOutlined />} size={isMobile ? 'small' : 'middle'} style={{ background: 'rgba(255,255,255,0.15)', borderColor: 'rgba(255,255,255,0.3)', color: '#fff' }} onClick={handleLogout}>退出登录</Button>
             </>
           ) : (

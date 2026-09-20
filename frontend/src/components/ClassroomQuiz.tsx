@@ -148,7 +148,7 @@ const ClassroomQuiz: React.FC = () => {
         reason: values.reason || undefined,
       });
 
-      message.success(`已向 ${selectedStudent.username} 发放奖励`);
+      message.success(`已向 ${selectedStudent.real_name || selectedStudent.username} 发放奖励`);
       setRewardModalOpen(false);
       setSelectedStudent(null);
       setSelectedQuestionId(null);
@@ -398,7 +398,7 @@ const ClassroomQuiz: React.FC = () => {
                         <Avatar icon={<UserOutlined />} size={36} />
                       )}
                       <div>
-                        <div style={{ fontWeight: 'bold', fontSize: 13 }}>{s.username}</div>
+                        <div style={{ fontWeight: 'bold', fontSize: 13 }}>{s.real_name || s.username}</div>
                         {s.pet_name && (
                           <div style={{ fontSize: 11, color: '#888' }}>
                             {s.pet_name} Lv.{s.pet_level} ({s.species_name})
@@ -418,7 +418,7 @@ const ClassroomQuiz: React.FC = () => {
           <div style={{
             padding: 12, background: '#e6f7ff', borderRadius: 8, marginBottom: 16
           }}>
-            <Text>已选择: <Text strong>{selectedStudent.username}</Text></Text>
+            <Text>已选择: <Text strong>{selectedStudent.real_name || selectedStudent.username}</Text></Text>
             {selectedStudent.pet_name && (
               <Text style={{ marginLeft: 8 }}>宠物: <Text strong>{selectedStudent.pet_name}</Text></Text>
             )}

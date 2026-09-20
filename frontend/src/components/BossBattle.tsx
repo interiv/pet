@@ -34,6 +34,7 @@ interface BossQuestion {
 interface LeaderboardItem {
   user_id: number;
   username: string;
+  real_name?: string | null;
   pet_name: string;
   pet_level: number;
   damage_dealt: number;
@@ -534,13 +535,13 @@ const BossBattle: React.FC = () => {
                           size={48}
                           style={{ backgroundColor: index < 3 ? '#f5222d' : '#d9d9d9' }}
                         >
-                          {item.username?.charAt(0)}
+                          {(item.real_name || item.username)?.charAt(0)}
                         </Avatar>
                       </Badge>
                     }
                     title={
                       <div>
-                        <span style={{ fontWeight: 'bold' }}>{item.username}</span>
+                        <span style={{ fontWeight: 'bold' }}>{item.real_name || item.username}</span>
                         {item.pet_name && (
                           <span style={{ marginLeft: 8, color: '#999', fontSize: 12 }}>
                             ({item.pet_name} Lv.{item.pet_level})
@@ -701,7 +702,7 @@ const BossBattle: React.FC = () => {
                           </span>
                         ),
                       },
-                      { title: '学生', dataIndex: 'username', key: 'username' },
+                      { title: '学生', dataIndex: 'real_name', key: 'username', render: (v: string, r: any) => v || r.username },
                       {
                         title: '宠物',
                         key: 'pet',

@@ -91,7 +91,7 @@ const Friends: React.FC = () => {
     try {
       setLoading(true);
       const res = await friendAPI.addFriend({ friend_username: targetUser.username });
-      message.success(res.data.message || `已发送好友请求给 ${targetUser.username}`);
+      message.success(res.data.message || `已发送好友请求给 ${targetUser.real_name || targetUser.username}`);
       setIsModalVisible(false);
       setSearchKeyword('');
       setSearchResults([]);
@@ -182,7 +182,7 @@ const Friends: React.FC = () => {
       setLoading(true);
       const res = await friendAPI.friendBattle({ friend_id: friend.friend_id });
       const { winner, rewardExp, rewardGold } = res.data;
-      setBattleResult({ winner, rewardExp, rewardGold, opponentName: friend.username });
+      setBattleResult({ winner, rewardExp, rewardGold, opponentName: friend.real_name || friend.username });
       setBattleModalVisible(true);
       loadFriends();
     } catch (error: any) {
@@ -260,8 +260,8 @@ const Friends: React.FC = () => {
                       ]}
                     >
                       <List.Item.Meta
-                        avatar={<Avatar src={item.avatar} style={{ backgroundColor: '#1890ff' }}>{item.username[0]}</Avatar>}
-                        title={<span style={{ fontSize: 16, fontWeight: 'bold' }}>{item.username}</span>}
+                        avatar={<Avatar src={item.avatar} style={{ backgroundColor: '#1890ff' }}>{(item.real_name || item.username)[0]}</Avatar>}
+                        title={<span style={{ fontSize: 16, fontWeight: 'bold' }}>{item.real_name || item.username}</span>}
                         description={
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
                             <HeartFilled style={{ color: '#eb2f96' }} /> 
@@ -316,8 +316,8 @@ const Friends: React.FC = () => {
                       ]}
                     >
                       <List.Item.Meta
-                        avatar={<Avatar src={request.avatar} style={{ backgroundColor: '#1890ff' }}>{request.username[0]}</Avatar>}
-                        title={<span style={{ fontSize: 16, fontWeight: 'bold' }}>{request.username}</span>}
+                        avatar={<Avatar src={request.avatar} style={{ backgroundColor: '#1890ff' }}>{(request.real_name || request.username)[0]}</Avatar>}
+                        title={<span style={{ fontSize: 16, fontWeight: 'bold' }}>{request.real_name || request.username}</span>}
                         description={
                           <div style={{ color: '#999', fontSize: 12 }}>
                             {request.role === 'teacher' ? '教师' : '学生'} · 请求时间：{new Date(request.created_at).toLocaleString()}
@@ -363,8 +363,8 @@ const Friends: React.FC = () => {
                   actions={[<Button type="link" size="small" icon={<UserAddOutlined />}>添加</Button>]}
                 >
                   <List.Item.Meta
-                    avatar={<Avatar src={u.avatar}>{u.username?.[0]}</Avatar>}
-                    title={u.username}
+                    avatar={<Avatar src={u.avatar}>{(u.real_name || u.username)?.[0]}</Avatar>}
+                    title={u.real_name || u.username}
                     description={`${u.role === 'teacher' ? '教师' : '学生'} · ${u.class_name || ''}`}
                   />
                 </List.Item>
@@ -503,7 +503,7 @@ const Friends: React.FC = () => {
       </Modal>
 
       <Modal
-        title={`向 ${selectedFriend?.username} 送礼`}
+        title={`向 ${selectedFriend?.real_name || selectedFriend?.username} 送礼`}
         open={giftModalVisible}
         onOk={() => giftForm.submit()}
         onCancel={() => setGiftModalVisible(false)}

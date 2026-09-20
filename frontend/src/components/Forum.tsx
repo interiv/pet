@@ -215,15 +215,15 @@ const Forum: React.FC = () => {
         <Card size="small" style={{ borderRadius: 8, background: depth > 0 ? '#fafafa' : '#fff' }}>
           <div style={{ display: 'flex', gap: isMobile ? 8 : 10, alignItems: 'flex-start' }}>
             <Avatar src={post.avatar} size={isMobile ? 28 : 32} style={{ background: '#1890ff', flexShrink: 0 }}>
-              {post.username?.[0]}
+              {(post.real_name || post.username)?.[0]}
             </Avatar>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Space size={isMobile ? 4 : 6}>
-                <span style={{ fontWeight: 600, fontSize: isMobile ? 12 : 13 }}>{post.username}</span>
+                <span style={{ fontWeight: 600, fontSize: isMobile ? 12 : 13 }}>{post.real_name || post.username}</span>
                 {post.is_first_post && <Tag color="green" style={{ fontSize: isMobile ? 9 : 10 }}>楼主</Tag>}
                 {depth > 0 && post.parent_id && (
                   <span style={{ fontSize: isMobile ? 11 : 12, color: '#1890ff' }}>
-                    回复 @{viewingThread.replies?.find((r: any) => r.id === post.parent_id)?.username || '用户'}
+                    回复 @{viewingThread.replies?.find((r: any) => r.id === post.parent_id)?.real_name || viewingThread.replies?.find((r: any) => r.id === post.parent_id)?.username || '用户'}
                   </span>
                 )}
                 <span style={{ fontSize: isMobile ? 10 : 11, color: '#bbb' }}>{formatTime(post.created_at)}</span>
@@ -260,7 +260,7 @@ const Forum: React.FC = () => {
                 <Button
                   type="text"
                   size="small"
-                  onClick={() => { setReplyToPostId(post.id); setReplyContent(`@${post.username} `); }}
+                  onClick={() => { setReplyToPostId(post.id); setReplyContent(`@${post.real_name || post.username} `); }}
                 >
                   回复
                 </Button>
@@ -378,7 +378,7 @@ const Forum: React.FC = () => {
                     >
                       <div style={{ display: 'flex', gap: isMobile ? 8 : 12, alignItems: 'flex-start' }}>
                         <Avatar src={thread.avatar} size={isMobile ? 30 : 36} style={{ background: '#1890ff', flexShrink: 0 }}>
-                          {thread.username?.[0]}
+                          {(thread.real_name || thread.username)?.[0]}
                         </Avatar>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -397,7 +397,7 @@ const Forum: React.FC = () => {
                           )}
 
                           <div style={{ display: 'flex', gap: isMobile ? 8 : 16, alignItems: 'center', marginTop: 6, color: '#999', fontSize: isMobile ? 11 : 12, flexWrap: 'wrap' }}>
-                            <span>{thread.username}</span>
+                            <span>{thread.real_name || thread.username}</span>
                             <Space size={isMobile ? 8 : 12}>
                               <Tooltip title="浏览"><EyeOutlined /> {thread.view_count}</Tooltip>
                               <Tooltip title="回复"><MessageOutlined /> {(thread.reply_count || 0)}</Tooltip>
@@ -445,9 +445,9 @@ const Forum: React.FC = () => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, color: '#999', fontSize: isMobile ? 12 : 13, flexWrap: 'wrap', gap: 4 }}>
                     <Space size={isMobile ? 4 : 8} wrap>
                       <Avatar size={isMobile ? 20 : 24} src={viewingThread.avatar} style={{ background: '#1890ff' }}>
-                        {viewingThread.username?.[0]}
+                        {(viewingThread.real_name || viewingThread.username)?.[0]}
                       </Avatar>
-                      <span>{viewingThread.username}</span>
+                      <span>{viewingThread.real_name || viewingThread.username}</span>
                       {!isMobile && <span>·</span>}
                       <span>{formatTime(viewingThread.created_at)}</span>
                     </Space>

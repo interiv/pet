@@ -51,7 +51,7 @@ router.get('/conversations', authenticateToken, (req, res) => {
     const privateChats = db.prepare(`
       SELECT DISTINCT
         CASE WHEN cm.user_id = ? THEN cm.target_user_id ELSE cm.user_id END as other_user_id,
-        u.username, u.avatar, u.role,
+        u.username, u.real_name, u.avatar, u.role,
         MAX(cm.created_at) as last_msg_time
       FROM chat_messages cm
       JOIN users u ON u.id = CASE WHEN cm.user_id = ? THEN cm.target_user_id ELSE cm.user_id END
@@ -84,7 +84,7 @@ router.get('/conversations', authenticateToken, (req, res) => {
         type: 'private',
         user_id: chat.other_user_id,
         target_user_id: chat.other_user_id,
-        name: chat.username,
+        name: chat.real_name || chat.username,
         avatar: chat.avatar,
         last_message: lastMsg?.content || '',
         last_time: chat.last_msg_time || lastMsg?.created_at || '',
@@ -116,7 +116,7 @@ router.get('/messages', authenticateToken, (req, res) => {
       }
 
       messages = db.prepare(`
-        SELECT cm.*, u.username, u.avatar, u.role
+        SELECT cm.*, u.username, u.real_name, u.avatar, u.role
         FROM chat_messages cm
         JOIN users u ON cm.user_id = u.id
         WHERE cm.room_type = 'class' AND cm.room_id = ?
@@ -136,7 +136,7 @@ router.get('/messages', authenticateToken, (req, res) => {
       if (!targetId) return res.status(400).json({ error: '缺少目标用户ID' });
 
       messages = db.prepare(`
-        SELECT cm.*, u.username, u.avatar, u.role
+        SELECT cm.*, u.username, u.real_name, u.avatar, u.role
         FROM chat_messages cm
         JOIN users u ON cm.user_id = u.id
         WHERE cm.room_type = 'private'
@@ -200,7 +200,7 @@ router.post('/messages', authenticateToken, (req, res) => {
     }
 
     const message = db.prepare(`
-      SELECT cm.*, u.username, u.avatar, u.role
+      SELECT cm.*, u.username, u.real_name, u.avatar, u.role
       FROM chat_messages cm
       JOIN users u ON cm.user_id = u.id
       WHERE cm.id = ?
@@ -230,7 +230,7 @@ router.get('/search-users', authenticateToken, (req, res) => {
     }
 
     const users = db.prepare(`
-      SELECT id, username, avatar, role, class_id
+      SELECT id, username, real_name, avatar, role, class_id
       FROM users
       WHERE status = 'active' AND id != ? AND username LIKE ?
       ORDER BY username

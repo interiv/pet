@@ -13,13 +13,14 @@ const authenticateToken = (req, res, next) => {
 
     const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
     const decoded = jwt.verify(token, jwtSecret);
-    req.user = decoded;
 
-    // 验证用户是否仍然存在及状态
-    const user = db.prepare('SELECT id, status FROM users WHERE id = ?').get(decoded.userId);
+    // 验证用户是否仍然存在及状态（一并取回账号名与真实姓名，供展示/通知文案使用）
+    const user = db.prepare('SELECT id, status, username, real_name FROM users WHERE id = ?').get(decoded.userId);
     if (!user) {
       return res.status(401).json({ error: '用户不存在' });
     }
+
+    req.user = { ...decoded, username: user.username, real_name: user.real_name };
     
     if (user.status === 'pending_approval') {
       return res.status(403).json({ error: '您的账号正在审核中，请联系管理员。' });

@@ -695,7 +695,7 @@ router.get('/', authenticateToken, (req, res) => {
 
     if (req.user.role === 'admin') {
       let sql = `
-        SELECT a.*, u.username as teacher_name, c.name as class_name,
+        SELECT a.*, COALESCE(u.real_name, u.username) as teacher_name, c.name as class_name,
           (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count,
           (SELECT COUNT(*) FROM users WHERE class_id = a.class_id AND role = 'student' AND status = 'active') as class_student_count,
           (SELECT COUNT(DISTINCT user_id) FROM submissions WHERE assignment_id = a.id) as submitted_count
@@ -718,7 +718,7 @@ router.get('/', authenticateToken, (req, res) => {
       if (allClassIds.length === 0) return res.json({ assignments: [] });
 
       let sql = `
-        SELECT a.*, u.username as teacher_name, c.name as class_name,
+        SELECT a.*, COALESCE(u.real_name, u.username) as teacher_name, c.name as class_name,
           (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count,
           (SELECT COUNT(*) FROM users WHERE class_id = a.class_id AND role = 'student' AND status = 'active') as class_student_count,
           (SELECT COUNT(DISTINCT user_id) FROM submissions WHERE assignment_id = a.id) as submitted_count
@@ -753,7 +753,7 @@ router.get('/', authenticateToken, (req, res) => {
       if (!student || !student.class_id) return res.json({ assignments: [] });
 
       assignments = db.prepare(`
-        SELECT a.*, u.username as teacher_name, c.name as class_name,
+        SELECT a.*, COALESCE(u.real_name, u.username) as teacher_name, c.name as class_name,
           (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count,
           (SELECT id FROM submissions WHERE assignment_id = a.id AND user_id = ? LIMIT 1) as my_submission_id,
           (SELECT status FROM submissions WHERE assignment_id = a.id AND user_id = ? ORDER BY id DESC LIMIT 1) as my_submission_status,
@@ -777,7 +777,7 @@ router.get('/', authenticateToken, (req, res) => {
 router.get('/:id', authenticateToken, (req, res) => {
   try {
     const assignment = db.prepare(`
-      SELECT a.*, u.username as teacher_name, c.name as class_name
+      SELECT a.*, COALESCE(u.real_name, u.username) as teacher_name, c.name as class_name
       FROM assignments a
       JOIN users u ON a.teacher_id = u.id
       LEFT JOIN classes c ON a.class_id = c.id
@@ -1290,6 +1290,7 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
             assignment_title: assignment.title,
             user_id: req.user.userId,
             username: req.user.username,
+            real_name: req.user.real_name,
             total_score: totalScore,
             correct_count: correctCount,
             total_count: questions.length,

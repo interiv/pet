@@ -124,9 +124,10 @@ const Profile: React.FC = () => {
     <div style={{ maxWidth: 600, margin: '0 auto' }}>
       <Card style={{ marginBottom: 24, textAlign: 'center' }}>
         <Avatar size={80} icon={<UserOutlined />} src={user?.avatar} style={{ marginBottom: 16 }} />
-        <h2 style={{ margin: 0 }}>{user?.username}</h2>
+        <h2 style={{ margin: 0 }}>{user?.real_name || user?.username}</h2>
         <p style={{ color: '#999', margin: '8px 0 0 0' }}>
           {user?.role === 'student' ? '学生' : user?.role === 'teacher' ? '教师' : '管理员'}
+          {user?.real_name ? ` · 账号：${user.username}` : ''}
         </p>
       </Card>
       <Tabs items={tabItems} defaultActiveKey="info" />

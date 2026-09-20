@@ -163,7 +163,7 @@ const ClassHome: React.FC = () => {
               {cls.description || '班主任还没有填写班级简介。'}
             </Paragraph>
             <Space split={<Divider type="vertical" />} wrap>
-              {headTeacher && <Text>班主任：<b>{headTeacher.username}</b></Text>}
+              {headTeacher && <Text>班主任：<b>{headTeacher.real_name || headTeacher.username}</b></Text>}
               {typeof (summary?.student_count ?? cls.student_count) === 'number' && (
                 <Text>学生人数：<b>{summary?.student_count ?? cls.student_count}</b></Text>
               )}
@@ -220,8 +220,8 @@ const ClassHome: React.FC = () => {
                     renderItem={(item: any) => (
                       <List.Item>
                         <List.Item.Meta
-                          avatar={<Avatar>{(item.author_name || 'U').slice(0, 1)}</Avatar>}
-                          title={item.author_name || item.username}
+                          avatar={<Avatar>{(item.real_name || item.author_name || item.username || 'U').slice(0, 1)}</Avatar>}
+                          title={item.real_name || item.author_name || item.username}
                           description={<Paragraph ellipsis={{ rows: 2 }}>{item.content}</Paragraph>}
                         />
                       </List.Item>
@@ -243,8 +243,8 @@ const ClassHome: React.FC = () => {
                     renderItem={(t: any) => (
                       <List.Item>
                         <List.Item.Meta
-                          avatar={<Avatar>{(t.username || 'T').slice(0, 1)}</Avatar>}
-                          title={<>{t.username} {t.class_role === 'head' && <Tag color="gold">班主任</Tag>}</>}
+                          avatar={<Avatar>{((t.real_name || t.username) || 'T').slice(0, 1)}</Avatar>}
+                          title={<>{t.real_name || t.username} {t.class_role === 'head' && <Tag color="gold">班主任</Tag>}</>}
                           description={t.role === 'admin' ? '管理员' : '教师'}
                         />
                       </List.Item>
@@ -266,7 +266,7 @@ const ClassHome: React.FC = () => {
                           avatar={<Avatar style={{ background: idx < 3 ? '#faad14' : '#d9d9d9' }}>{idx + 1}</Avatar>}
                           title={p.pet_name || p.name || '宠物'}
                           description={<Space size="small">
-                            <Text type="secondary">主人：{p.owner_name || p.username || '-'}</Text>
+                            <Text type="secondary">主人：{p.real_name || p.owner_name || p.username || '-'}</Text>
                             <Text type="secondary">Lv.{p.level ?? '-'}</Text>
                           </Space>}
                         />

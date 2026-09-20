@@ -57,7 +57,7 @@ const ClassDashboard: React.FC = () => {
       if (payload.class_id !== currentClassId) return;
       setLiveFeed((prev) => [payload, ...prev].slice(0, 20));
       notification.info({
-        message: `📢 ${payload.username} 刚刚提交了作业`,
+        message: `📢 ${payload.real_name || payload.username} 刚刚提交了作业`,
         description: `${payload.assignment_title} | 得分 ${payload.total_score} | 答对 ${payload.correct_count}/${payload.total_count}${payload.combo_streak >= 3 ? ` 🔥 ${payload.combo_streak}连` : ''}`,
         placement: 'bottomRight',
         duration: 4,
@@ -148,7 +148,7 @@ const ClassDashboard: React.FC = () => {
       title: '排名', key: 'rank', width: 60,
       render: (_: any, __: any, idx: number) => <Tag color={idx < 3 ? 'gold' : 'default'}>#{idx + 1}</Tag>,
     },
-    { title: '学生', dataIndex: 'username', key: 'username' },
+    { title: '学生', dataIndex: 'real_name', key: 'username', render: (v: string, r: any) => v || r.username },
     {
       title: '答题数', dataIndex: 'attempts', key: 'attempts',
       sorter: (a: any, b: any) => a.attempts - b.attempts,
@@ -184,7 +184,7 @@ const ClassDashboard: React.FC = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Tag color={idx < 3 ? 'gold' : 'default'}>#{idx + 1}</Tag>
-          <span style={{ fontWeight: 'bold', fontSize: 14 }}>{record.username}</span>
+          <span style={{ fontWeight: 'bold', fontSize: 14 }}>{record.real_name || record.username}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {record.weak_kp_count > 0 && <Tag color="volcano" style={{ fontSize: 11 }}>{record.weak_kp_count}薄弱</Tag>}
@@ -395,7 +395,7 @@ const ClassDashboard: React.FC = () => {
                   renderItem={(item: any) => (
                     <List.Item style={{ padding: '6px 0' }}>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: isMobile ? 12 : undefined }}>
-                        <strong>{item.username}</strong>
+                        <strong>{item.real_name || item.username}</strong>
                         <span>提交了</span>
                         <Tag color="blue" style={{ fontSize: isMobile ? 11 : undefined }}>{item.assignment_title}</Tag>
                         <span>得分</span>
@@ -445,7 +445,7 @@ const ClassDashboard: React.FC = () => {
       </Spin>
 
       <Modal
-        title={studentDetail?.student ? `${studentDetail.student.username} 的学情详情` : '学生详情'}
+        title={studentDetail?.student ? `${studentDetail.student.real_name || studentDetail.student.username} 的学情详情` : '学生详情'}
         open={detailVisible}
         onCancel={() => setDetailVisible(false)}
         footer={null}

@@ -301,6 +301,8 @@ export const adminAPI = {
   getStudents: (params?: { status?: string; class_id?: number; search?: string }) => api.get('/admin/students', { params }),
   getStudentDetail: (id: number) => api.get(`/admin/students/${id}`),
   updateStudent: (id: number, data: any) => api.put(`/admin/students/${id}`, data),
+  // 批量重置学生密码：不传 password 时后端生成随机 6 位密码，返回 results 含明文新密码
+  resetStudentPasswords: (data: { student_ids: number[]; password?: string }) => api.post('/admin/students/reset-passwords', data),
   adjustStudentGold: (id: number, amount: number, reason?: string) => api.post(`/admin/students/${id}/gold`, { amount, reason }),
   deleteStudent: (id: number, action: 'delete' | 'disable') => api.delete(`/admin/students/${id}`, { data: { action } }),
   importStudents: (classId: number, students: any[]) => api.post('/admin/students/import', { class_id: classId, students }),

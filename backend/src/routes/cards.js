@@ -136,7 +136,7 @@ router.get('/batches', authenticateToken, (req, res) => {
       return res.status(403).json({ error: '无权访问' });
     }
     const { class_id } = req.query;
-    let sql = `SELECT cb.*, u.username as creator_name,
+    let sql = `SELECT cb.*, COALESCE(u.real_name, u.username) as creator_name,
       (SELECT COUNT(*) FROM cards WHERE batch_id = cb.id) as total_cards,
       (SELECT COUNT(*) FROM cards WHERE batch_id = cb.id AND is_used = 1) as used_cards
       FROM card_batches cb
@@ -250,7 +250,7 @@ router.get('/batches/:batchId/cards', authenticateToken, (req, res) => {
     const total = db.prepare(`SELECT COUNT(*) as cnt FROM cards c ${whereClause}`).get(...params).cnt;
 
     const cards = db.prepare(`
-      SELECT c.*, u.username as used_by_name
+      SELECT c.*, COALESCE(u.real_name, u.username) as used_by_name
       FROM cards c
       LEFT JOIN users u ON c.used_by = u.id
       ${whereClause}
@@ -496,7 +496,7 @@ router.get('/redemption-logs', authenticateToken, (req, res) => {
     const total = db.prepare(`SELECT COUNT(*) as cnt FROM card_redemption_logs rl ${whereClause}`).get(...params).cnt;
 
     const logs = db.prepare(`
-      SELECT rl.*, u.username as user_name
+      SELECT rl.*, COALESCE(u.real_name, u.username) as user_name
       FROM card_redemption_logs rl
       JOIN users u ON rl.user_id = u.id
       ${whereClause}
@@ -578,7 +578,7 @@ router.get('/classroom-quiz', authenticateToken, (req, res) => {
     }
 
     const quizzes = db.prepare(`
-      SELECT cq.*, u.username as creator_name, c.name as class_name,
+      SELECT cq.*, COALESCE(u.real_name, u.username) as creator_name, c.name as class_name,
         (SELECT COUNT(*) FROM classroom_quiz_questions WHERE quiz_id = cq.id) as question_count,
         (SELECT COUNT(*) FROM classroom_quiz_rewards WHERE quiz_id = cq.id) as reward_count
       FROM classroom_quizzes cq
@@ -601,7 +601,7 @@ router.get('/classroom-quiz/:quizId', authenticateToken, (req, res) => {
     const { quizId } = req.params;
 
     const quiz = db.prepare(`
-      SELECT cq.*, u.username as creator_name, c.name as class_name
+      SELECT cq.*, COALESCE(u.real_name, u.username) as creator_name, c.name as class_name
       FROM classroom_quizzes cq
       JOIN users u ON cq.created_by = u.id
       LEFT JOIN classes c ON cq.class_id = c.id
@@ -619,8 +619,8 @@ router.get('/classroom-quiz/:quizId', authenticateToken, (req, res) => {
     `).all(quizId);
 
     const rewards = db.prepare(`
-      SELECT cqr.*, u.username as student_name, p.name as pet_name,
-        a.username as awarder_name
+      SELECT cqr.*, COALESCE(u.real_name, u.username) as student_name, p.name as pet_name,
+        COALESCE(a.real_name, a.username) as awarder_name
       FROM classroom_quiz_rewards cqr
       JOIN users u ON cqr.student_id = u.id
       LEFT JOIN pets p ON cqr.pet_id = p.id
@@ -766,7 +766,7 @@ router.get('/classroom-quiz/students/:classId', authenticateToken, (req, res) =>
     const { classId } = req.params;
 
     const students = db.prepare(`
-      SELECT u.id, u.username, u.gold, u.avatar,
+      SELECT u.id, u.username, u.real_name, u.gold, u.avatar,
         p.id as pet_id, p.name as pet_name, p.level as pet_level,
         p.species_id, ps.name as species_name, p.growth_stage,
         p.image_id, p.current_equipment

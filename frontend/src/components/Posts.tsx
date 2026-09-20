@@ -94,11 +94,11 @@ const Posts: React.FC = () => {
     <div key={comment.id} style={{ padding: '6px 0', borderBottom: '1px solid #f0f0f0' }}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
         <Avatar size={isMobile ? 24 : 28} src={comment.avatar} style={{ background: '#1890ff', fontSize: isMobile ? 10 : 12, flexShrink: 0 }}>
-          {comment.username?.[0]}
+          {(comment.real_name || comment.username)?.[0]}
         </Avatar>
         <div style={{ flex: 1, minWidth: 0 }}>
           <Space size={4} wrap>
-            <span style={{ fontWeight: 600, fontSize: isMobile ? 12 : 13 }}>{comment.username}</span>
+            <span style={{ fontWeight: 600, fontSize: isMobile ? 12 : 13 }}>{comment.real_name || comment.username}</span>
             {comment.parent_id && <Tag color="orange" style={{ fontSize: 10, margin: 0 }}>回复</Tag>}
           </Space>
           <p style={{ margin: '2px 0 0', color: '#333', lineHeight: 1.5, fontSize: isMobile ? 12 : 13, wordBreak: 'break-word' }}>{comment.content}</p>
@@ -159,10 +159,10 @@ const Posts: React.FC = () => {
 
                 {/* 帖子头部 */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <Avatar src={post.avatar} size={isMobile ? 32 : undefined} style={{ background: '#1890ff', flexShrink: 0 }}>{post.username?.[0]}</Avatar>
+                  <Avatar src={post.avatar} size={isMobile ? 32 : undefined} style={{ background: '#1890ff', flexShrink: 0 }}>{(post.real_name || post.username)?.[0]}</Avatar>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <Space size={4} wrap>
-                      <span style={{ fontWeight: 600, fontSize: isMobile ? 13 : undefined }}>{post.username}</span>
+                      <span style={{ fontWeight: 600, fontSize: isMobile ? 13 : undefined }}>{post.real_name || post.username}</span>
                       {post.role !== 'student' && <Tag color="blue" style={{ fontSize: 10 }}>{post.role === 'teacher' ? '教师' : '管理员'}</Tag>}
                     </Space>
                     <div style={{ fontSize: isMobile ? 11 : 12, color: '#999' }}>{new Date(post.created_at).toLocaleString()}</div>

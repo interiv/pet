@@ -76,7 +76,7 @@ router.get('/all', authenticateToken, (req, res) => {
     }
 
     const pets = db.prepare(`
-      SELECT p.*, ps.name as species_name, ps.element_type, ps.image_urls, u.username as owner_name, u.class_id
+      SELECT p.*, ps.name as species_name, ps.element_type, ps.image_urls, COALESCE(u.real_name, u.username) as owner_name, u.class_id
       FROM pets p
       JOIN pet_species ps ON p.species_id = ps.id
       JOIN users u ON p.user_id = u.id
@@ -388,7 +388,7 @@ router.get('/leaderboard', authenticateToken, (req, res) => {
   try {
     const pets = db.prepare(`
       SELECT p.*, ps.name as species_name, ps.element_type, ps.image_urls,
-             u.username as owner_name
+             COALESCE(u.real_name, u.username) as owner_name
       FROM pets p
       JOIN pet_species ps ON p.species_id = ps.id
       JOIN users u ON p.user_id = u.id
@@ -409,7 +409,7 @@ router.get('/user/:userId', (req, res) => {
     const { userId } = req.params;
     
     const pet = db.prepare(`
-      SELECT p.*, ps.name as species_name, ps.element_type, ps.image_urls, u.username as owner_name
+      SELECT p.*, ps.name as species_name, ps.element_type, ps.image_urls, COALESCE(u.real_name, u.username) as owner_name
       FROM pets p
       JOIN pet_species ps ON p.species_id = ps.id
       JOIN users u ON p.user_id = u.id

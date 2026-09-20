@@ -1296,10 +1296,10 @@ const BossBattleManager: React.FC = () => {
                     },
                     {
                       title: '学生',
-                      dataIndex: 'username',
+                      dataIndex: 'real_name',
                       key: 'username',
                       render: (name: string, record: any) => (
-                        <span>{name}{record.pet_name ? <Tag style={{ marginLeft: 4, fontSize: 10 }}>{record.pet_name} Lv.{record.pet_level}</Tag> : null}</span>
+                        <span>{name || record.username}{record.pet_name ? <Tag style={{ marginLeft: 4, fontSize: 10 }}>{record.pet_name} Lv.{record.pet_level}</Tag> : null}</span>
                       ),
                     },
                     {
@@ -1335,7 +1335,7 @@ const BossBattleManager: React.FC = () => {
               <Card title={`⚠️ 未参与学生（${detailData.non_participants.length}人）`} size="small" style={{ marginBottom: 16 }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   {detailData.non_participants.map((s: any) => (
-                    <Tag key={s.id} color="default">{s.username}</Tag>
+                    <Tag key={s.id} color="default">{s.real_name || s.username}</Tag>
                   ))}
                 </div>
               </Card>

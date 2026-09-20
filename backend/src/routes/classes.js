@@ -50,7 +50,7 @@ router.get('/by-slug/:slug', (req, res) => {
       SELECT c.id, c.name, c.grade, c.slug, c.description, c.cover_image,
              c.is_public, c.school_id, c.created_at, c.head_teacher_id,
              s.name AS school_name, s.theme_color AS school_theme,
-             u.username AS head_teacher_name, u.avatar AS head_teacher_avatar,
+             COALESCE(u.real_name, u.username) AS head_teacher_name, u.avatar AS head_teacher_avatar,
              (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') AS student_count,
              (SELECT COUNT(*) FROM class_teachers WHERE class_id = c.id) AS teacher_count
       FROM classes c
@@ -116,7 +116,7 @@ router.get('/:id/home-summary', authenticateToken, (req, res) => {
 
     const cls = db.prepare(`
       SELECT c.id, c.name, c.grade, c.slug, c.description, c.cover_image, c.is_public,
-             c.school_id, u.username AS head_teacher_name, u.id AS head_teacher_id,
+             c.school_id, COALESCE(u.real_name, u.username) AS head_teacher_name, u.id AS head_teacher_id,
              s.name AS school_name, s.theme_color AS school_theme
       FROM classes c
       LEFT JOIN users u ON c.head_teacher_id = u.id
@@ -127,7 +127,7 @@ router.get('/:id/home-summary', authenticateToken, (req, res) => {
 
     const studentCount = db.prepare(`SELECT COUNT(*) AS c FROM users WHERE class_id = ? AND role = 'student'`).get(classId).c;
     const teachers = db.prepare(`
-      SELECT u.id, u.username, u.avatar, ct.role
+      SELECT u.id, u.username, u.real_name, u.avatar, ct.role
       FROM class_teachers ct JOIN users u ON ct.teacher_id = u.id
       WHERE ct.class_id = ?
       ORDER BY CASE ct.role WHEN 'head_teacher' THEN 0 ELSE 1 END, ct.created_at ASC
@@ -136,7 +136,7 @@ router.get('/:id/home-summary', authenticateToken, (req, res) => {
     // Top10 班级等级榜
     const topPets = db.prepare(`
       SELECT p.id, p.name, p.level, p.exp, ps.name AS species_name, ps.image_urls,
-             u.username AS owner_name, u.id AS user_id
+             COALESCE(u.real_name, u.username) AS owner_name, u.id AS user_id
       FROM pets p
       JOIN pet_species ps ON p.species_id = ps.id
       JOIN users u ON p.user_id = u.id
@@ -176,7 +176,7 @@ router.get('/:id/home-summary', authenticateToken, (req, res) => {
     let recentPosts = [];
     try {
       recentPosts = db.prepare(`
-        SELECT p.id, p.content, p.created_at, u.username, u.avatar
+        SELECT p.id, p.content, p.created_at, u.username, u.real_name, u.avatar
         FROM posts p JOIN users u ON p.user_id = u.id
         WHERE p.class_id = ?
         ORDER BY p.created_at DESC LIMIT 5
@@ -446,7 +446,7 @@ router.post('/invitations/validate', (req, res) => {
     }
 
     const invitation = db.prepare(`
-      SELECT ci.*, c.name as class_name, c.grade, u.username as creator_name
+      SELECT ci.*, c.name as class_name, c.grade, COALESCE(u.real_name, u.username) as creator_name
       FROM class_invitations ci
       JOIN classes c ON ci.class_id = c.id
       JOIN users u ON ci.created_by = u.id
@@ -577,7 +577,7 @@ router.post('/register-with-invite', async (req, res) => {
       `).run(
         teacher.teacher_id,
         `新${role === 'teacher' ? '教师' : '学生'}已加入班级`,
-        `${username} 通过邀请码加入了你的班级「${className}」。`,
+        `${real_name || username} 通过邀请码加入了你的班级「${className}」。`,
         userId
       );
     }
@@ -683,7 +683,8 @@ router.post('/join-with-invite', authenticateToken, (req, res) => {
     ).run(invitation.id);
 
     // 向该班级的所有教师发送新成员加入通知
-    const username = db.prepare('SELECT username FROM users WHERE id = ?').get(userId)?.username || '未知用户';
+    const memberRow = db.prepare('SELECT username, real_name FROM users WHERE id = ?').get(userId);
+    const memberName = memberRow?.real_name || memberRow?.username || '未知用户';
     const classTeachers = db.prepare(`
       SELECT teacher_id FROM class_teachers WHERE class_id = ?
     `).all(invitation.class_id);
@@ -697,7 +698,7 @@ router.post('/join-with-invite', authenticateToken, (req, res) => {
       `).run(
         teacher.teacher_id,
         `新${userRole === 'teacher' ? '教师' : '学生'}已加入班级`,
-        `${username} 通过邀请码加入了你的班级「${className}」。`,
+        `${memberName} 通过邀请码加入了你的班级「${className}」。`,
         userId
       );
     }
@@ -723,7 +724,7 @@ router.get('/my-class', authenticateToken, (req, res) => {
     }
 
     const cls = db.prepare(`
-      SELECT c.*, u.username as head_teacher_name
+      SELECT c.*, COALESCE(u.real_name, u.username) as head_teacher_name
       FROM classes c
       LEFT JOIN users u ON c.head_teacher_id = u.id
       WHERE c.head_teacher_id = ?

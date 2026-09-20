@@ -14,7 +14,7 @@ router.get('/posts', authenticateToken, (req, res) => {
     const offset = (page - 1) * limit;
 
     let sql = `
-      SELECT p.*, u.username, u.avatar, u.role,
+      SELECT p.*, u.username, u.real_name, u.avatar, u.role,
         (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) as like_count,
         (SELECT COUNT(*) FROM post_comments WHERE post_id = p.id) as comment_count,
         EXISTS(SELECT 1 FROM post_likes WHERE post_id = p.id AND user_id = ?) as is_liked
@@ -51,7 +51,7 @@ router.get('/posts', authenticateToken, (req, res) => {
     // 获取每条帖子的最新几条评论
     const postsWithComments = posts.map(post => {
       const comments = db.prepare(`
-        SELECT c.*, u.username, u.avatar
+        SELECT c.*, u.username, u.real_name, u.avatar
         FROM post_comments c
         JOIN users u ON c.user_id = u.id
         WHERE c.post_id = ?
@@ -95,7 +95,7 @@ router.post('/posts', authenticateToken, (req, res) => {
     `).run(userId, content.trim(), images ? JSON.stringify(images) : null, scope, targetClassId);
 
     const newPost = db.prepare(`
-      SELECT p.*, u.username, u.avatar
+      SELECT p.*, u.username, u.real_name, u.avatar
       FROM posts p JOIN users u ON p.user_id = u.id
       WHERE p.id = ?
     `).get(result.lastInsertRowid);
@@ -159,11 +159,11 @@ router.post('/posts/:id/like', authenticateToken, (req, res) => {
 
       // 如果不是自己给自己点赞，发送通知
       if (post.user_id !== userId) {
-        const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
+        const user = db.prepare('SELECT username, real_name FROM users WHERE id = ?').get(userId);
         db.prepare(`
           INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
           VALUES (?, 'like', '收到新的点赞', ?, 'post', ?)
-        `).run(post.user_id, `${user.username} 赞了你的动态`, id);
+        `).run(post.user_id, `${user.real_name || user.username} 赞了你的动态`, id);
       }
 
       res.json({ liked: true, like_count: (post.like_count || 0) + 1 });
@@ -196,27 +196,27 @@ router.post('/posts/:id/comments', authenticateToken, (req, res) => {
 
     // 发送评论通知给帖子作者（如果评论者不是作者本人）
     if (post.user_id !== req.user.userId) {
-      const commenter = db.prepare('SELECT username FROM users WHERE id = ?').get(req.user.userId);
+      const commenter = db.prepare('SELECT username, real_name FROM users WHERE id = ?').get(req.user.userId);
       db.prepare(`
         INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
         VALUES (?, 'comment', '收到新评论', ?, 'post', ?)
-      `).run(post.user_id, `${commenter.username} 评论了你的动态`, id);
+      `).run(post.user_id, `${commenter.real_name || commenter.username} 评论了你的动态`, id);
     }
 
     // 如果是回复评论，也通知被回复的人
     if (parent_id) {
       const parentComment = db.prepare('SELECT user_id FROM post_comments WHERE id = ?').get(parent_id);
       if (parentComment && parentComment.user_id !== req.user.userId && parentComment.user_id !== post.user_id) {
-        const commenter = db.prepare('SELECT username FROM users WHERE id = ?').get(req.user.userId);
+        const commenter = db.prepare('SELECT username, real_name FROM users WHERE id = ?').get(req.user.userId);
         db.prepare(`
           INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
           VALUES (?, 'reply', '有人回复了你', ?, 'comment', ?)
-        `).run(parentComment.user_id, `${commenter.username} 回复了你的评论`, parent_id);
+        `).run(parentComment.user_id, `${commenter.real_name || commenter.username} 回复了你的评论`, parent_id);
       }
     }
 
     const comment = db.prepare(`
-      SELECT c.*, u.username, u.avatar
+      SELECT c.*, u.username, u.real_name, u.avatar
       FROM post_comments c JOIN users u ON c.user_id = u.id
       WHERE c.id = ?
     `).get(result.lastInsertRowid);

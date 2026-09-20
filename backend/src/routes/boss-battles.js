@@ -93,6 +93,7 @@ router.get('/current/:classId', authenticateToken, (req, res) => {
       SELECT 
         bbp.*,
         u.username,
+        u.real_name,
         p.name as pet_name,
         p.level as pet_level
       FROM boss_battle_participants bbp
@@ -154,6 +155,7 @@ router.get('/history/:classId', authenticateToken, (req, res) => {
         SELECT 
           bbp.*,
           u.username,
+          u.real_name,
           p.name as pet_name,
           p.level as pet_level
         FROM boss_battle_participants bbp
@@ -574,7 +576,7 @@ router.get('/:bossId/detail', authenticateToken, (req, res) => {
     }
 
     const participants = db.prepare(`
-      SELECT bbp.*, u.username, p.name as pet_name, p.level as pet_level
+      SELECT bbp.*, u.username, u.real_name, p.name as pet_name, p.level as pet_level
       FROM boss_battle_participants bbp
       JOIN users u ON bbp.user_id = u.id
       LEFT JOIN pets p ON bbp.pet_id = p.id
@@ -593,7 +595,7 @@ router.get('/:bossId/detail', authenticateToken, (req, res) => {
     `).all(boss.id);
 
     const classStudents = db.prepare(`
-      SELECT id, username FROM users WHERE class_id = ? AND role = 'student' AND status = 'active'
+      SELECT id, username, real_name FROM users WHERE class_id = ? AND role = 'student' AND status = 'active'
     `).all(boss.class_id);
 
     const participantUserIds = new Set(participants.map(p => p.user_id));
@@ -961,6 +963,7 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
       SELECT
         bbp.*,
         u.username,
+        u.real_name,
         p.name as pet_name,
         p.level as pet_level
       FROM boss_battle_participants bbp

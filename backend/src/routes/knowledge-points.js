@@ -404,7 +404,7 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
     }
 
     const students = db.prepare(
-      `SELECT id, username, avatar FROM users WHERE class_id = ? AND role = 'student'`
+      `SELECT id, username, real_name, avatar FROM users WHERE class_id = ? AND role = 'student'`
     ).all(classId);
     const studentIds = students.map(s => s.id);
     const studentCount = students.length;
@@ -533,6 +533,7 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
       return {
         user_id: stu.id,
         username: stu.username,
+        real_name: stu.real_name,
         avatar: stu.avatar,
         attempts: row.attempts || 0,
         correct: row.correct || 0,
@@ -598,7 +599,7 @@ router.get('/class/:classId/student/:studentId', authenticateToken, (req, res) =
     }
 
     const stu = db.prepare(
-      `SELECT id, username, avatar FROM users WHERE id = ? AND class_id = ? AND role = 'student'`
+      `SELECT id, username, real_name, avatar FROM users WHERE id = ? AND class_id = ? AND role = 'student'`
     ).get(studentId, classId);
     if (!stu) return res.status(404).json({ error: '学生不存在或不在此班级' });
 

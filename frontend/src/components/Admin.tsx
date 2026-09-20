@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge, Switch, Alert, Empty, Spin, Divider, Progress, Checkbox } from 'antd';
-import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined, LineChartOutlined, FireOutlined, ClearOutlined, UploadOutlined, DownloadOutlined, FileExcelOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, Row, Col, Statistic, List, Descriptions, Badge, Switch, Alert, Empty, Spin, Divider, Progress, Checkbox, Dropdown } from 'antd';
+import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DeleteOutlined, EditOutlined, PlusOutlined, DatabaseOutlined, GlobalOutlined, SafetyOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, EyeOutlined, LineChartOutlined, FireOutlined, ClearOutlined, UploadOutlined, DownloadOutlined, FileExcelOutlined, FileTextOutlined } from '@ant-design/icons';
 import { adminAPI, schoolAPI, assignmentAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import ClassInvitationManager from './ClassInvitationManager';
@@ -285,7 +285,7 @@ const Dashboard: React.FC = () => {
                 size="small"
                 pagination={false}
                 columns={[
-                  { title: '教师', dataIndex: 'username', key: 'username', width: 100 },
+                  { title: '教师', dataIndex: 'real_name', key: 'username', width: 100, render: (v: string, r: any) => v || r.username },
                   { title: '布置作业', dataIndex: 'assignment_count', key: 'assignment_count', width: 80, render: (v: number) => <Tag color="blue">{v}</Tag> },
                   { title: '收到提交', dataIndex: 'submission_count', key: 'submission_count', width: 80, render: (v: number) => <Tag color="green">{v}</Tag> },
                   { title: '待批改', dataIndex: 'ungraded_count', key: 'ungraded_count', width: 80, render: (v: number) => v > 0 ? <Tag color="warning">{v}</Tag> : <Tag color="default">0</Tag> },
@@ -446,7 +446,7 @@ export const ClassTeachingOverview: React.FC = () => {
               pagination={false}
               scroll={{ x: true }}
               columns={[
-                { title: '教师', dataIndex: 'username', key: 'username', width: 80, fixed: isMobile ? 'left' as const : undefined },
+                { title: '教师', dataIndex: 'real_name', key: 'username', width: 80, fixed: isMobile ? 'left' as const : undefined, render: (v: string, r: any) => v || r.username },
                 { title: '身份', dataIndex: 'class_role', key: 'class_role', width: 70, render: (v: string) => <Tag color={v === 'head_teacher' ? 'gold' : 'blue'}>{v === 'head_teacher' ? '班主任' : '任课'}</Tag> },
                 { title: '总作业', dataIndex: 'total_assignments', key: 'total_assignments', width: 70, render: (v: number) => <Tag>{v}</Tag> },
                 { title: '近30天', dataIndex: 'recent_assignments', key: 'recent_assignments', width: 70, render: (v: number) => <Tag color="blue">{v}</Tag> },
@@ -504,7 +504,7 @@ export const ClassTeachingOverview: React.FC = () => {
                   size="small"
                   pagination={false}
                   columns={[
-                    { title: '学生', dataIndex: 'username', key: 'username' },
+                    { title: '学生', dataIndex: 'real_name', key: 'username', render: (v: string, r: any) => v || r.username },
                     { title: '薄弱知识点', dataIndex: 'weak_kp_count', key: 'weak_kp_count', render: (v: number) => <Tag color="error">{v}</Tag> },
                     { title: '总知识点', dataIndex: 'total_kp_count', key: 'total_kp_count' },
                     { title: '平均正确率', dataIndex: 'avg_accuracy', key: 'avg_accuracy', render: (v: number) => v != null ? <Tag color={v >= 60 ? 'warning' : 'error'}>{v}%</Tag> : '-' },
@@ -524,7 +524,7 @@ export const ClassTeachingOverview: React.FC = () => {
                   renderItem={(item: any) => (
                     <List.Item>
                       <Space>
-                        <span>{item.username}</span>
+                        <span>{item.real_name || item.username}</span>
                         <span style={{ color: '#bbb', fontSize: 12 }}>
                           {item.last_login ? `最后登录: ${new Date(item.last_login).toLocaleDateString()}` : '从未登录'}
                         </span>
@@ -643,7 +643,14 @@ const ApplicationManagement: React.FC<{
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     { title: '班级', dataIndex: 'class_name', key: 'class_name', render: (name: string) => <Tag color="blue">{name}</Tag> },
-    { title: '用户名', dataIndex: 'username', key: 'username' },
+    {
+      title: '姓名',
+      dataIndex: 'real_name',
+      key: 'username',
+      render: (v: string, r: any) => v
+        ? (<span>{v}<br /><span style={{ color: '#999', fontSize: 12 }}>{r.username}</span></span>)
+        : (r.username || <span style={{ color: '#bbb' }}>—</span>),
+    },
     {
       title: '身份',
       dataIndex: 'role',
@@ -1313,19 +1320,100 @@ const StudentManagement: React.FC = () => {
     setAiFallbackMsg(null);
   };
 
-  // 下载「姓名 + 账号 + 密码」名单（CSV，Excel 可直接打开）
-  const handleDownloadAccounts = () => {
+  // 导出格式下拉菜单（CSV / TXT / Excel），withResetPassword 时额外提供「导出并重置密码」
+  const exportFormatMenu = (onSelect: (key: string) => void, withResetPassword = false) => ({
+    items: [
+      { key: 'xlsx', icon: <FileExcelOutlined />, label: 'Excel 表格（.xlsx）' },
+      { key: 'csv', icon: <FileTextOutlined />, label: 'CSV 文件（.csv）' },
+      { key: 'txt', icon: <FileTextOutlined />, label: 'TXT 文本（.txt）' },
+      ...(withResetPassword ? [
+        { type: 'divider' as const },
+        { key: 'xlsx-reset', icon: <SafetyOutlined />, label: '导出并重置密码（.xlsx）', danger: true },
+      ] : []),
+    ],
+    onClick: ({ key }: { key: string }) => onSelect(key),
+  });
+
+  // 导出当前筛选出来的学生列表（支持 Excel / CSV / TXT）
+  // withPassword = true 时先为这些学生重置密码，并把明文新密码写入「密码」列
+  const handleExportStudents = async (format: ExportFormat, withPassword = false) => {
+    const list = students || [];
+    if (list.length === 0) { message.warning('当前没有可导出的学生'); return; }
+    const statusMap: Record<string, string> = { active: '已激活', disabled: '已禁用' };
+
+    // 系统只保存密码哈希，无法还原原密码；需要明文时先批量重置为新密码
+    const passwordMap: Record<number, string> = {};
+    if (withPassword) {
+      const hide = message.loading('正在重置密码...', 0);
+      try {
+        const res = await adminAPI.resetStudentPasswords({ student_ids: list.map((s: any) => s.id) });
+        (res.data?.results || []).forEach((r: any) => { passwordMap[r.id] = r.password; });
+      } catch (error: any) {
+        hide();
+        message.error(`重置密码失败：${error?.response?.data?.error || error?.message || '请稍后重试'}`);
+        return;
+      }
+      hide();
+    }
+
+    const headers = ['ID', '姓名', '用户名', '密码', '邮箱', '班级', '金币', '状态', '注册时间'];
+    const rows = list.map((s: any) => [
+      s.id,
+      s.real_name || '',
+      s.username || '',
+      withPassword ? (passwordMap[s.id] || '') : '已加密',
+      s.email || '',
+      s.class_name || '未分配',
+      s.gold ?? '',
+      statusMap[s.status] || s.status || '',
+      s.created_at ? new Date(s.created_at).toLocaleString() : '',
+    ]);
+    const clsName = classFilter ? classes.find((c: any) => c.id === classFilter)?.name : '';
+    // 文件名带上当前的筛选条件，便于区分
+    const nameParts = ['学生数据'];
+    if (clsName) nameParts.push(clsName);
+    if (statusFilter) nameParts.push(statusMap[statusFilter] || statusFilter);
+    if (searchText) nameParts.push(searchText);
+    if (withPassword) nameParts.push('含新密码');
+    try {
+      await exportTableFile(headers, rows, format, nameParts.join('-'), '学生数据');
+      message.success(withPassword
+        ? `已导出 ${list.length} 名学生，密码已重置为文件中的新密码`
+        : `已导出 ${list.length} 条学生数据`);
+    } catch (error: any) {
+      message.error(`导出失败：${error?.message || '请稍后重试'}`);
+    }
+  };
+
+  // 导出菜单分发：「导出并重置密码」属于危险操作，先二次确认
+  const handleExportStudentsMenu = (key: string) => {
+    if (key === 'xlsx-reset') {
+      const count = (students || []).length;
+      Modal.confirm({
+        title: '导出并重置密码',
+        content: `将为当前筛选出的 ${count} 名学生生成新的随机 6 位密码并立即生效，原密码作废。导出后请及时把新密码发给学生。是否继续？`,
+        okText: '确定重置并导出',
+        okButtonProps: { danger: true },
+        onOk: () => handleExportStudents('xlsx', true),
+      });
+      return;
+    }
+    handleExportStudents(key as ExportFormat);
+  };
+
+  // 下载「姓名 + 账号 + 密码」名单（支持 Excel / CSV / TXT）
+  const handleDownloadAccounts = async (format: ExportFormat) => {
     const list = (generatedAccounts || []).filter((a) => a.username);
     if (list.length === 0) { message.warning('还没有可下载的账号'); return; }
     const cls = getManageableClasses().find((c: any) => c.id === importForm.getFieldValue('class_id'));
-    const csv = '\uFEFF' + ['姓名,登录账号,密码', ...list.map((a) => `${a.real_name || ''},${a.username},${a.password}`)].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `${cls?.name || '学生'}账号密码名单.csv`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-    message.success('名单已下载，可打印或发给学生');
+    const headers = ['姓名', '登录账号', '密码'];
+    const rows = list.map((a) => [a.real_name || '', a.username, a.password]);
+    try {
+      await exportTableFile(headers, rows, format, `${cls?.name || '学生'}账号密码名单`, '账号密码名单');
+      message.success('名单已下载，可打印或发给学生');
+    } catch (error: any) {
+      message.error(`下载失败：${error?.message || '请稍后重试'}`);
+    }
   };
 
   const viewDetail = async (id: number) => {
@@ -1341,7 +1429,8 @@ const StudentManagement: React.FC = () => {
 
   const handleEdit = (record: any) => {
     setSelectedStudent(record);
-    form.setFieldsValue(record);
+    // 每次都清空密码框，避免残留上一次输入
+    form.setFieldsValue({ ...record, password: '' });
     setEditModalVisible(true);
   };
 
@@ -1349,11 +1438,21 @@ const StudentManagement: React.FC = () => {
     try {
       const values = await form.validateFields();
       await adminAPI.updateStudent(selectedStudent.id, values);
-      message.success('学生信息更新成功');
+      if (values.password) {
+        message.success(`密码已重置为：${values.password}（请告知该学生）`, 8);
+      } else {
+        message.success('学生信息更新成功');
+      }
       setEditModalVisible(false);
       loadStudents();
-    } catch (error) {
-      message.error('更新失败');
+    } catch (error: any) {
+      if (error?.response?.data?.error) {
+        message.error(error.response.data.error);
+      } else if (error?.errorFields) {
+        // 表单校验未通过，antd 已就地提示
+      } else {
+        message.error('更新失败');
+      }
     }
   };
 
@@ -1447,6 +1546,13 @@ const StudentManagement: React.FC = () => {
           {(isAdmin || (user?.role === 'teacher' && (user as any)?.teacher_classes?.some((c: any) => c.class_role === 'head_teacher'))) && (
             <Button type="primary" icon={<UploadOutlined />} onClick={() => setImportModalVisible(true)}>导入学生</Button>
           )}
+          <Dropdown.Button
+            menu={exportFormatMenu(handleExportStudentsMenu, true)}
+            onClick={() => handleExportStudents('xlsx')}
+            disabled={students.length === 0}
+          >
+            <FileExcelOutlined /> 导出学生数据
+          </Dropdown.Button>
         </Space>
       </div>
       <Table columns={columns} dataSource={students} rowKey="id" loading={loading} pagination={pagination} scroll={{ x: true }} />
@@ -1455,6 +1561,7 @@ const StudentManagement: React.FC = () => {
         {studentDetail && (
           <div>
             <Descriptions bordered column={2}>
+              <Descriptions.Item label="姓名">{studentDetail.student.real_name || '—'}</Descriptions.Item>
               <Descriptions.Item label="用户名">{studentDetail.student.username}</Descriptions.Item>
               <Descriptions.Item label="邮箱">{studentDetail.student.email}</Descriptions.Item>
               <Descriptions.Item label="班级">{studentDetail.student.class_name || '未分配'}</Descriptions.Item>
@@ -1499,6 +1606,18 @@ const StudentManagement: React.FC = () => {
         <Form form={form} layout="vertical">
           <Form.Item name="real_name" label="姓名"><Input placeholder="学生姓名" /></Form.Item>
           <Form.Item name="username" label="用户名（登录账号）"><Input /></Form.Item>
+          <Form.Item
+            name="password"
+            label="重置密码"
+            extra="留空表示不修改；填写并保存后立即生效，学生下次登录请使用新密码"
+            rules={[{ validator: (_, v) => (!v || String(v).length >= 6) ? Promise.resolve() : Promise.reject(new Error('密码至少 6 位')) }]}
+          >
+            <Input.Password
+              placeholder="至少 6 位，留空不修改"
+              autoComplete="new-password"
+              addonAfter={<a onClick={() => form.setFieldValue('password', String(Math.floor(100000 + Math.random() * 900000)))}>随机生成</a>}
+            />
+          </Form.Item>
           <Form.Item name="email" label="邮箱"><Input /></Form.Item>
           <Form.Item name="class_id" label="班级">
             <Select allowClear onChange={v => form.setFieldValue('class_id', v)}>
@@ -1531,7 +1650,11 @@ const StudentManagement: React.FC = () => {
         footer={[
           <Button key="cancel" onClick={closeImportModal}>取消</Button>,
           importMode === 'paste' && generatedAccounts ? (
-            <Button key="download" icon={<DownloadOutlined />} onClick={handleDownloadAccounts}>下载名单</Button>
+            <span key="download">
+              <Dropdown menu={exportFormatMenu((key) => handleDownloadAccounts(key as ExportFormat))} trigger={['click']}>
+                <Button icon={<DownloadOutlined />}>下载名单</Button>
+              </Dropdown>
+            </span>
           ) : null,
           importMode === 'paste' ? (
             <Button
@@ -1907,7 +2030,7 @@ const ClassManagement: React.FC = () => {
               onClose={() => (isAdmin || isHeadTeacherOf(record)) && t.role !== 'head_teacher' ? handleRemoveTeacher(record.id, t.teacher_id) : undefined}
               color={t.role === 'head_teacher' ? 'blue' : 'default'}
             >
-              {t.username} {t.role === 'head_teacher' ? '(班主任)' : ''}
+              {t.real_name || t.username} {t.role === 'head_teacher' ? '(班主任)' : ''}
             </Tag>
           ))}
           {(isAdmin || isHeadTeacherOf(record)) && (
@@ -2004,7 +2127,7 @@ const ClassManagement: React.FC = () => {
             <Select placeholder="选择要添加的教师" filterOption={(input, option) => String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())}>
               {teachers
                 .filter(t => !selectedClass?.teachers?.some((ct: any) => ct.teacher_id === t.id))
-                .map(t => <Select.Option key={t.id} value={t.id} label={t.username}>{t.username}</Select.Option>)
+                .map(t => <Select.Option key={t.id} value={t.id} label={t.real_name || t.username}>{t.real_name || t.username}</Select.Option>)
               }
             </Select>
           </Form.Item>
@@ -2696,7 +2819,7 @@ const TokenDashboard: React.FC = () => {
 
   const recordColumns = [
     { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 160, render: (v: string) => v?.replace('T', ' ').slice(0, 19) || '-' },
-    { title: '教师', dataIndex: 'username', key: 'username', width: 100 },
+    { title: '教师', dataIndex: 'real_name', key: 'username', width: 100, render: (v: string, r: any) => v || r.username },
     { title: '科目', dataIndex: 'subject', key: 'subject', width: 80 },
     { title: '主题', dataIndex: 'topic', key: 'topic', width: 120, ellipsis: true },
     { title: '题型', dataIndex: 'question_type', key: 'question_type', width: 80, render: (v: string) => {
@@ -2745,7 +2868,7 @@ const TokenDashboard: React.FC = () => {
             dataSource={dashboardData.topTeachers}
             rowKey="user_id"
             columns={[
-              { title: '教师', dataIndex: 'username', key: 'username' },
+              { title: '教师', dataIndex: 'real_name', key: 'username', render: (v: string, r: any) => v || r.username },
               { title: '生成次数', dataIndex: 'generations', key: 'generations', width: 80 },
               { title: 'Prompt', dataIndex: 'prompt_tokens', key: 'prompt_tokens', width: 100, render: (v: number) => formatTokens(v) },
               { title: 'Completion', dataIndex: 'completion_tokens', key: 'completion_tokens', width: 100, render: (v: number) => formatTokens(v) },
@@ -3188,6 +3311,55 @@ async function downloadExcelTemplate() {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, '学生名单');
   XLSX.writeFile(workbook, '学生导入模板.xlsx');
+}
+
+// ==================== 通用表格导出（CSV / TXT / XLSX）====================
+
+type ExportFormat = 'csv' | 'txt' | 'xlsx';
+
+function cellText(value: any): string {
+  return value === null || value === undefined ? '' : String(value);
+}
+
+// 把「表头 + 数据行」导出为 CSV / TXT / Excel(.xlsx) 并触发浏览器下载
+async function exportTableFile(
+  headers: string[],
+  rows: any[][],
+  format: ExportFormat,
+  baseName: string,
+  sheetName = '数据'
+): Promise<void> {
+  if (format === 'xlsx') {
+    const XLSX = await import('xlsx');
+    const aoa: any[][] = [headers, ...rows];
+    const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+    worksheet['!cols'] = headers.map((_: string, i: number) => {
+      let maxLen = headers[i].length + 2;
+      aoa.forEach((r) => { maxLen = Math.max(maxLen, cellText(r[i]).length + 2); });
+      return { wch: Math.min(40, Math.max(10, maxLen)) };
+    });
+    const safeSheetName = (sheetName || '数据').replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) || '数据';
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, safeSheetName);
+    XLSX.writeFile(workbook, `${baseName}.xlsx`);
+    return;
+  }
+
+  const isCsv = format === 'csv';
+  const delimiter = isCsv ? ',' : '\t';
+  const escapeCell = (value: any): string => {
+    const s = cellText(value);
+    if (!isCsv) return s.replace(/[\t\r\n]+/g, ' ');
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  // 开头加 BOM，否则 Excel 打开中文会乱码
+  const content = '\uFEFF' + [headers, ...rows].map((row) => row.map(escapeCell).join(delimiter)).join('\r\n') + '\r\n';
+  const blob = new Blob([content], { type: isCsv ? 'text/csv;charset=utf-8;' : 'text/plain;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `${baseName}.${isCsv ? 'csv' : 'txt'}`;
+  link.click();
+  URL.revokeObjectURL(link.href);
 }
 
 // ==================== 系统数据（数据库结构 + 演示数据）====================

@@ -8,7 +8,7 @@ const { checkAndAwardAchievement } = require('./achievements');
 router.get('/list', authenticateToken, (req, res) => {
   try {
     const friends = db.prepare(`
-      SELECT u.id, u.username, u.avatar, f.friendship_level, f.last_interaction
+      SELECT u.id, u.username, u.real_name, u.avatar, f.friendship_level, f.last_interaction
       FROM friends f
       JOIN users u ON f.friend_id = u.id
       WHERE f.user_id = ? AND f.status = 'active'
@@ -25,7 +25,7 @@ router.get('/list', authenticateToken, (req, res) => {
 router.get('/pending-requests', authenticateToken, (req, res) => {
   try {
     const requests = db.prepare(`
-      SELECT fr.id, fr.sender_id, fr.created_at, u.username, u.avatar, u.role
+      SELECT fr.id, fr.sender_id, fr.created_at, u.username, u.real_name, u.avatar, u.role
       FROM friend_requests fr
       JOIN users u ON fr.sender_id = u.id
       WHERE fr.receiver_id = ? AND fr.status = 'pending'
@@ -79,7 +79,7 @@ router.post('/add', authenticateToken, (req, res) => {
       db.prepare(`
         INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
         VALUES (?, 'friend_accepted', '好友请求已通过', ?, 'friend', ?)
-      `).run(friend.id, `${req.user.username} 通过了你的好友请求`, req.user.userId);
+      `).run(friend.id, `${req.user.real_name || req.user.username} 通过了你的好友请求`, req.user.userId);
       
       // 成就检查
       try {
@@ -102,7 +102,7 @@ router.post('/add', authenticateToken, (req, res) => {
     db.prepare(`
       INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
       VALUES (?, 'friend_request', '收到新的好友请求', ?, 'friend_request', ?)
-    `).run(friend.id, `${req.user.username} 请求添加你为好友`, req.user.userId);
+    `).run(friend.id, `${req.user.real_name || req.user.username} 请求添加你为好友`, req.user.userId);
 
     res.json({ message: '好友请求已发送，等待对方接受' });
   } catch (error) {
@@ -132,7 +132,7 @@ router.post('/accept-request', authenticateToken, (req, res) => {
     db.prepare(`
       INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
       VALUES (?, 'friend_accepted', '好友请求已通过', ?, 'friend', ?)
-    `).run(request.sender_id, `${req.user.username} 通过了你的好友请求`, req.user.userId);
+    `).run(request.sender_id, `${req.user.real_name || req.user.username} 通过了你的好友请求`, req.user.userId);
 
     // 成就检查
     try {
@@ -177,7 +177,7 @@ router.get('/search', authenticateToken, (req, res) => {
     }
     const kw = `%${keyword.trim()}%`;
     const users = db.prepare(`
-      SELECT u.id, u.username, u.avatar, u.role, c.name as class_name
+      SELECT u.id, u.username, u.real_name, u.avatar, u.role, c.name as class_name
       FROM users u
       LEFT JOIN classes c ON u.class_id = c.id
       WHERE u.id != ? AND u.username LIKE ? AND u.status = 'active'

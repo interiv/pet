@@ -4,6 +4,7 @@ import { authAPI } from '../utils/api';
 interface User {
   id: number;
   username: string;
+  real_name?: string | null;
   email?: string;
   role: 'student' | 'teacher' | 'admin';
   class_id?: number;

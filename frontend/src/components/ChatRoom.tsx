@@ -21,6 +21,7 @@ interface Message {
   id: number;
   user_id: number;
   username: string;
+  real_name?: string | null;
   avatar: string | null;
   content: string;
   msg_type: string;
@@ -225,7 +226,7 @@ const ChatRoom: React.FC = () => {
     } else {
       const newConv: Conversation = {
         type: 'private',
-        name: targetUser.username,
+        name: targetUser.real_name || targetUser.username,
         avatar: targetUser.avatar,
         target_user_id: targetUser.id,
       };
@@ -370,12 +371,12 @@ const ChatRoom: React.FC = () => {
                       >
                         {msg.user_id !== user!.id && (
                           <Avatar size={28} src={msg.avatar} style={{ background: '#1890ff', fontSize: 11, flexShrink: 0 }}>
-                            {msg.username?.[0]}
+                            {(msg.real_name || msg.username)?.[0]}
                           </Avatar>
                         )}
                         <div>
                           {msg.user_id !== user!.id && (
-                            <span style={{ fontSize: 10, color: '#999', marginLeft: 4 }}>{msg.username}</span>
+                            <span style={{ fontSize: 10, color: '#999', marginLeft: 4 }}>{msg.real_name || msg.username}</span>
                           )}
                           <div style={{
                             marginTop: 2,
@@ -393,7 +394,7 @@ const ChatRoom: React.FC = () => {
                         </div>
                         {msg.user_id === user!.id && (
                           <Avatar size={28} src={user!.avatar} style={{ background: '#52c41a', fontSize: 11, flexShrink: 0 }}>
-                            {user!.username?.[0]}
+                            {(user!.real_name || user!.username)?.[0]}
                           </Avatar>
                         )}
                       </div>
@@ -454,7 +455,7 @@ const ChatRoom: React.FC = () => {
             dataSource={searchResults}
             renderItem={(u: any) => (
               <List.Item style={{ cursor: 'pointer' }} onClick={() => startPrivateChat(u)}>
-                <List.Item.Meta avatar={<Avatar src={u.avatar}>{u.username?.[0]}</Avatar>} title={u.username} description={`${u.role === 'teacher' ? '教师' : '学生'} · ${u.class_name || ''}`} />
+                <List.Item.Meta avatar={<Avatar src={u.avatar}>{(u.real_name || u.username)?.[0]}</Avatar>} title={u.real_name || u.username} description={`${u.role === 'teacher' ? '教师' : '学生'} · ${u.class_name || ''}`} />
               </List.Item>
             )}
           />
@@ -543,10 +544,10 @@ const ChatRoom: React.FC = () => {
                     <div key={msg.id} style={{ display: 'flex', justifyContent: msg.user_id === user!.id ? 'flex-end' : 'flex-start' }}>
                       <div style={{ maxWidth: '65%', display: 'flex', gap: 8, alignItems: 'flex-start', flexDirection: msg.user_id === user!.id ? 'row-reverse' : 'row' }}>
                         {msg.user_id !== user!.id && (
-                          <Avatar size={32} src={msg.avatar} style={{ background: '#1890ff', fontSize: 13, flexShrink: 0 }}>{msg.username?.[0]}</Avatar>
+                          <Avatar size={32} src={msg.avatar} style={{ background: '#1890ff', fontSize: 13, flexShrink: 0 }}>{(msg.real_name || msg.username)?.[0]}</Avatar>
                         )}
                         <div>
-                          {msg.user_id !== user!.id && (<span style={{ fontSize: 11, color: '#999', marginLeft: 8 }}>{msg.username}</span>)}
+                          {msg.user_id !== user!.id && (<span style={{ fontSize: 11, color: '#999', marginLeft: 8 }}>{msg.real_name || msg.username}</span>)}
                           <div style={{
                             marginTop: 4, padding: '8px 14px',
                             borderRadius: msg.user_id === user!.id ? '14px 14px 2px 14px' : '14px 14px 14px 2px',
@@ -559,7 +560,7 @@ const ChatRoom: React.FC = () => {
                           <span style={{ fontSize: 10, color: '#bbb', marginLeft: 8, display: 'block', marginTop: 2 }}>{formatTime(msg.created_at)}</span>
                         </div>
                         {msg.user_id === user!.id && (
-                          <Avatar size={32} src={user!.avatar} style={{ background: '#52c41a', fontSize: 13, flexShrink: 0 }}>{user!.username?.[0]}</Avatar>
+                          <Avatar size={32} src={user!.avatar} style={{ background: '#52c41a', fontSize: 13, flexShrink: 0 }}>{(user!.real_name || user!.username)?.[0]}</Avatar>
                         )}
                       </div>
                     </div>
@@ -584,7 +585,7 @@ const ChatRoom: React.FC = () => {
         <Input.Search placeholder="输入用户名搜索..." value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} onSearch={handleSearchUser} enterButton={<SearchOutlined />} style={{ marginBottom: 16 }} />
         <List dataSource={searchResults} renderItem={(u: any) => (
           <List.Item style={{ cursor: 'pointer' }} onClick={() => startPrivateChat(u)}>
-            <List.Item.Meta avatar={<Avatar src={u.avatar}>{u.username?.[0]}</Avatar>} title={u.username} description={`${u.role === 'teacher' ? '教师' : '学生'} · ${u.class_name || ''}`} />
+            <List.Item.Meta avatar={<Avatar src={u.avatar}>{(u.real_name || u.username)?.[0]}</Avatar>} title={u.real_name || u.username} description={`${u.role === 'teacher' ? '教师' : '学生'} · ${u.class_name || ''}`} />
           </List.Item>
         )} />
       </Modal>

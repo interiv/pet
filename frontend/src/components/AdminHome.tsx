@@ -137,7 +137,7 @@ const AdminHome: React.FC<AdminHomeProps> = ({ onNavigate }) => {
         <Row align="middle" justify="space-between">
           <Col>
             <div style={{ color: '#fff', fontSize: isMobile ? 20 : 26, fontWeight: 'bold', marginBottom: 8 }}>
-              {greeting()}，{user?.username} 👋
+              {greeting()}，{user?.real_name || user?.username} 👋
             </div>
             <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: isMobile ? 13 : 15 }}>
               欢迎回到管理后台，以下是系统运行概览

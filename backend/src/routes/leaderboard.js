@@ -15,7 +15,7 @@ router.get('/level', (req, res) => {
     const { class_id } = req.query;
     const limit = parseLimit(req.query.limit, 20);
     let sql = `
-      SELECT p.*, ps.name as species_name, ps.image_urls, u.username as owner_name, u.class_id
+      SELECT p.*, ps.name as species_name, ps.image_urls, COALESCE(u.real_name, u.username) as owner_name, u.class_id
       FROM pets p
       JOIN pet_species ps ON p.species_id = ps.id
       JOIN users u ON p.user_id = u.id
@@ -44,7 +44,7 @@ router.get('/battle', authenticateToken, (req, res) => {
     let sql = `
       SELECT p.*, 
              CAST(p.win_count AS FLOAT) / NULLIF(p.total_battles, 0) as win_rate,
-             ps.name as species_name, ps.image_urls, u.username as owner_name, u.class_id
+             ps.name as species_name, ps.image_urls, COALESCE(u.real_name, u.username) as owner_name, u.class_id
       FROM pets p
       JOIN pet_species ps ON p.species_id = ps.id
       JOIN users u ON p.user_id = u.id
@@ -71,7 +71,7 @@ router.get('/assignment', authenticateToken, (req, res) => {
     const { class_id } = req.query;
     const limit = parseLimit(req.query.limit, 20);
     let sql = `
-      SELECT u.id, u.username, u.class_id,
+      SELECT u.id, u.username, u.real_name, u.class_id,
              COUNT(s.id) as completed_count,
              AVG(s.exp_reward) as avg_exp
       FROM users u

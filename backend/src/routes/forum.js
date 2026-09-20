@@ -33,9 +33,9 @@ router.get('/threads', authenticateToken, (req, res) => {
     const offset = (page - 1) * limit;
 
     let sql = `
-      SELECT t.*, u.username, u.avatar,
+      SELECT t.*, u.username, u.real_name, u.avatar,
         (SELECT COUNT(*) FROM forum_posts WHERE thread_id = t.id AND status = 'active') as reply_count,
-        (SELECT username FROM users WHERE id = t.last_reply_user_id) as last_reply_username
+        (SELECT COALESCE(real_name, username) FROM users WHERE id = t.last_reply_user_id) as last_reply_username
       FROM forum_threads t
       JOIN users u ON t.user_id = u.id
       WHERE t.status != 'deleted'
@@ -103,7 +103,7 @@ router.get('/threads/:id', authenticateToken, (req, res) => {
 
     // 帖子详情
     const thread = db.prepare(`
-      SELECT t.*, u.username, u.avatar, u.role,
+      SELECT t.*, u.username, u.real_name, u.avatar, u.role,
         EXISTS(SELECT 1 FROM forum_likes WHERE thread_id = t.id AND user_id = ?) as is_liked
       FROM forum_threads t
       JOIN users u ON t.user_id = u.id
@@ -117,7 +117,7 @@ router.get('/threads/:id', authenticateToken, (req, res) => {
 
     // 回复列表
     const posts = db.prepare(`
-      SELECT fp.*, u.username, u.avatar, u.role,
+      SELECT fp.*, u.username, u.real_name, u.avatar, u.role,
         EXISTS(SELECT 1 FROM forum_post_likes WHERE post_id = fp.id AND user_id = ?) as is_liked
       FROM forum_posts fp
       JOIN users u ON fp.user_id = u.id
@@ -230,27 +230,27 @@ router.post('/threads/:id/reply', authenticateToken, (req, res) => {
 
     // 通知楼主（如果回复者不是楼主）
     if (thread.user_id !== req.user.userId) {
-      const replier = db.prepare('SELECT username FROM users WHERE id = ?').get(req.user.userId);
+      const replier = db.prepare('SELECT username, real_name FROM users WHERE id = ?').get(req.user.userId);
       db.prepare(`
         INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
         VALUES (?, 'forum_reply', '你的帖子收到新回复', ?, 'forum_thread', ?)
-      `).run(thread.user_id, `${replier.username} 回复了你的帖子「${thread.title}」`, id);
+      `).run(thread.user_id, `${replier.real_name || replier.username} 回复了你的帖子「${thread.title}」`, id);
     }
 
     // 如果是回复楼层，也通知被回复的人
     if (parent_id) {
       const parentPost = db.prepare('SELECT user_id FROM forum_posts WHERE id = ?').get(parent_id);
       if (parentPost && parentPost.user_id !== req.user.userId && parentPost.user_id !== thread.user_id) {
-        const replier = db.prepare('SELECT username FROM users WHERE id = ?').get(req.user.userId);
+        const replier = db.prepare('SELECT username, real_name FROM users WHERE id = ?').get(req.user.userId);
         db.prepare(`
           INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
           VALUES (?, 'forum_quote', '有人在帖子中引用了你', ?, 'forum_post', ?)
-        `).run(parentPost.user_id, `${replier.username} 在帖子中回复了你`, parent_id);
+        `).run(parentPost.user_id, `${replier.real_name || replier.username} 在帖子中回复了你`, parent_id);
       }
     }
 
     const post = db.prepare(`
-      SELECT fp.*, u.username, u.avatar
+      SELECT fp.*, u.username, u.real_name, u.avatar
       FROM forum_posts fp JOIN users u ON fp.user_id = u.id
       WHERE fp.id = ?
     `).get(result.lastInsertRowid);
@@ -286,11 +286,11 @@ router.post('/threads/:id/like', authenticateToken, (req, res) => {
 
       const thread = db.prepare('SELECT user_id, title FROM forum_threads WHERE id = ?').get(id);
       if (thread && thread.user_id !== userId) {
-        const liker = db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
+        const liker = db.prepare('SELECT username, real_name FROM users WHERE id = ?').get(userId);
         db.prepare(`
           INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
           VALUES (?, 'forum_like', '你的帖子收到新点赞', ?, 'forum_thread', ?)
-        `).run(thread.user_id, `${liker.username} 赞了你的帖子「${thread.title}」`, id);
+        `).run(thread.user_id, `${liker.real_name || liker.username} 赞了你的帖子「${thread.title}」`, id);
       }
 
       res.json({ liked: true });
@@ -351,7 +351,7 @@ router.post('/threads/:id/favorite', authenticateToken, (req, res) => {
 router.get('/favorites', authenticateToken, (req, res) => {
   try {
     const favorites = db.prepare(`
-      SELECT t.*, ff.created_at as favorite_time, u.username as author_name
+      SELECT t.*, ff.created_at as favorite_time, COALESCE(u.real_name, u.username) as author_name
       FROM forum_favorites ff
       JOIN forum_threads t ON ff.thread_id = t.id
       JOIN users u ON t.user_id = u.id

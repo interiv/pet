@@ -29,7 +29,7 @@ const StaticPageLayout: React.FC<StaticPageProps> = ({ title, children }) => {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {isAuthenticated ? (
-            <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14 }}>{user?.username}</span>
+            <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 14 }}>{user?.real_name || user?.username}</span>
           ) : (
             <Button type="link" onClick={() => navigate('/login')} style={{ color: '#fff', padding: 0 }}>登录</Button>
           )}
