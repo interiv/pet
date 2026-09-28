@@ -1,13 +1,13 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   Table, Button, Modal, Form, Input, Select, InputNumber,
-  message, Space, Tag, Popconfirm, Descriptions, Divider, Row, Col, Typography
+  message, Space, Tag, Popconfirm, Descriptions, Divider, Row, Col, Typography, Alert
 } from 'antd';
 import {
   PlusOutlined, DeleteOutlined, PrinterOutlined, EyeOutlined,
   CopyOutlined, StopOutlined
 } from '@ant-design/icons';
-import { cardAPI } from '../utils/api';
+import { cardAPI, itemAPI, equipmentAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 
 const { Text, Title } = Typography;
@@ -18,6 +18,17 @@ const CARD_TYPES: Record<string, { label: string; color: string }> = {
   equipment: { label: '装备卡', color: 'blue' },
   exp: { label: '经验卡', color: 'orange' },
   mystery: { label: '神秘卡', color: 'purple' },
+};
+
+const REWARD_LABELS: Record<string, string> = {
+  gold: '金币', item: '物品', equipment: '装备', exp: '经验', mystery: '随机奖励',
+};
+
+// 生成奖励内容的展示文本
+const rewardText = (b: any) => {
+  if (!b) return '-';
+  if (b.type === 'mystery') return '随机奖励';
+  return b.reward_name || `${REWARD_LABELS[b.reward_type] || b.reward_type} x${b.reward_value}`;
 };
 
 const CardManager: React.FC = () => {
@@ -35,7 +46,28 @@ const CardManager: React.FC = () => {
   const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
   const [codesModalOpen, setCodesModalOpen] = useState(false);
   const [form] = Form.useForm();
+  const cardType = Form.useWatch('type', form) || 'gold';
+  const [items, setItems] = useState<any[]>([]);
+  const [equipments, setEquipments] = useState<any[]>([]);
+  const [lastBatch, setLastBatch] = useState<any>(null);
   const printRef = useRef<HTMLDivElement>(null);
+
+  const loadItems = () => {
+    if (items.length === 0) {
+      itemAPI.getItems().then((res: any) => setItems(res.data.items || [])).catch(() => {});
+    }
+  };
+  const loadEquipments = () => {
+    if (equipments.length === 0) {
+      equipmentAPI.getAll().then((res: any) => setEquipments(res.data.equipments || [])).catch(() => {});
+    }
+  };
+
+  const handleCardTypeChange = (v: string) => {
+    form.setFieldsValue({ reward_value: undefined, reward_name: undefined });
+    if (v === 'item') loadItems();
+    if (v === 'equipment') loadEquipments();
+  };
 
   useEffect(() => {
     loadBatches();
@@ -57,12 +89,22 @@ const CardManager: React.FC = () => {
 
   const handleCreate = async (values: any) => {
     try {
-      const data = {
-        ...values,
-        class_id: currentClass?.id || undefined,
-      };
-      const res = await cardAPI.createBatch(data);
+      const payload: any = { ...values, class_id: currentClass?.id || undefined };
+      // 神秘卡：兑换时随机发奖，占位奖励字段
+      if (payload.type === 'mystery') {
+        payload.reward_type = 'mystery';
+        payload.reward_value = 1;
+        payload.reward_name = '随机奖励';
+      }
+      const res = await cardAPI.createBatch(payload);
       message.success(res.data.message);
+      setLastBatch({
+        name: payload.name,
+        type: payload.type,
+        reward_type: payload.reward_type,
+        reward_value: payload.reward_value,
+        reward_name: payload.reward_name,
+      });
       setGeneratedCodes(res.data.codes || []);
       setCodesModalOpen(true);
       setCreateModalOpen(false);
@@ -174,8 +216,8 @@ const CardManager: React.FC = () => {
             ${rows.map(row => row.map(code => `
               <div class="card-item cut-line">
                 <div class="card-code">${code}</div>
-                <div class="card-type">${CARD_TYPES[selectedBatch?.type]?.label || '卡'}</div>
-                <div class="card-reward">${selectedBatch?.reward_name || selectedBatch?.reward_type + ' x' + selectedBatch?.reward_value}</div>
+                <div class="card-type">${CARD_TYPES[batchInfo?.type]?.label || '卡'}</div>
+                <div class="card-reward">${rewardText(batchInfo)}</div>
               </div>
             `).join('')).join('')}
           </div>
@@ -222,7 +264,7 @@ const CardManager: React.FC = () => {
         <div class="page">
           <div class="header">
             <h2>${selectedBatch?.name || '卡号列表'}</h2>
-            <p>类型: ${CARD_TYPES[selectedBatch?.type]?.label || '-'} | 奖励: ${selectedBatch?.reward_name || selectedBatch?.reward_type + ' x' + selectedBatch?.reward_value} | 共 ${generatedCodes.length} 张</p>
+            <p>类型: ${CARD_TYPES[batchInfo?.type]?.label || '-'} | 奖励: ${rewardText(batchInfo)} | 共 ${generatedCodes.length} 张</p>
           </div>
           <table>
             <thead>
@@ -233,8 +275,8 @@ const CardManager: React.FC = () => {
                 <tr>
                   <td>${i + 1}</td>
                   <td style="font-family:'Courier New',monospace;font-weight:bold;">${code}</td>
-                  <td>${CARD_TYPES[selectedBatch?.type]?.label || '-'}</td>
-                  <td>${selectedBatch?.reward_name || selectedBatch?.reward_type + ' x' + selectedBatch?.reward_value}</td>
+                  <td>${CARD_TYPES[batchInfo?.type]?.label || '-'}</td>
+                  <td>${rewardText(batchInfo)}</td>
                   <td>未使用</td>
                 </tr>
               `).join('')}
@@ -249,13 +291,15 @@ const CardManager: React.FC = () => {
     printWindow.document.close();
   };
 
+  const batchInfo = lastBatch || selectedBatch;
+
   const batchColumns = [
     { title: '批次名称', dataIndex: 'name', key: 'name' },
     {
       title: '类型', dataIndex: 'type', key: 'type',
       render: (type: string) => <Tag color={CARD_TYPES[type]?.color}>{CARD_TYPES[type]?.label || type}</Tag>
     },
-    { title: '奖励内容', key: 'reward', render: (_: any, r: any) => r.reward_name || `${r.reward_type} x${r.reward_value}` },
+    { title: '奖励内容', key: 'reward', render: (_: any, r: any) => rewardText(r) },
     { title: '总数', dataIndex: 'quantity', key: 'quantity' },
     {
       title: '使用情况', key: 'usage',
@@ -284,6 +328,14 @@ const CardManager: React.FC = () => {
     {
       title: '卡号', dataIndex: 'code', key: 'code',
       render: (code: string) => <Text code style={{ fontSize: 12 }}>{code}</Text>
+    },
+    {
+      title: '类型', key: 'card_type', width: 90,
+      render: () => selectedBatch ? <Tag color={CARD_TYPES[selectedBatch.type]?.color}>{CARD_TYPES[selectedBatch.type]?.label}</Tag> : '-'
+    },
+    {
+      title: '奖励', key: 'card_reward', width: 140,
+      render: () => rewardText(selectedBatch)
     },
     {
       title: '状态', dataIndex: 'is_used', key: 'is_used',
@@ -345,7 +397,10 @@ const CardManager: React.FC = () => {
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="type" label="卡类型" rules={[{ required: true }]}>
-                <Select options={Object.entries(CARD_TYPES).map(([k, v]) => ({ value: k, label: v.label }))} />
+                <Select
+                  options={Object.entries(CARD_TYPES).map(([k, v]) => ({ value: k, label: v.label }))}
+                  onChange={handleCardTypeChange}
+                />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -354,26 +409,53 @@ const CardManager: React.FC = () => {
               </Form.Item>
             </Col>
           </Row>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="reward_type" label="奖励类型" rules={[{ required: true }]}>
-                <Select options={[
-                  { value: 'gold', label: '金币' },
-                  { value: 'item', label: '物品(ID)' },
-                  { value: 'equipment', label: '装备(ID)' },
-                  { value: 'exp', label: '经验值' },
-                ]} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="reward_value" label="奖励数值" rules={[{ required: true }]}>
-                <InputNumber min={1} style={{ width: '100%' }} placeholder="数量/ID" />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item name="reward_name" label="奖励名称（可选）">
-            <Input placeholder="如：100金币、体力药剂" />
-          </Form.Item>
+
+          {cardType === 'mystery' ? (
+            <Alert
+              message="神秘卡"
+              description="学生兑换神秘卡时，将随机获得一种奖励（金币/物品/装备/经验），无需在这里设置奖励内容。"
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+          ) : (
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item
+                  name="reward_value"
+                  label={cardType === 'item' ? '选择物品' : cardType === 'equipment' ? '选择装备' : cardType === 'exp' ? '经验值' : '金币数量'}
+                  rules={[{ required: true, message: cardType === 'item' || cardType === 'equipment' ? '请选择' : '请输入数值' }]}
+                >
+                  {cardType === 'item' ? (
+                    <Select
+                      showSearch
+                      optionFilterProp="label"
+                      loading={items.length === 0}
+                      placeholder="选择物品"
+                      options={items.map((it: any) => ({ value: it.id, label: `${it.name}（${it.price ?? '-'}金币）`, name: it.name }))}
+                      onSelect={(_, opt: any) => form.setFieldsValue({ reward_name: opt.name })}
+                    />
+                  ) : cardType === 'equipment' ? (
+                    <Select
+                      showSearch
+                      optionFilterProp="label"
+                      loading={equipments.length === 0}
+                      placeholder="选择装备"
+                      options={equipments.map((eq: any) => ({ value: eq.id, label: `${eq.name}（${({ common: '普通', rare: '稀有', epic: '史诗', legendary: '传说' } as Record<string, string>)[eq.rarity] || eq.rarity}）`, name: eq.name }))}
+                      onSelect={(_, opt: any) => form.setFieldsValue({ reward_name: opt.name })}
+                    />
+                  ) : (
+                    <InputNumber min={1} max={999999} style={{ width: '100%' }} placeholder={cardType === 'exp' ? '如：50' : '如：100'} />
+                  )}
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="reward_name" label="奖励名称（可选，选物品/装备自动填）">
+                  <Input placeholder="如：100金币、体力药剂" />
+                </Form.Item>
+              </Col>
+            </Row>
+          )}
           <Form.Item name="note" label="备注（可选）">
             <Input.TextArea rows={2} placeholder="内部备注" />
           </Form.Item>
@@ -404,6 +486,12 @@ const CardManager: React.FC = () => {
             <div key={i}>
               <span style={{ color: '#999', marginRight: 8 }}>{i + 1}.</span>
               {code}
+              <Tag color={CARD_TYPES[lastBatch?.type]?.color} style={{ marginLeft: 10 }}>
+                {CARD_TYPES[lastBatch?.type]?.label}
+              </Tag>
+              <span style={{ color: '#888', marginLeft: 6, fontFamily: 'initial' }}>
+                {rewardText(lastBatch)}
+              </span>
             </div>
           ))}
         </div>
