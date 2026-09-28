@@ -82,6 +82,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
   const [answerText, setAnswerText] = useState('');
   const [listening, setListening] = useState(false);
   const [judging, setJudging] = useState(false);
+  const [judgeSeconds, setJudgeSeconds] = useState(0);
   const [judgeResult, setJudgeResult] = useState<any>(null);
   const [perQValue, setPerQValue] = useState(10);
   const [sessionAnswers, setSessionAnswers] = useState<any[]>([]);
@@ -91,21 +92,30 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
   const currentQuestion = questions[index];
 
   // ===== 语音朗读 =====
+  const loadVoices = () => {
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    const vs: any[] = synth.getVoices() || [];
+    // 全部列出，中文语音排最前
+    const isZh = (v: any) => /^zh|cmn/i.test(v.lang) || /中文|汉语|普通话|Chinese/i.test(v.name);
+    if (vs.length > 0) {
+      setVoices([...vs].sort((a, b) => (isZh(a) ? 0 : 1) - (isZh(b) ? 0 : 1)));
+    }
+  };
+
   useEffect(() => {
     const synth = window.speechSynthesis;
     if (!synth) return;
-    const load = () => {
-      const vs: any[] = synth.getVoices() || [];
-      // 全部列出，中文语音排最前
-      const isZh = (v: any) => /^zh|cmn/i.test(v.lang) || /中文|汉语|普通话|Chinese/i.test(v.name);
-      setVoices([...vs].sort((a, b) => (isZh(a) ? 0 : 1) - (isZh(b) ? 0 : 1)));
-    };
-    load();
-    synth.addEventListener?.('voiceschanged', load);
+    loadVoices();
+    synth.addEventListener?.('voiceschanged', loadVoices);
+    // 部分浏览器语音列表延迟加载，多补几次
+    const timers = [500, 1500, 3000].map(ms => setTimeout(loadVoices, ms));
     return () => {
-      synth.removeEventListener?.('voiceschanged', load);
+      synth.removeEventListener?.('voiceschanged', loadVoices);
+      timers.forEach(clearTimeout);
       synth.cancel();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const speakText = (text?: string) => {
@@ -229,6 +239,14 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     const t = setTimeout(() => setBuzzLeft(v => (v === null ? null : v - 1)), 1000);
     return () => clearTimeout(t);
   }, [buzzLeft]);
+
+  // AI评判已等待秒数
+  useEffect(() => {
+    if (!judging) return;
+    setJudgeSeconds(0);
+    const t = setInterval(() => setJudgeSeconds(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [judging]);
 
   // 键盘控制
   useEffect(() => {
@@ -485,32 +503,33 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
   const mainArea = () => {
     if (judgeResult) {
       const coins = Math.max(0, Math.round((judgeResult.score / 100) * perQValue));
+      const resultText = `${judgeResult.student.real_name || judgeResult.student.username}同学，${judgeResult.is_correct ? '回答正确' : '回答不够准确'}，得分${judgeResult.score}分。${judgeResult.comment}${judgeResult.correct_answer ? ` 正确答案是：${judgeResult.correct_answer}。` : ''}`;
       return (
         <div style={{ textAlign: 'center', width: '100%', padding: '0 24px' }}>
-          <div style={{ color: '#aaa', fontSize: 20, marginBottom: 8 }}>
+          <div style={{ color: '#aaa', fontSize: 'clamp(16px, 1.8vw, 24px)', marginBottom: 8 }}>
             第 {judgeResult.questionIndex + 1} 题 · 答题人
           </div>
-          <div style={{ color: '#fff', fontSize: 40, fontWeight: 'bold' }}>
+          <div style={{ color: '#fff', fontSize: 'clamp(30px, 4vw, 56px)', fontWeight: 'bold' }}>
             {judgeResult.student.real_name || judgeResult.student.username}
           </div>
           <div style={{ margin: '20px 0' }}>
             {judgeResult.is_correct
-              ? <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 60 }} />
-              : <CloseCircleOutlined style={{ color: '#ff4d4f', fontSize: 60 }} />}
-            <span style={{ color: judgeResult.is_correct ? '#52c41a' : '#ff4d4f', fontSize: 64, fontWeight: 'bold', marginLeft: 20 }}>
+              ? <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 'clamp(48px, 5vw, 80px)' }} />
+              : <CloseCircleOutlined style={{ color: '#ff4d4f', fontSize: 'clamp(48px, 5vw, 80px)' }} />}
+            <span style={{ color: judgeResult.is_correct ? '#52c41a' : '#ff4d4f', fontSize: 'clamp(56px, 8vw, 110px)', fontWeight: 'bold', marginLeft: 20 }}>
               {judgeResult.score}分
             </span>
           </div>
-          <div style={{ color: '#ddd', fontSize: 22, maxWidth: 720, margin: '0 auto' }}>{judgeResult.comment}</div>
+          <div style={{ color: '#ddd', fontSize: 'clamp(18px, 2.4vw, 32px)', maxWidth: 900, margin: '0 auto' }}>{judgeResult.comment}</div>
           {judgeResult.correct_answer && (
             <div style={{
-              color: '#bae637', fontSize: 20, maxWidth: 720, margin: '16px auto 0',
+              color: '#bae637', fontSize: 'clamp(18px, 2.2vw, 30px)', maxWidth: 900, margin: '16px auto 0',
               background: '#1c2b12', border: '1px solid #3a5318', borderRadius: 8, padding: '10px 16px'
             }}>
               正确答案：{judgeResult.correct_answer}
             </div>
           )}
-          <div style={{ color: '#888', fontSize: 16, marginTop: 12 }}>回答：{judgeResult.answer}</div>
+          <div style={{ color: '#888', fontSize: 'clamp(14px, 1.6vw, 20px)', marginTop: 12 }}>回答：{judgeResult.answer}</div>
           <Space style={{ marginTop: 24 }} wrap>
             {judgeResult.coins > 0 ? (
               <Tag color="gold" style={{ fontSize: 16, padding: '4px 12px' }}>已发放 {judgeResult.coins} 金币</Tag>
@@ -520,15 +539,13 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
               </Button>
             )}
             {!speaking ? (
-              <Button
-                icon={<SoundOutlined />}
-                onClick={() => speakText(`${judgeResult.student.real_name || judgeResult.student.username}同学，${judgeResult.is_correct ? '回答正确' : '回答不够准确'}，得分${judgeResult.score}分。${judgeResult.comment}${judgeResult.correct_answer ? ` 正确答案是：${judgeResult.correct_answer}。` : ''}`)}
-              >
-                朗读结果
-              </Button>
+              <Button icon={<SoundOutlined />} onClick={() => speakText(resultText)}>朗读结果</Button>
+            ) : paused ? (
+              <Button icon={<PlayCircleOutlined />} onClick={resumeSpeech}>继续朗读</Button>
             ) : (
-              <Button icon={<StopOutlined />} onClick={stopSpeech}>停止朗读</Button>
+              <Button icon={<PauseCircleOutlined />} onClick={pauseSpeech}>暂停朗读</Button>
             )}
+            {speaking && <Button icon={<StopOutlined />} onClick={stopSpeech}>停止</Button>}
             <Button onClick={() => { stopSpeech(); setJudgeResult(null); setAnswerText(''); }}>继续答题</Button>
           </Space>
         </div>
@@ -537,10 +554,10 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     if (randomState) {
       return (
         <div style={{ textAlign: 'center' }}>
-          <div style={{ color: '#aaa', fontSize: 22, marginBottom: 16 }}>
+          <div style={{ color: '#aaa', fontSize: 'clamp(16px, 2vw, 26px)', marginBottom: 16 }}>
             {randomState.rolling ? '随机点名中...' : '被点到的同学是'}
           </div>
-          <div style={{ color: randomState.rolling ? '#999' : '#1890ff', fontSize: 88, fontWeight: 'bold' }}>
+          <div style={{ color: randomState.rolling ? '#999' : '#1890ff', fontSize: 'clamp(56px, 10vw, 140px)', fontWeight: 'bold' }}>
             {randomState.name || '...'}
           </div>
           {!randomState.rolling && (
@@ -584,12 +601,12 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     }
     return (
       <div style={{ textAlign: 'center', width: '100%' }}>
-        <div style={{ color: '#666', fontSize: 20, marginBottom: 12 }}>
+        <div style={{ color: '#666', fontSize: 'clamp(16px, 1.8vw, 24px)', marginBottom: 12 }}>
           第 {index + 1} / {questions.length} 题
           {autoPlay && <Tag color="blue" style={{ marginLeft: 12 }}>自动播放中</Tag>}
           {answerer && <Tag color="green" style={{ marginLeft: 12 }}>答题人：{answerer.real_name || answerer.username}</Tag>}
         </div>
-        <div style={{ color: '#fff', fontSize: 40, fontWeight: 500, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+        <div style={{ color: '#fff', fontSize: 'clamp(30px, 4.5vw, 64px)', fontWeight: 500, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
           {currentQuestion?.question_text || '暂无题目'}
         </div>
         {/* 朗读控制 */}
@@ -613,6 +630,8 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
               placeholder="朗读声音"
             />
           )}
+          <Button size="small" icon={<ReloadOutlined />} onClick={loadVoices} title="重新加载系统语音列表">刷新声音</Button>
+          {voices.length === 0 && <span style={{ color: '#666', fontSize: 12 }}>未检测到语音，请点刷新声音</span>}
         </Space>
       </div>
     );
@@ -705,7 +724,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
                   loading={judging}
                   onClick={handleJudge}
                 >
-                  {judging ? 'AI评判中...' : '提交AI评判'}
+                  {judging ? `AI评判中... 已等待${judgeSeconds}秒` : '提交AI评判'}
                 </Button>
               </div>
             )}
