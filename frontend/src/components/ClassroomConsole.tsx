@@ -407,6 +407,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
         content: '提交AI评判前需要确定是谁在回答。点击右侧学生卡片指定，或现在随机点名（自动绑定答题人）。',
         okText: '随机点名',
         cancelText: '我自己选',
+        zIndex: 3000,
         onOk: () => startRandomPick(),
       });
       return;
@@ -934,6 +935,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
       <Modal
         title={`课堂总结：${quiz.title}`}
         open={summaryOpen}
+        zIndex={3000}
         onCancel={() => setSummaryOpen(false)}
         footer={<Button type="primary" onClick={() => setSummaryOpen(false)}>关闭</Button>}
         width={760}
