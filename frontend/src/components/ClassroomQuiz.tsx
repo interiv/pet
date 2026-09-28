@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Card, Table, Button, Modal, Form, Input, Select, InputNumber,
   message, Space, Tag, Tabs, Descriptions, Row, Col, Typography,
-  List, Avatar, Popconfirm, Empty, Badge, Spin, Radio, Checkbox
+  List, Avatar, Popconfirm, Empty, Badge, Spin, Radio, Checkbox, Alert
 } from 'antd';
 import {
   PlusOutlined, GiftOutlined, CheckCircleOutlined,
@@ -60,6 +60,7 @@ const ClassroomQuiz: React.FC = () => {
   const [createForm] = Form.useForm();
   const [rewardForm] = Form.useForm();
   const rewardType = Form.useWatch('reward_type', rewardForm);
+  const aiMode = Form.useWatch('ai_mode', createForm) || 'topic';
 
   // 创建：班级 / 题目来源
   const [classes, setClasses] = useState<any[]>([]);
@@ -83,6 +84,9 @@ const ClassroomQuiz: React.FC = () => {
   const [items, setItems] = useState<any[]>([]);
   const [equipments, setEquipments] = useState<any[]>([]);
 
+  // AI生成次数额度（与发布作业共用）
+  const [genLimit, setGenLimit] = useState<{ daily_limit: number; daily_used: number; daily_remaining: number; global_tokens_remaining: number } | null>(null);
+
   // 随机点名
   const [randomOpen, setRandomOpen] = useState(false);
   const [randomRolling, setRandomRolling] = useState(false);
@@ -101,6 +105,7 @@ const ClassroomQuiz: React.FC = () => {
   useEffect(() => {
     loadQuizzes();
     loadClasses();
+    loadGenLimit();
   }, []);
 
   useEffect(() => {
@@ -154,6 +159,15 @@ const ClassroomQuiz: React.FC = () => {
     }
   };
 
+  const loadGenLimit = async () => {
+    try {
+      const res = await adminAPI.getMyGenLimit();
+      setGenLimit(res.data);
+    } catch (e) {
+      // 静默
+    }
+  };
+
   const loadQuizzes = async () => {
     setLoading(true);
     try {
@@ -195,25 +209,37 @@ const ClassroomQuiz: React.FC = () => {
   };
 
   const handleGenerateAI = async () => {
-    const values = createForm.getFieldsValue(['subject', 'ai_topic', 'ai_type', 'ai_count', 'ai_difficulty']);
+    const values = createForm.getFieldsValue(['subject', 'ai_mode', 'ai_topic', 'ai_requirements', 'ai_raw_text', 'ai_type', 'ai_count', 'ai_difficulty']);
     if (!values.subject) { message.warning('请先选择科目'); return; }
-    if (!values.ai_topic) { message.warning('请输入知识点主题'); return; }
+    const mode = values.ai_mode || 'topic';
+    const payload: any = {
+      subject: values.subject,
+      question_type: values.ai_type || 'choice_single',
+      count: values.ai_count || 5,
+      difficulty: values.ai_difficulty || 'medium',
+      mode,
+    };
+    if (mode === 'topic') {
+      if (!values.ai_topic) { message.warning('请输入知识点主题'); return; }
+      payload.topic = values.ai_topic;
+    } else if (mode === 'requirements') {
+      if (!values.ai_requirements || !values.ai_requirements.trim()) { message.warning('请填写详细的出题要求'); return; }
+      payload.requirements = values.ai_requirements;
+    } else {
+      if (!values.ai_raw_text || !values.ai_raw_text.trim()) { message.warning('请粘贴题目内容'); return; }
+      payload.raw_text = values.ai_raw_text;
+    }
     setAiLoading(true);
     try {
-      const res = await classroomQuizAPI.aiGenerate({
-        subject: values.subject,
-        topic: values.ai_topic,
-        question_type: values.ai_type || 'choice_single',
-        count: values.ai_count || 5,
-        difficulty: values.ai_difficulty || 'medium',
-      });
+      const res = await classroomQuizAPI.aiGenerate(payload);
       setAiQuestions(res.data.questions || []);
       setAiSelected(new Set((res.data.questions || []).map((_: any, i: number) => i)));
-      message.success(`AI生成了 ${res.data.questions?.length || 0} 道题目，请勾选要使用的题目`);
+      message.success(`AI整理出 ${res.data.questions?.length || 0} 道题目，请勾选要使用的题目`);
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'AI出题失败');
     } finally {
       setAiLoading(false);
+      loadGenLimit();
     }
   };
 
@@ -587,31 +613,90 @@ const ClassroomQuiz: React.FC = () => {
 
           {createSource === 'ai' && (
             <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 12, marginBottom: 16 }}>
-              <Row gutter={8}>
-                <Col span={14}>
-                  <Form.Item name="ai_topic" label="知识点主题" rules={[{ required: true, message: '请输入知识点主题' }]}>
-                    <Input placeholder="如：分数加减法、古诗背诵" />
+              <Form.Item name="ai_mode" label="出题方式" initialValue="topic" style={{ marginBottom: 12 }}>
+                <Radio.Group buttonStyle="solid" size="small">
+                  <Radio.Button value="topic">按知识点</Radio.Button>
+                  <Radio.Button value="requirements">按详细要求</Radio.Button>
+                  <Radio.Button value="paste">粘贴题目</Radio.Button>
+                </Radio.Group>
+              </Form.Item>
+
+              {aiMode === 'topic' && (
+                <Row gutter={8}>
+                  <Col span={14}>
+                    <Form.Item name="ai_topic" label="知识点主题" rules={[{ required: true, message: '请输入知识点主题' }]} preserve={false}>
+                      <Input placeholder="如：分数加减法、古诗背诵" />
+                    </Form.Item>
+                  </Col>
+                  <Col span={5}>
+                    <Form.Item name="ai_type" label="题型" initialValue="choice_single" preserve={false}>
+                      <Select options={aiTypeOptions} />
+                    </Form.Item>
+                  </Col>
+                  <Col span={5}>
+                    <Form.Item name="ai_count" label="数量" initialValue={5} preserve={false}>
+                      <InputNumber min={1} max={20} style={{ width: '100%' }} addonAfter="道" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              )}
+
+              {aiMode === 'requirements' && (
+                <>
+                  <Form.Item
+                    name="ai_requirements"
+                    label="详细出题要求"
+                    rules={[{ required: true, message: '请填写详细的出题要求' }]}
+                    preserve={false}
+                  >
+                    <Input.TextArea rows={4} maxLength={2000} showCount placeholder={'用一段话描述你想出的课堂题目要求。例如：\n围绕本节课"光的折射"出抢答题，重点考查折射角与入射角的关系，题目要简短适合口头回答。'} />
                   </Form.Item>
-                </Col>
-                <Col span={5}>
-                  <Form.Item name="ai_type" label="题型" initialValue="choice_single">
-                    <Select options={aiTypeOptions} />
-                  </Form.Item>
-                </Col>
-                <Col span={5}>
-                  <Form.Item name="ai_count" label="数量" initialValue={5}>
-                    <InputNumber min={1} max={20} style={{ width: '100%' }} addonAfter="道" />
-                  </Form.Item>
-                </Col>
-              </Row>
+                  <Row gutter={8}>
+                    <Col span={10}>
+                      <Form.Item name="ai_type" label="题型" initialValue="choice_single" preserve={false}>
+                        <Select options={aiTypeOptions} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={7}>
+                      <Form.Item name="ai_count" label="数量" initialValue={5} preserve={false}>
+                        <InputNumber min={1} max={20} style={{ width: '100%' }} addonAfter="道" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                </>
+              )}
+
+              {aiMode === 'paste' && (
+                <Form.Item
+                  name="ai_raw_text"
+                  label="粘贴题目原文"
+                  rules={[{ required: true, message: '请粘贴题目内容' }]}
+                  preserve={false}
+                  extra="直接粘贴已有的题目（格式不必规范），AI会自动整理并补全参考答案，题目数量以粘贴内容为准"
+                >
+                  <Input.TextArea rows={8} maxLength={10000} showCount placeholder={'把已有的题目（可从Word/PDF/网页复制）粘贴到这里...'} />
+                </Form.Item>
+              )}
+
+              {genLimit && (
+                <Alert
+                  style={{ marginBottom: 12 }}
+                  type={genLimit.daily_remaining > 0 ? 'info' : 'warning'}
+                  showIcon
+                  message={genLimit.daily_remaining > 0
+                    ? `今日剩余AI生成次数：${genLimit.daily_remaining} / ${genLimit.daily_limit}（与发布作业共用，次日0点重置）`
+                    : `今日AI生成次数已用完（${genLimit.daily_limit}次），请明日0点后再试`}
+                />
+              )}
               <Button
                 type="primary"
                 icon={<RobotOutlined />}
                 loading={aiLoading}
                 onClick={handleGenerateAI}
+                disabled={genLimit ? genLimit.daily_remaining <= 0 : false}
                 style={{ marginBottom: 12 }}
               >
-                {aiLoading ? 'AI正在出题中...' : '🤖 AI生成题目'}
+                {aiLoading ? 'AI正在出题中...' : aiMode === 'paste' ? '🤖 AI整理题目' : '🤖 AI生成题目'}
               </Button>
               {aiQuestions.length > 0 && (
                 <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>

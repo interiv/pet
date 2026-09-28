@@ -522,11 +522,39 @@ router.post('/classroom-quiz/ai-generate', authenticateToken, async (req, res) =
       return res.status(403).json({ error: '无权操作' });
     }
 
-    const { subject, topic, question_type = 'choice_single', count = 5, difficulty = 'medium', grade_level = '' } = req.body;
-    if (!subject || !topic) {
-      return res.status(400).json({ error: '请填写科目和知识点主题' });
+    const { subject, topic, question_type = 'choice_single', count = 5, difficulty = 'medium', grade_level = '', mode = 'topic', requirements = '', raw_text = '' } = req.body;
+
+    // 出题模式：topic=按知识点 | requirements=按详细要求 | paste=粘贴题目整理
+    const genMode = ['topic', 'requirements', 'paste'].includes(mode) ? mode : 'topic';
+    if (!subject) {
+      return res.status(400).json({ error: '请选择科目' });
+    }
+    if (genMode === 'topic' && !topic) {
+      return res.status(400).json({ error: '请填写知识点主题' });
+    }
+    if (genMode === 'requirements' && !String(requirements || '').trim()) {
+      return res.status(400).json({ error: '请填写详细的出题要求' });
+    }
+    if (genMode === 'paste' && !String(raw_text || '').trim()) {
+      return res.status(400).json({ error: '请粘贴题目内容' });
     }
     const n = Math.min(20, Math.max(1, parseInt(count) || 5));
+
+    // 每日生成次数与全站Token额度校验（与发布作业共用额度）
+    const hasUsageTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'`).get();
+    if (hasUsageTable) {
+      const today = getChinaDate();
+      const dailyTeacherLimit = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'daily_teacher_gen_limit'`).get()?.value || '5');
+      const todayCount = db.prepare(`SELECT COUNT(*) as count FROM token_usage WHERE user_id = ? AND date = ?`).get(req.user.userId, today)?.count || 0;
+      if (todayCount >= dailyTeacherLimit) {
+        return res.status(429).json({ error: `今日生成次数已达上限（${dailyTeacherLimit}次），请明日0点后再试` });
+      }
+      const dailyGlobalTokenLimit = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'daily_global_token_limit'`).get()?.value || '2000000');
+      const todayGlobalTokens = db.prepare(`SELECT COALESCE(SUM(completion_tokens), 0) as total FROM token_usage WHERE date = ?`).get(today)?.total || 0;
+      if (todayGlobalTokens >= dailyGlobalTokenLimit) {
+        return res.status(429).json({ error: '今日网站Token用量已达上限，请联系管理员或明日再试' });
+      }
+    }
 
     const config = getAIConfig();
     if (!isAIConfigured(config)) {
@@ -535,8 +563,14 @@ router.post('/classroom-quiz/ai-generate', authenticateToken, async (req, res) =
 
     const typeLabels = { choice_single: '单选题', choice_multi: '多选题', judgment: '判断题', fill_blank: '填空题', essay: '简答题' };
     const typeLabel = typeLabels[question_type] || '题目';
-    const prompt = fillTemplate(getPrompt('gen_classroom'), {
-      grade_level, topic, subject, typeLabel, difficulty, count: n
+    const promptKey = genMode === 'topic' ? 'gen_classroom'
+      : genMode === 'requirements' ? 'gen_classroom_requirements'
+      : 'gen_classroom_paste';
+    const effectiveTopic = topic || String(requirements || '').trim().slice(0, 30) || '粘贴题目';
+
+    const prompt = fillTemplate(getPrompt(promptKey), {
+      grade_level, topic, subject, typeLabel, difficulty, count: n,
+      requirements, raw_text
     });
 
     const axios = require('axios');
@@ -561,7 +595,7 @@ router.post('/classroom-quiz/ai-generate', authenticateToken, async (req, res) =
         db.prepare(`
           INSERT INTO token_usage (user_id, date, prompt_tokens, completion_tokens, total_tokens, model, subject, topic, question_type, question_count, duration_ms)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(req.user.userId, getChinaDate(), usage.prompt_tokens || 0, usage.completion_tokens || 0, usage.total_tokens || 0, config.ai_model, subject, topic, question_type, n, Date.now() - startTime);
+        `).run(req.user.userId, getChinaDate(), usage.prompt_tokens || 0, usage.completion_tokens || 0, usage.total_tokens || 0, config.ai_model, subject, effectiveTopic, question_type, n, Date.now() - startTime);
       }
     } catch (e) {
       // 统计写入失败不影响出题
