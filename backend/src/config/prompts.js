@@ -388,6 +388,34 @@ const PROMPTS = {
 4. 只返回JSON`
   },
 
+  // ===== 课堂答题 AI 评判 =====
+  judge_classroom_answer: {
+    group: '作业评阅',
+    label: '课堂答题AI评判',
+    description: '课堂口答后AI判断对错并打分。可用变量：{subject} {question_text} {reference_answer} {student_answer}',
+    default: `你是一个JSON生成器和评阅老师。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
+
+任务：课堂口头答题评判。请判断学生的口头回答是否正确。
+
+【科目】{subject}
+【题目】
+{question_text}
+
+【参考答案】
+{reference_answer}
+
+【学生回答】
+{student_answer}
+
+请严格按照以下JSON格式返回：
+{"is_correct": true或false, "score": 0到100的整数, "comment": "一两句简短点评"}
+
+要求：
+1. 口头回答允许表述不完整，意思对即可给高分
+2. score参考：完全正确90-100，基本正确70-89，部分正确40-69，错误0-39
+3. 只返回JSON，不要任何其他内容`
+  },
+
   // ===== 管理员：学生账号生成 =====
   admin_student_accounts: {
     group: '管理员工具',

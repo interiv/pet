@@ -8,11 +8,12 @@ import {
   PlusOutlined, GiftOutlined, CheckCircleOutlined,
   UserOutlined, EyeOutlined, PlayCircleOutlined, RobotOutlined,
   LeftOutlined, RightOutlined, CloseOutlined, ThunderboltOutlined,
-  ExpandOutlined, UserSwitchOutlined, SearchOutlined
+  ExpandOutlined, UserSwitchOutlined, SearchOutlined, StopOutlined
 } from '@ant-design/icons';
 import { classroomQuizAPI, questionBankAPI, itemAPI, equipmentAPI, adminAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import { getPetThumbUrl } from '../utils/petImage';
+import ClassroomConsole from './ClassroomConsole';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -52,6 +53,7 @@ const ClassroomQuiz: React.FC = () => {
   const [quizDetail, setQuizDetail] = useState<any>(null);
   const [questions, setQuestions] = useState<any[]>([]);
   const [rewards, setRewards] = useState<any[]>([]);
+  const [answers, setAnswers] = useState<any[]>([]);
   const [students, setStudents] = useState<any[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [selectedQuestionId, setSelectedQuestionId] = useState<number | null>(null);
@@ -101,6 +103,9 @@ const ClassroomQuiz: React.FC = () => {
   const [autoSeconds, setAutoSeconds] = useState(30);
   const [buzzTotal, setBuzzTotal] = useState(30);
   const [buzzLeft, setBuzzLeft] = useState<number | null>(null);
+
+  // 课堂控制台
+  const [consoleData, setConsoleData] = useState<{ quiz: any; questions: any[] } | null>(null);
 
   useEffect(() => {
     loadQuizzes();
@@ -314,6 +319,7 @@ const ClassroomQuiz: React.FC = () => {
       setQuizDetail(res.data.quiz);
       setQuestions(res.data.questions || []);
       setRewards(res.data.rewards || []);
+      setAnswers(res.data.answers || []);
     } catch (e) {
       console.error('加载详情失败:', e);
     } finally {
@@ -331,6 +337,22 @@ const ClassroomQuiz: React.FC = () => {
       }
     } catch (e: any) {
       message.error(e?.response?.data?.error || '操作失败');
+    }
+  };
+
+  // 进入课堂控制台
+  const handleOpenConsole = async (quiz: any) => {
+    try {
+      const res = await classroomQuizAPI.getQuizDetail(quiz.id);
+      const qs = res.data.questions || [];
+      if (qs.length === 0) {
+        message.warning('该课堂做题暂无题目，请先添加题目');
+        return;
+      }
+      setDetailModalOpen(false);
+      setConsoleData({ quiz: res.data.quiz || quiz, questions: qs });
+    } catch (e) {
+      message.error('加载课堂做题失败');
     }
   };
 
@@ -450,6 +472,7 @@ const ClassroomQuiz: React.FC = () => {
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(r)}>详情</Button>
           {r.status === 'active' && (
             <>
+              <Button type="link" size="small" icon={<PlayCircleOutlined />} onClick={() => handleOpenConsole(r)}>控制台</Button>
               <Button type="link" size="small" icon={<GiftOutlined />} onClick={() => handleOpenReward(r)}>奖励</Button>
               <Popconfirm title="确定结束此课堂做题？" onConfirm={() => handleCompleteQuiz(r.id)}>
                 <Button type="link" size="small" icon={<CheckCircleOutlined />}>结束</Button>
@@ -749,6 +772,9 @@ const ClassroomQuiz: React.FC = () => {
 
             {quizDetail.status === 'active' && questions.length > 0 && (
               <Space style={{ marginBottom: 16 }} wrap>
+                <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => handleOpenConsole(quizDetail)}>
+                  进入课堂控制台
+                </Button>
                 <Button icon={<ExpandOutlined />} onClick={() => { setProjIndex(0); setBuzzLeft(null); setAutoPlay(false); setProjectOpen(true); }}>
                   投影模式
                 </Button>
@@ -803,6 +829,27 @@ const ClassroomQuiz: React.FC = () => {
                       rowKey="id"
                       pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
                       size="small"
+                    />
+                  ),
+                },
+                {
+                  key: 'answers',
+                  label: `答题记录 (${answers.length})`,
+                  children: (
+                    <Table
+                      dataSource={answers}
+                      rowKey="id"
+                      pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
+                      size="small"
+                      columns={[
+                        { title: '学生', dataIndex: 'student_name', width: 100 },
+                        { title: '回答', dataIndex: 'answer_text', ellipsis: true },
+                        { title: '判定', width: 70, render: (_: any, r: any) => r.is_correct ? <Tag color="green">正确</Tag> : <Tag color="red">错误</Tag> },
+                        { title: '得分', width: 60, render: (v: number) => `${v ?? 0}分` },
+                        { title: '金币', width: 60, render: (v: number) => v > 0 ? `+${v}` : '-' },
+                        { title: '时间', dataIndex: 'created_at', width: 150, render: (v: string) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
+                      ]}
+                      locale={{ emptyText: <Empty description="暂无课堂口答记录（在控制台用AI评判后自动保存）" /> }}
                     />
                   ),
                 },
@@ -866,8 +913,17 @@ const ClassroomQuiz: React.FC = () => {
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 48px' }}>
             {buzzLeft !== null && buzzLeft > 0 ? (
               <div style={{ textAlign: 'center' }}>
-                <div style={{ color: '#52c41a', fontSize: 22, marginBottom: 16 }}>抢答计时中，举手/喊答最快的同学作答！</div>
+                <div style={{ color: '#52c41a', fontSize: 22, marginBottom: 16 }}>抢答计时中！</div>
                 <div style={{ color: '#52c41a', fontSize: 160, fontWeight: 'bold', lineHeight: 1 }}>{buzzLeft}</div>
+                <Button
+                  danger
+                  size="large"
+                  icon={<StopOutlined />}
+                  style={{ marginTop: 24 }}
+                  onClick={() => setBuzzLeft(null)}
+                >
+                  提前结束（有人举手了）
+                </Button>
               </div>
             ) : buzzLeft === 0 ? (
               <div style={{ textAlign: 'center' }}>
@@ -1040,6 +1096,16 @@ const ClassroomQuiz: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* 课堂控制台 */}
+      {consoleData && (
+        <ClassroomConsole
+          quiz={consoleData.quiz}
+          questions={consoleData.questions}
+          onClose={() => { setConsoleData(null); loadQuizzes(); }}
+          onRewarded={loadQuizzes}
+        />
+      )}
     </div>
   );
 };

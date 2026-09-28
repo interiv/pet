@@ -604,7 +604,7 @@ export const classroomQuizAPI = {
   updateQuizStatus: (quizId: number, status: string) =>
     api.put(`/cards/classroom-quiz/${quizId}`, { status }),
   rewardStudent: (quizId: number, data: {
-    student_id: number; pet_id?: number; reward_type: string;
+    student_id?: number; student_ids?: number[]; pet_id?: number; reward_type: string;
     reward_value: string | number; reward_name?: string;
     question_id?: number; reason?: string;
   }) => api.post(`/cards/classroom-quiz/${quizId}/reward`, data),
@@ -612,6 +612,10 @@ export const classroomQuizAPI = {
     api.get(`/cards/classroom-quiz/students/${classId}`),
   aiGenerate: (data: { subject: string; topic?: string; question_type?: string; count?: number; difficulty?: string; grade_level?: string; mode?: 'topic' | 'requirements' | 'paste'; requirements?: string; raw_text?: string }, timeout?: number) =>
     api.post('/cards/classroom-quiz/ai-generate', data, { timeout: (timeout || 300) * 1000 }),
+  aiJudge: (data: { subject?: string; question_text: string; reference_answer?: string; student_answer: string }, timeout?: number) =>
+    api.post('/cards/classroom-quiz/ai-judge', data, { timeout: (timeout || 60) * 1000 }),
+  saveAnswer: (quizId: number, data: { question_id?: number; student_id: number; answer_text?: string; judged_by_ai?: boolean; is_correct?: boolean; score?: number; coin_rewarded?: number }) =>
+    api.post(`/cards/classroom-quiz/${quizId}/answers`, data),
 };
 
 export default api;

@@ -112,6 +112,22 @@ function ensureTables() {
       FOREIGN KEY (pet_id) REFERENCES pets(id),
       FOREIGN KEY (awarded_by) REFERENCES users(id)
     );
+
+    CREATE TABLE IF NOT EXISTS classroom_quiz_answers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      quiz_id INTEGER NOT NULL,
+      question_id INTEGER,
+      student_id INTEGER NOT NULL,
+      answer_text TEXT,
+      judged_by_ai INTEGER DEFAULT 0,
+      is_correct INTEGER,
+      score INTEGER DEFAULT 0,
+      coin_rewarded INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (quiz_id) REFERENCES classroom_quizzes(id),
+      FOREIGN KEY (question_id) REFERENCES classroom_quiz_questions(id),
+      FOREIGN KEY (student_id) REFERENCES users(id)
+    );
   `);
 
   db.exec(`
@@ -747,10 +763,133 @@ router.get('/classroom-quiz/:quizId', authenticateToken, (req, res) => {
       ORDER BY cqr.awarded_at DESC
     `).all(quizId);
 
-    res.json({ quiz, questions, rewards });
+    const hasAnswersTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='classroom_quiz_answers'`).get();
+    const answers = hasAnswersTable ? db.prepare(`
+      SELECT cqa.*, COALESCE(u.real_name, u.username) as student_name
+      FROM classroom_quiz_answers cqa
+      JOIN users u ON cqa.student_id = u.id
+      WHERE cqa.quiz_id = ?
+      ORDER BY cqa.created_at DESC
+    `).all(quizId) : [];
+
+    res.json({ quiz, questions, rewards, answers });
   } catch (error) {
     console.error('获取课堂做题详情失败:', error);
     res.status(500).json({ error: '获取课堂做题详情失败' });
+  }
+});
+
+// 课堂答题：AI 评判（不占每日生成次数，仅记录token用量）
+router.post('/classroom-quiz/ai-judge', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role === 'student') {
+      return res.status(403).json({ error: '无权操作' });
+    }
+
+    const { subject, question_text, reference_answer = '', student_answer } = req.body;
+    if (!question_text || !student_answer || !String(student_answer).trim()) {
+      return res.status(400).json({ error: '缺少题目或学生回答' });
+    }
+
+    const config = getAIConfig();
+    if (!isAIConfigured(config)) {
+      return res.status(500).json({ error: 'AI 配置未完成，请联系管理员' });
+    }
+
+    const prompt = fillTemplate(getPrompt('judge_classroom_answer'), {
+      subject: subject || '',
+      question_text,
+      reference_answer: reference_answer || '无',
+      student_answer
+    });
+
+    const axios = require('axios');
+    const timeoutMs = Math.min((parseInt(config.ai_timeout) || 300) * 1000, 60000);
+    const startTime = Date.now();
+    const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
+      model: config.ai_model,
+      messages: [{ role: 'user', content: prompt }]
+    }, {
+      headers: {
+        'Authorization': `Bearer ${config.ai_api_key}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: timeoutMs
+    });
+
+    try {
+      const usage = response.data?.usage || {};
+      const hasTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'`).get();
+      if (hasTable) {
+        db.prepare(`
+          INSERT INTO token_usage (user_id, date, prompt_tokens, completion_tokens, total_tokens, model, subject, topic, question_type, question_count, duration_ms)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(req.user.userId, getChinaDate(), usage.prompt_tokens || 0, usage.completion_tokens || 0, usage.total_tokens || 0, config.ai_model, subject || '课堂答题', 'AI评判', 'essay', 1, Date.now() - startTime);
+      }
+    } catch (e) {
+      // 统计写入失败不影响评判
+    }
+
+    const content = response.data.choices[0].message.content;
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e) {
+      const m = content.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
+      if (!m) return res.status(500).json({ error: 'AI返回格式错误，请重试' });
+      parsed = JSON.parse(m[0]);
+    }
+
+    res.json({
+      is_correct: parsed.is_correct === true || parsed.is_correct === 'true',
+      score: Math.max(0, Math.min(100, parseInt(parsed.score) || 0)),
+      comment: parsed.comment || ''
+    });
+  } catch (error) {
+    console.error('课堂答题AI评判失败:', error.message);
+    if (error.code === 'ECONNABORTED') {
+      return res.status(500).json({ error: 'AI评判超时，请重试' });
+    }
+    res.status(500).json({ error: '课堂答题AI评判失败: ' + (error.message || '未知错误') });
+  }
+});
+
+// 课堂答题：保存答题记录（写入学生个人档案）
+router.post('/classroom-quiz/:quizId/answers', authenticateToken, (req, res) => {
+  try {
+    if (req.user.role === 'student') {
+      return res.status(403).json({ error: '无权操作' });
+    }
+
+    const { quizId } = req.params;
+    const { question_id, student_id, answer_text, judged_by_ai, is_correct, score, coin_rewarded } = req.body;
+    if (!student_id) {
+      return res.status(400).json({ error: '缺少答题学生' });
+    }
+
+    const hasTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='classroom_quiz_answers'`).get();
+    if (!hasTable) {
+      return res.status(500).json({ error: '答题记录表未初始化' });
+    }
+
+    const result = db.prepare(`
+      INSERT INTO classroom_quiz_answers (quiz_id, question_id, student_id, answer_text, judged_by_ai, is_correct, score, coin_rewarded)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      quizId,
+      question_id || null,
+      parseInt(student_id),
+      answer_text || null,
+      judged_by_ai ? 1 : 0,
+      is_correct === true || is_correct === 1 ? 1 : 0,
+      Math.max(0, Math.min(100, parseInt(score) || 0)),
+      Math.max(0, parseInt(coin_rewarded) || 0)
+    );
+
+    res.json({ message: '答题记录已保存', answer_id: result.lastInsertRowid });
+  } catch (error) {
+    console.error('保存课堂答题记录失败:', error);
+    res.status(500).json({ error: '保存答题记录失败' });
   }
 });
 
@@ -787,10 +926,18 @@ router.post('/classroom-quiz/:quizId/reward', authenticateToken, (req, res) => {
     }
 
     const { quizId } = req.params;
-    const { student_id, pet_id, reward_type, reward_value, reward_name, question_id, reason } = req.body;
+    const { student_id, student_ids, pet_id, reward_type, reward_value, reward_name, question_id, reason } = req.body;
 
-    if (!student_id || !reward_type || !reward_value) {
+    // 支持批量：student_ids 数组优先，兼容旧的 student_id 单人
+    const targetIds = Array.isArray(student_ids) && student_ids.length > 0
+      ? [...new Set(student_ids.map((id) => parseInt(id)).filter((id) => id > 0))]
+      : (student_id ? [parseInt(student_id)] : []);
+
+    if (targetIds.length === 0 || !reward_type || reward_value === undefined || reward_value === '') {
       return res.status(400).json({ error: '缺少必要参数' });
+    }
+    if (targetIds.length > 100) {
+      return res.status(400).json({ error: '一次最多发放100名学生' });
     }
 
     const quiz = db.prepare('SELECT * FROM classroom_quizzes WHERE id = ?').get(quizId);
@@ -801,68 +948,70 @@ router.post('/classroom-quiz/:quizId/reward', authenticateToken, (req, res) => {
     const rewardTransaction = db.transaction(() => {
       const value = parseInt(reward_value) || 0;
 
-      switch (reward_type) {
-        case 'gold': {
-          db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?')
-            .run(value, value, student_id);
+      for (const sid of targetIds) {
+        switch (reward_type) {
+          case 'gold': {
+            db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?')
+              .run(value, value, sid);
 
-          db.prepare(`INSERT INTO gold_transactions (user_id, gold_change, reason, source)
-            VALUES (?, ?, ?, 'classroom_quiz')`)
-            .run(student_id, value, `课堂奖励: ${quiz.title} - ${reason || reward_name || ''}`);
-          break;
-        }
-
-        case 'item': {
-          const itemId = value;
-          const existing = db.prepare('SELECT * FROM user_items WHERE user_id = ? AND item_id = ?')
-            .get(student_id, itemId);
-
-          if (existing) {
-            db.prepare('UPDATE user_items SET quantity = quantity + 1 WHERE user_id = ? AND item_id = ?')
-              .run(student_id, itemId);
-          } else {
-            db.prepare('INSERT INTO user_items (user_id, item_id, quantity) VALUES (?, ?, 1)')
-              .run(student_id, itemId);
+            db.prepare(`INSERT INTO gold_transactions (user_id, gold_change, reason, source)
+              VALUES (?, ?, ?, 'classroom_quiz')`)
+              .run(sid, value, `课堂奖励: ${quiz.title} - ${reason || reward_name || ''}`);
+            break;
           }
-          break;
-        }
 
-        case 'equipment': {
-          db.prepare(`INSERT INTO user_equipment (user_id, equipment_id, equipped, obtained_at)
-            VALUES (?, ?, 0, CURRENT_TIMESTAMP)`)
-            .run(student_id, value);
-          break;
-        }
+          case 'item': {
+            const itemId = value;
+            const existing = db.prepare('SELECT * FROM user_items WHERE user_id = ? AND item_id = ?')
+              .get(sid, itemId);
 
-        case 'exp': {
-          if (pet_id) {
-            db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-              .run(value, value, pet_id);
-          } else {
-            const pet = db.prepare('SELECT * FROM pets WHERE user_id = ? AND status = ? ORDER BY id DESC LIMIT 1')
-              .get(student_id, 'normal');
-            if (pet) {
-              db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-                .run(value, value, pet.id);
+            if (existing) {
+              db.prepare('UPDATE user_items SET quantity = quantity + 1 WHERE user_id = ? AND item_id = ?')
+                .run(sid, itemId);
+            } else {
+              db.prepare('INSERT INTO user_items (user_id, item_id, quantity) VALUES (?, ?, 1)')
+                .run(sid, itemId);
             }
+            break;
           }
-          break;
+
+          case 'equipment': {
+            db.prepare(`INSERT INTO user_equipment (user_id, equipment_id, equipped, obtained_at)
+              VALUES (?, ?, 0, CURRENT_TIMESTAMP)`)
+              .run(sid, value);
+            break;
+          }
+
+          case 'exp': {
+            if (pet_id && targetIds.length === 1) {
+              db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+                .run(value, value, pet_id);
+            } else {
+              const pet = db.prepare('SELECT * FROM pets WHERE user_id = ? AND status = ? ORDER BY id DESC LIMIT 1')
+                .get(sid, 'normal');
+              if (pet) {
+                db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+                  .run(value, value, pet.id);
+              }
+            }
+            break;
+          }
         }
+
+        db.prepare(`INSERT INTO classroom_quiz_rewards (quiz_id, question_id, student_id, pet_id, reward_type, reward_value, reward_name, reason, awarded_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(quizId, question_id || null, sid, pet_id || null, reward_type, String(reward_value), reward_name || null, reason || null, req.user.userId);
+
+        db.prepare(`INSERT INTO user_activities (user_id, activity_type, metadata)
+          VALUES (?, 'classroom_reward', ?)`)
+          .run(sid, JSON.stringify({ quiz_id: quizId, reward_type, reward_value, reward_name }));
+
+        const notifyContent = `在课堂 "${quiz.title}" 中，你获得了奖励: ${reward_name || reward_type + ' x' + reward_value}。原因: ${reason || '课堂表现优秀'}`;
+
+        db.prepare(`INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
+          VALUES (?, 'classroom_reward', '课堂奖励通知', ?, 'classroom_quiz', ?)`)
+          .run(sid, notifyContent, quizId);
       }
-
-      db.prepare(`INSERT INTO classroom_quiz_rewards (quiz_id, question_id, student_id, pet_id, reward_type, reward_value, reward_name, reason, awarded_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(quizId, question_id || null, student_id, pet_id || null, reward_type, String(reward_value), reward_name || null, reason || null, req.user.userId);
-
-      db.prepare(`INSERT INTO user_activities (user_id, activity_type, metadata)
-        VALUES (?, 'classroom_reward', ?)`)
-        .run(student_id, JSON.stringify({ quiz_id: quizId, reward_type, reward_value, reward_name }));
-
-      const notifyContent = `在课堂 "${quiz.title}" 中，你获得了奖励: ${reward_name || reward_type + ' x' + reward_value}。原因: ${reason || '课堂表现优秀'}`;
-
-      db.prepare(`INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
-        VALUES (?, 'classroom_reward', '课堂奖励通知', ?, 'classroom_quiz', ?)`)
-        .run(student_id, notifyContent, quizId);
     });
 
     rewardTransaction();
