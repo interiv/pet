@@ -951,8 +951,8 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
                 { title: '答题人', dataIndex: 'student_name', width: 90 },
                 { title: '回答', dataIndex: 'answer_text', ellipsis: true },
                 { title: '判定', width: 80, render: (_: any, r: any) => r.is_correct ? <Tag color="green">正确</Tag> : <Tag color="red">错误</Tag> },
-                { title: '得分', width: 70, render: (v: number) => `${v ?? 0}分` },
-                { title: '金币', width: 70, render: (v: number) => v > 0 ? `+${v}` : '-' },
+                { title: '得分', width: 70, dataIndex: 'score', render: (v: number) => `${v ?? 0}分` },
+                { title: '金币', width: 70, dataIndex: 'coin_rewarded', render: (v: number) => v > 0 ? `+${v}` : '-' },
               ]}
               pagination={{ pageSize: 8 }}
               size="small"

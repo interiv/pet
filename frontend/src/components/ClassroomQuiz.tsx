@@ -803,8 +803,8 @@ const ClassroomQuiz: React.FC = () => {
                         { title: '学生', dataIndex: 'student_name', width: 100 },
                         { title: '回答', dataIndex: 'answer_text', ellipsis: true },
                         { title: '判定', width: 70, render: (_: any, r: any) => r.is_correct ? <Tag color="green">正确</Tag> : <Tag color="red">错误</Tag> },
-                        { title: '得分', width: 60, render: (v: number) => `${v ?? 0}分` },
-                        { title: '金币', width: 60, render: (v: number) => v > 0 ? `+${v}` : '-' },
+                        { title: '得分', width: 60, dataIndex: 'score', render: (v: number) => `${v ?? 0}分` },
+                        { title: '金币', width: 60, dataIndex: 'coin_rewarded', render: (v: number) => v > 0 ? `+${v}` : '-' },
                         { title: '时间', dataIndex: 'created_at', width: 150, render: (v: string) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
                       ]}
                       locale={{ emptyText: <Empty description="暂无课堂口答记录（在控制台用AI评判后自动保存）" /> }}
