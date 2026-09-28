@@ -102,11 +102,18 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     const synth = window.speechSynthesis;
     if (!synth) return;
     const vs: any[] = synth.getVoices() || [];
+    if (vs.length === 0) return;
+    // 按名称+语言去重
+    const seen = new Set<string>();
+    const uniq = vs.filter(v => {
+      const k = `${v.name}|${v.lang}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
     // 全部列出，中文语音排最前
     const isZh = (v: any) => /^zh|cmn/i.test(v.lang) || /中文|汉语|普通话|Chinese/i.test(v.name);
-    if (vs.length > 0) {
-      setVoices([...vs].sort((a, b) => (isZh(a) ? 0 : 1) - (isZh(b) ? 0 : 1)));
-    }
+    setVoices(uniq.sort((a, b) => (isZh(a) ? 0 : 1) - (isZh(b) ? 0 : 1)));
   };
 
   useEffect(() => {
@@ -116,9 +123,21 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     synth.addEventListener?.('voiceschanged', loadVoices);
     // 部分浏览器语音列表延迟加载，多补几次
     const timers = [500, 1500, 3000].map(ms => setTimeout(loadVoices, ms));
+    // 若只检测到一个声音，先"唤醒"一次语音引擎再重载（部分浏览器首次合成前不返回完整列表）
+    const wake = setTimeout(() => {
+      if ((synth.getVoices()?.length || 0) <= 1) {
+        try {
+          const u = new SpeechSynthesisUtterance(' ');
+          u.volume = 0;
+          synth.speak(u);
+        } catch (e) { /* 忽略 */ }
+        setTimeout(loadVoices, 600);
+      }
+    }, 2000);
     return () => {
       synth.removeEventListener?.('voiceschanged', loadVoices);
       timers.forEach(clearTimeout);
+      clearTimeout(wake);
       synth.cancel();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -652,6 +671,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
             />
           )}
           <Button size="small" icon={<ReloadOutlined />} onClick={loadVoices} title="重新加载系统语音列表">刷新声音</Button>
+          <span style={{ color: '#666', fontSize: 12 }}>共{voices.length}个</span>
           {voices.length === 0 && <span style={{ color: '#666', fontSize: 12 }}>未检测到语音，请点刷新声音</span>}
         </Space>
       </div>
@@ -795,7 +815,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
         {/* 右侧：学生面板 + 奖励栏 */}
         <div style={{ width: 400, borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {/* 搜索 + 小键盘 */}
-          <div style={{ padding: 12, borderBottom: '1px solid #333' }}>
+          <div style={{ padding: 12, background: '#1a1f29', borderBottom: '1px solid #2a3040' }}>
             <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
               <Input
                 placeholder="姓名/拼音首字母/用户名"
@@ -832,7 +852,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
           </div>
 
           {/* 学生列表 */}
-          <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+          <div style={{ flex: 1, overflow: 'auto', padding: 12, background: '#101216' }}>
             <Spin spinning={studentsLoading}>
               {filteredStudents.length > 0 ? (
                 filteredStudents.map(renderStudentCard)
@@ -843,7 +863,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
           </div>
 
           {/* 奖励栏（学生列表下方） */}
-          <div style={{ borderTop: '1px solid #333', padding: 12, background: '#1a1a1a' }}>
+          <div style={{ borderTop: '1px solid #2a3040', padding: 12, background: '#20242e' }}>
             <div style={{ color: '#ccc', fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
               <GiftOutlined style={{ marginRight: 6 }} />发放奖励
               {selectedIds.size > 0 && <Tag color="blue" style={{ marginLeft: 8 }}>已选{selectedIds.size}人</Tag>}
