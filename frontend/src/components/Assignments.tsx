@@ -96,6 +96,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [generateForm] = Form.useForm();
   
   const [generating, setGenerating] = useState(false);
+  const [genMode, setGenMode] = useState<'topic' | 'requirements' | 'paste'>('topic');
   const [genLimit, setGenLimit] = useState<{ daily_limit: number; daily_used: number; daily_remaining: number; global_tokens_remaining: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [studentAnswers, setStudentAnswers] = useState<Record<number, any>>({});
@@ -212,14 +213,22 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const handleGenerateQuestions = async (values: any) => {
     setGenerating(true);
     try {
-      const res = await assignmentAPI.generateQuestions({
+      const payload: any = {
         subject: values.subject,
-        topic: values.topic,
         difficulty: values.difficulty,
         question_type: values.question_type,
         count: values.count || 10,
-        grade_level: values.grade_level || ''
-      }, aiTimeout);
+        grade_level: values.grade_level || '',
+        mode: genMode
+      };
+      if (genMode === 'topic') {
+        payload.topic = values.topic;
+      } else if (genMode === 'requirements') {
+        payload.requirements = values.requirements;
+      } else {
+        payload.raw_text = values.raw_text;
+      }
+      const res = await assignmentAPI.generateQuestions(payload, aiTimeout);
       setGeneratedData(res.data as GeneratedResult);
       const nextDayMidnight = dayjs().add(1, 'day').startOf('day');
       const allClassIds = classes.map(c => c.id);
@@ -1262,6 +1271,13 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             label: '1. AI生成题目',
             children: (
               <Form form={generateForm} layout="vertical" onFinish={handleGenerateQuestions}>
+                <Form.Item label="出题方式" style={{ marginBottom: 12 }}>
+                  <Radio.Group value={genMode} onChange={(e) => setGenMode(e.target.value)} buttonStyle="solid" size={isMobile ? 'small' : 'middle'}>
+                    <Radio.Button value="topic">按知识点出题</Radio.Button>
+                    <Radio.Button value="requirements">按详细要求出题</Radio.Button>
+                    <Radio.Button value="paste">粘贴题目</Radio.Button>
+                  </Radio.Group>
+                </Form.Item>
                 <Row gutter={16}>
                   <Col xs={24} sm={12}>
                     <Form.Item name="subject" label="科目" rules={[{ required: true }]}>
@@ -1278,20 +1294,40 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     </Form.Item>
                   </Col>
                 </Row>
-                <Form.Item name="topic" label="知识点主题" rules={[{ required: true }]}>
-                  <Input placeholder="例如：二次函数顶点坐标、古诗词默写、牛顿第二定律..." />
-                </Form.Item>
+                {genMode === 'topic' && (
+                  <Form.Item name="topic" label="知识点主题" rules={[{ required: true }]} preserve={false}>
+                    <Input placeholder="例如：二次函数顶点坐标、古诗词默写、牛顿第二定律..." />
+                  </Form.Item>
+                )}
+                {genMode === 'requirements' && (
+                  <Form.Item name="requirements" label="详细作业要求" rules={[{ required: true, message: '请填写详细的作业要求' }]} preserve={false}>
+                    <TextArea rows={6} maxLength={2000} showCount placeholder={'用一段话详细描述你想布置的作业要求，AI会按要求生成题目。例如：\n围绕本单元"光的折射"出题，重点考查折射角与入射角的关系，多出生活情境应用题，不要涉及全反射相关内容。'} />
+                  </Form.Item>
+                )}
+                {genMode === 'paste' && (
+                  <Form.Item name="raw_text" label="粘贴题目原文" rules={[{ required: true, message: '请粘贴题目内容' }]} preserve={false}>
+                    <TextArea rows={10} maxLength={10000} showCount placeholder={'直接把已有的题目（可从Word/PDF/网页复制）粘贴到这里，格式不必规范。AI会自动整理成标准格式、补全答案和解析，然后进入下一步预览确认。'} />
+                  </Form.Item>
+                )}
                 <Row gutter={16}>
                   <Col xs={12} sm={8}>
                     <Form.Item name="difficulty" label="难度" initialValue="medium">
                       <Select>{difficultyOptions.map(d => <Option key={d.value} value={d.value}>{d.label}</Option>)}</Select>
                     </Form.Item>
                   </Col>
-                  <Col xs={12} sm={8}>
-                    <Form.Item name="count" label="题目数量" initialValue={10}>
-                      <InputNumber min={3} max={20} style={{ width: '100%' }} addonAfter="道" />
-                    </Form.Item>
-                  </Col>
+                  {genMode !== 'paste' ? (
+                    <Col xs={12} sm={8}>
+                      <Form.Item name="count" label="题目数量" initialValue={10}>
+                        <InputNumber min={3} max={20} style={{ width: '100%' }} addonAfter="道" />
+                      </Form.Item>
+                    </Col>
+                  ) : (
+                    <Col xs={12} sm={8}>
+                      <Form.Item label="题目数量">
+                        <Input disabled placeholder="由粘贴内容决定" />
+                      </Form.Item>
+                    </Col>
+                  )}
                   <Col xs={12} sm={8}>
                     <Form.Item name="grade_level" label="年级（可选）">
                       <Input placeholder="如：高一、初三" />
@@ -1299,7 +1335,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                   </Col>
                 </Row>
                 <Button type="primary" htmlType="submit" block icon={generating ? <LoadingOutlined /> : <RobotOutlined />} loading={generating} disabled={genLimit ? genLimit.daily_remaining <= 0 : false}>
-                  {generating ? 'AI正在生成中...' : '🤖 AI生成题目'}
+                  {generating ? 'AI正在处理中...' : genMode === 'paste' ? '🤖 AI整理题目' : genMode === 'requirements' ? '🤖 AI按要求生成题目' : '🤖 AI生成题目'}
                 </Button>
                 {genLimit && (
                   <Alert
@@ -1322,7 +1358,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                   />
                 )}
                 <div style={{ textAlign: 'center', color: '#999', fontSize: 12, marginTop: 8 }}>
-                  提示：实际将生成 N×3 道题（每道题有2个变体），用于学生做错时提供相似新题
+                  {genMode === 'paste'
+                    ? '提示：AI将逐题整理粘贴的原文并补全答案/解析，题目数量以实际内容为准（不含变体）'
+                    : '提示：实际将生成 N×3 道题（每道题有2个变体），用于学生做错时提供相似新题'}
                 </div>
               </Form>
             )
@@ -1336,7 +1374,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 <Alert 
                   type="info" 
                   showIcon 
-                  message={`共${generatedData.question_count}道主题，含${generatedData.total_generated}道含变体。点击"编辑"可修改题目内容/答案，点击"▼ 查看变体题目"查看备用题`} 
+                  message={genMode === 'paste'
+                    ? `AI已整理${generatedData.question_count}道题目，请逐题检查内容与答案是否正确，点击"编辑"可修改`
+                    : `共${generatedData.question_count}道主题，含${generatedData.total_generated}道含变体。点击"编辑"可修改题目内容/答案，点击"▼ 查看变体题目"查看备用题`}
                   style={{ marginBottom: 12 }} 
                 />
                 <div style={{ maxHeight: 500, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>

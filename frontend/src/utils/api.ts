@@ -100,7 +100,7 @@ export const assignmentAPI = {
   
   getAssignment: (id: number) => api.get(`/assignments/${id}`),
   
-  generateQuestions: (data: { subject: string; topic: string; difficulty?: string; question_type: string; count?: number; grade_level?: string }, timeout?: number) =>
+  generateQuestions: (data: { subject: string; topic?: string; difficulty?: string; question_type: string; count?: number; grade_level?: string; mode?: 'topic' | 'requirements' | 'paste'; requirements?: string; raw_text?: string }, timeout?: number) =>
     api.post('/assignments/generate', data, { timeout: (timeout || 300) * 1000 }),
   
   createAssignment: (data: any) => 
@@ -359,6 +359,11 @@ export const adminAPI = {
   // 网站设置
   getSiteSettings: () => api.get('/admin/settings/site'),
   saveSiteSettings: (settings: any) => api.post('/admin/settings/site', settings),
+
+  // AI提示词设置
+  getPromptSettings: () => api.get('/admin/settings/prompts'),
+  savePromptSettings: (prompts: Record<string, string>) => api.post('/admin/settings/prompts', { prompts }),
+  resetPromptSettings: (keys?: string[]) => api.post('/admin/settings/prompts/reset', { keys }),
 
   // 公开设置（无需认证）
   getPublicSettings: () => api.get('/admin/settings/public'),

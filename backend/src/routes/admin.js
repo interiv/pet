@@ -5,6 +5,7 @@ const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { getChinaDate } = require('../config/timezone');
 const { getAIConfig, isAIConfigured, getAITimeoutMs } = require('../config/ai');
+const { PROMPTS, SETTING_PREFIX, getPrompt, fillTemplate } = require('../config/prompts');
 
 const requireAdmin = (req, res, next) => {
   if (req.user.role !== 'admin') {
@@ -1788,6 +1789,86 @@ router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
   }
 });
 
+// ==================== AI 提示词设置 ====================
+
+// 获取全部提示词（含默认值与自定义状态）
+router.get('/settings/prompts', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    ensureSettingsTable();
+    const rows = db.prepare(`SELECT key, value FROM settings WHERE key LIKE ?`).all(SETTING_PREFIX + '%');
+    const customMap = {};
+    rows.forEach(r => { customMap[r.key.slice(SETTING_PREFIX.length)] = r.value; });
+
+    const prompts = Object.entries(PROMPTS).map(([key, def]) => {
+      const custom = customMap[key];
+      const isCustom = custom !== undefined && String(custom).trim() !== '' && String(custom) !== def.default;
+      return {
+        key,
+        group: def.group,
+        label: def.label,
+        description: def.description,
+        value: isCustom ? custom : def.default,
+        is_custom: isCustom,
+        has_custom: custom !== undefined && String(custom).trim() !== ''
+      };
+    });
+
+    res.json({ prompts });
+  } catch (error) {
+    console.error('获取提示词设置失败:', error);
+    res.status(500).json({ error: '获取提示词设置失败' });
+  }
+});
+
+// 保存提示词（value 为空或与默认值相同 = 恢复为默认）
+router.post('/settings/prompts', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    ensureSettingsTable();
+    const updates = req.body?.prompts;
+    if (!updates || typeof updates !== 'object') {
+      return res.status(400).json({ error: '参数错误' });
+    }
+
+    const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
+    const del = db.prepare(`DELETE FROM settings WHERE key = ?`);
+    db.transaction(() => {
+      for (const [key, value] of Object.entries(updates)) {
+        if (!PROMPTS[key]) continue; // 忽略未注册的提示词
+        const v = String(value ?? '');
+        if (v.trim() === '' || v === PROMPTS[key].default) {
+          del.run(SETTING_PREFIX + key);
+        } else {
+          stmt.run(SETTING_PREFIX + key, v);
+        }
+      }
+    })();
+
+    res.json({ message: '提示词保存成功' });
+  } catch (error) {
+    console.error('保存提示词设置失败:', error);
+    res.status(500).json({ error: '保存提示词设置失败' });
+  }
+});
+
+// 恢复默认提示词（keys 不传 = 全部恢复默认）
+router.post('/settings/prompts/reset', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    ensureSettingsTable();
+    const keys = Array.isArray(req.body?.keys) ? req.body.keys : Object.keys(PROMPTS);
+    const del = db.prepare(`DELETE FROM settings WHERE key = ?`);
+    db.transaction(() => {
+      for (const key of keys) {
+        if (PROMPTS[key]) del.run(SETTING_PREFIX + key);
+      }
+    })();
+
+    res.json({ message: `已恢复 ${keys.length} 个提示词为默认值` });
+  } catch (error) {
+    console.error('恢复默认提示词失败:', error);
+    res.status(500).json({ error: '恢复默认提示词失败' });
+  }
+});
+
 // 测试 AI 连接
 router.post('/settings/ai/test', authenticateToken, requireAdmin, async (req, res) => {
   const axios = require('axios');
@@ -2174,17 +2255,7 @@ async function generateUsernamesByAI(names) {
   for (let i = 0; i < names.length; i += AI_USERNAME_BATCH_SIZE) {
     const batch = names.slice(i, i + AI_USERNAME_BATCH_SIZE);
     const listText = batch.map((n, idx) => `${idx + 1}. ${n}`).join('\n');
-    const prompt = `你是学校系统的账号生成助手。请为下列学生姓名分别生成一个登录账号（用户名）。
-
-要求：
-1. 账号使用姓名对应的汉语拼音，全部小写，只允许字母和数字，必须以字母开头，长度 4-20
-2. 不要包含中文、空格、横线或其他特殊符号
-3. 同一批内账号不能重复；遇到同名时用数字后缀区分（例如 zhangwei、zhangwei2）
-4. 只输出严格 JSON 数组，不要任何解释、markdown 代码块或多余文字
-5. 输出格式：[{"name":"张三","username":"zhangsan"}]
-
-学生姓名：
-${listText}`;
+    const prompt = fillTemplate(getPrompt('admin_student_accounts'), { list_text: listText });
 
     const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
       model: config.ai_model,

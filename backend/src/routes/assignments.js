@@ -6,6 +6,7 @@ const { checkLevelUp } = require('./pets');
 const { updateTaskProgress } = require('./daily-tasks');
 const { checkAndAwardAchievement } = require('./achievements');
 const { getChinaDate } = require('../config/timezone');
+const { getPrompt, fillTemplate } = require('../config/prompts');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
@@ -137,15 +138,30 @@ function ensureTokenUsageTable() {
 router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), async (req, res) => {
   try {
     ensureTokenUsageTable();
-    const { subject, topic, difficulty = 'medium', question_type, count = 10, grade_level = '' } = req.body;
+    const { subject, topic, difficulty = 'medium', question_type, count = 10, grade_level = '', mode = 'topic', requirements = '', raw_text = '' } = req.body;
     
     console.log('\n========== AI 生成作业请求 ==========');
-    console.log('📥 请求参数:', JSON.stringify({ subject, topic, difficulty, question_type, count, grade_level }, null, 2));
+    console.log('📥 请求参数:', JSON.stringify({ mode, subject, topic, difficulty, question_type, count, grade_level, requirements_len: String(requirements || '').length, raw_text_len: String(raw_text || '').length }, null, 2));
     console.log('👤 用户ID:', req.user.userId, '| 角色:', req.user.role);
     
-    if (!subject || !topic || !question_type) {
+    // 生成模式：topic=按知识点主题(原有) | requirements=按教师详细要求 | paste=粘贴题目AI整理
+    const genMode = ['topic', 'requirements', 'paste'].includes(mode) ? mode : 'topic';
+    const isPasteMode = genMode === 'paste';
+    const isRequirementsMode = genMode === 'requirements';
+    const noVariants = isPasteMode || !isObjectiveType(question_type);
+
+    if (!subject || !question_type) {
       console.log('❌ 参数验证失败');
-      return res.status(400).json({ error: '请填写科目、主题和题型' });
+      return res.status(400).json({ error: '请填写科目和题型' });
+    }
+    if (genMode === 'topic' && !topic) {
+      return res.status(400).json({ error: '请填写知识点主题' });
+    }
+    if (isRequirementsMode && !String(requirements || '').trim()) {
+      return res.status(400).json({ error: '请填写详细的作业要求' });
+    }
+    if (isPasteMode && !String(raw_text || '').trim()) {
+      return res.status(400).json({ error: '请粘贴题目内容' });
     }
 
     const maxQuestionsPerGen = getSystemSetting('max_questions_per_generation', 20);
@@ -186,72 +202,44 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     const typeLabel = typeLabels[question_type] || question_type;
     const actualCount = count * 3;
 
+    const effectiveTopic = topic || (isRequirementsMode ? String(requirements).trim().slice(0, 30) : `${subject}${typeLabel}练习`);
+
+    const taskDesc = fillTemplate(
+      getPrompt(isRequirementsMode ? 'gen_task_requirements' : 'gen_task_topic'),
+      { grade_level, effectiveTopic, subject, typeLabel, difficulty, requirements }
+    );
+
     let prompt = '';
-    if (question_type === 'choice_single') {
-      prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
-
-任务：为${grade_level}学生生成一份关于"${topic}"的${subject}${typeLabel}作业，难度${difficulty}。
-要求生成${actualCount}道题目（每道题有A/B/C/D四个选项），同时为每道题生成：
-- 正确答案（单选只有一个正确选项）
-- 详细解析（解题思路和步骤）
-- 解题分析过程
-- 细粒度知识点标签（例："一元二次方程求根公式"、"三角函数诱导公式"，8-20字）
-
-请严格按照以下JSON格式返回：
-{"questions": [{"content": "题目内容", "options": ["选项A内容", "选项B内容", "选项C内容", "选项D内容"], "answer": "A", "explanation": "详细解析", "analysis": "解题步骤/思路", "knowledge_point": "细粒度知识点"}]}
-
-要求：
-1. ${actualCount}道题中，每3道为一组变体（共${count}组），同一组变体考查相同知识点但数字/表述略有不同；同一组变体的knowledge_point必须相同
-2. 不同组之间必须考查明显不同的知识点方向！严禁不同组考查相同或高度相似的知识点。例如第1组考查"一元二次方程求根公式"，第2组应考查"一元二次方程判别式"，第3组考查"一元二次方程根与系数关系"，而不是三组都考查求根公式
-3. 确保所有答案都在options范围内
-4. knowledge_point必须具体细致，不要写大类（例如不要只写"数学"、"代数"，而要写"一元一次方程解法"）
-5. 同一组变体内部，题目之间必须有明显的数字、数值或具体情境差异，不能只是简单换几个字
-6. 只返回JSON，不要任何其他内容`;
+    if (isPasteMode) {
+      let formatSample = '';
+      let typeRules = '';
+      if (question_type === 'choice_single') {
+        formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"题目内容","options":["选项A内容","选项B内容","选项C内容","选项D内容"],"answer":"A","explanation":"详细解析","analysis":"解题步骤/思路","knowledge_point":"细粒度知识点"}]}`;
+        typeRules = 'answer为单个正确选项字母（如"A"）；若原题缺少选项，请根据题意补全A/B/C/D四个选项；若选项数量不足四个，保持原有选项数量即可';
+      } else if (question_type === 'choice_multi') {
+        formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"题目内容","options":["选项A内容","选项B内容","选项C内容","选项D内容"],"answer":["A","C"],"explanation":"详细解析","analysis":"解题步骤","knowledge_point":"细粒度知识点"}]}`;
+        typeRules = 'answer必须是由正确选项字母组成的数组（如["A","C"]）；若原题缺少选项，请根据题意补全选项';
+      } else if (question_type === 'judgment') {
+        formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"判断题陈述内容","answer":true,"explanation":"为什么对或错的解析","analysis":"判断依据","knowledge_point":"细粒度知识点"}]}`;
+        typeRules = 'answer必须是布尔值true或false，判断题不需要options字段';
+      } else {
+        formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"题目要求","answer":"参考答案要点","explanation":"评分标准和解析","analysis":"答题思路指导","knowledge_point":"细粒度知识点"}]}`;
+        typeRules = 'answer为参考答案要点，主观题不需要options字段';
+      }
+      const pasteVars = { subject, typeLabel, question_type, raw_text, formatSample, typeRules };
+      const pasteKey = question_type === 'choice_single' ? 'gen_paste_choice_single'
+        : question_type === 'choice_multi' ? 'gen_paste_choice_multi'
+        : question_type === 'judgment' ? 'gen_paste_judgment'
+        : 'gen_paste_essay';
+      prompt = fillTemplate(getPrompt(pasteKey), pasteVars);
+    } else if (question_type === 'choice_single') {
+      prompt = fillTemplate(getPrompt('gen_choice_single'), { taskDesc, actualCount, count });
     } else if (question_type === 'choice_multi') {
-      prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
-
-任务：为${grade_level}学生生成一份关于"${topic}"的${subject}${typeLabel}作业，难度${difficulty}。
-要求生成${actualCount}道多选题（每道题有A/B/C/D四个选项，可能有多个正确答案），同时生成详细解析。
-
-请严格按照以下JSON格式返回：
-{"questions": [{"content": "题目内容", "options": ["A","B","C","D"], "answer": ["A","C"], "explanation": "详细解析", "analysis": "解题步骤", "knowledge_point": "细粒度知识点"}]}
-
-要求：
-1. 每3道题为同一知识点的变体（共${count}组）；同一组变体的knowledge_point必须相同
-2. 不同组之间必须考查明显不同的知识点方向！严禁不同组考查相同或高度相似的知识点
-3. answer字段必须是数组格式
-4. knowledge_point必须是8-20字的具体知识点，不要只写科目或大类
-5. 同一组变体内部，题目之间必须有明显的数字、数值或具体情境差异
-6. 只返回JSON，不要任何其他内容`;
+      prompt = fillTemplate(getPrompt('gen_choice_multi'), { taskDesc, actualCount, count });
     } else if (question_type === 'judgment') {
-      prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
-
-任务：为${grade_level}学生生成一份关于"${topic}"的${subject}${typeLabel}作业，难度${difficulty}。
-要求生成${actualCount}道判断题，同时生成详细解析。
-
-请严格按照以下JSON格式返回：
-{"questions": [{"content": "判断题陈述内容", "answer": true, "explanation": "为什么对或错的解析", "analysis": "判断依据", "knowledge_point": "细粒度知识点"}]}
-
-要求：
-1. 每3道题为同一知识点的变体（共${count}组）；同一组变体的knowledge_point必须相同
-2. 不同组之间必须考查明显不同的知识点方向！严禁不同组考查相同或高度相似的知识点
-3. answer字段必须是布尔值true或false
-4. knowledge_point必须是8-20字的具体知识点，不要只写科目或大类
-5. 同一组变体内部，题目之间必须有明显的数字、数值或具体情境差异
-6. 只返回JSON，不要任何其他内容`;
+      prompt = fillTemplate(getPrompt('gen_judgment'), { taskDesc, actualCount, count });
     } else if (question_type === 'essay') {
-      prompt = `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
-
-任务：为${grade_level}学生生成一份关于"${topic}"的${subject}${typeLabel}作业，难度${difficulty}。
-要求生成${count}道简答题/作文题，同时为每道题生成参考答案和评分标准。
-
-请严格按照以下JSON格式返回：
-{"questions": [{"content": "题目要求", "answer": "参考答案要点", "explanation": "评分标准和解析", "analysis": "答题思路指导", "knowledge_point": "细粒度知识点"}], "title": "建议的作业标题", "description": "建议的作业描述"}
-
-要求：
-1. 主观题不需要变体
-2. knowledge_point必须是8-20字的具体知识点，不要只写科目或大类
-3. 只返回JSON，不要任何其他内容`;
+      prompt = fillTemplate(getPrompt('gen_essay'), { taskDesc, count });
     }
 
     console.log('\n📤 发送请求到 LLM 服务器...');
@@ -285,7 +273,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       db.prepare(`
         INSERT INTO token_usage (user_id, date, prompt_tokens, completion_tokens, total_tokens, model, subject, topic, question_type, question_count, duration_ms)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(req.user.userId, today, promptTokens, completionTokens, totalTokens, config.ai_model, subject, topic, question_type, count, Date.now() - startTime);
+      `).run(req.user.userId, today, promptTokens, completionTokens, totalTokens, config.ai_model, subject, effectiveTopic, question_type, count, Date.now() - startTime);
     } catch (logErr) {
       console.error('⚠️ Token使用记录写入失败:', logErr.message);
     }
@@ -346,11 +334,10 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     const maxGroupId = db.prepare('SELECT MAX(variant_group_id) as max_id FROM question_bank').get();
     let variantGroupId = (maxGroupId?.max_id || 0) + 1;
     const processedQuestions = [];
-    const isSubjective = !isObjectiveType(question_type);
 
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
-      const qIndex = isSubjective ? i : Math.floor(i / 3);
+      const qIndex = noVariants ? i : Math.floor(i / 3);
       
       let answerStr;
       if (Array.isArray(q.answer)) {
@@ -363,7 +350,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
 
       processedQuestions.push({
         subject,
-        topic,
+        topic: effectiveTopic,
         difficulty,
         type: question_type,
         content: q.content,
@@ -372,14 +359,14 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
         explanation: q.explanation || '',
         analysis: q.analysis || '',
         hint: q.hint || '',
-        knowledge_point: (q.knowledge_point && String(q.knowledge_point).trim()) || topic,
-        variant_group_id: isSubjective ? null : variantGroupId,
-        variant_index: isSubjective ? 0 : (i % 3),
+        knowledge_point: (q.knowledge_point && String(q.knowledge_point).trim()) || effectiveTopic,
+        variant_group_id: noVariants ? null : variantGroupId,
+        variant_index: noVariants ? 0 : (i % 3),
         source: 'ai',
         created_by: req.user.userId
       });
 
-      if (!isSubjective && (i + 1) % 3 === 0) {
+      if (!noVariants && (i + 1) % 3 === 0) {
         variantGroupId++;
       }
     }
@@ -407,7 +394,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     const insertedIds = transaction(processedQuestions);
     console.log('✅ 数据库写入成功，共', insertedIds.length, '条记录');
 
-    const displayQuestions = isSubjective
+    const displayQuestions = noVariants
       ? insertedIds.map((id, idx) => ({
           tempId: id,
           content: questions[idx].content,
@@ -415,12 +402,12 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
           answer: questions[idx].answer !== undefined ? (Array.isArray(questions[idx].answer) ? questions[idx].answer.join(',') : String(questions[idx].answer)) : '',
           explanation: questions[idx].explanation || '',
           type: question_type,
-          knowledge_point: processedQuestions[idx]?.knowledge_point || topic,
+          knowledge_point: processedQuestions[idx]?.knowledge_point || effectiveTopic,
           hasVariants: false
         }))
       : [];
 
-    if (!isSubjective) {
+    if (!noVariants) {
       for (let g = 0; g < count; g++) {
         const baseIdx = g * 3;
         const variants = [];
@@ -434,7 +421,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
               answer: questions[vIdx].answer !== undefined ? (Array.isArray(questions[vIdx].answer) ? questions[vIdx].answer.join(',') : String(questions[vIdx].answer)) : '',
               explanation: questions[vIdx].explanation || '',
               type: question_type,
-              knowledge_point: processedQuestions[vIdx]?.knowledge_point || topic
+              knowledge_point: processedQuestions[vIdx]?.knowledge_point || effectiveTopic
             });
           }
         }
@@ -446,7 +433,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
           answer: questions[baseIdx].answer !== undefined ? (Array.isArray(questions[baseIdx].answer) ? questions[baseIdx].answer.join(',') : String(questions[baseIdx].answer)) : '',
           explanation: questions[baseIdx].explanation || '',
           type: question_type,
-          knowledge_point: processedQuestions[baseIdx]?.knowledge_point || topic,
+          knowledge_point: processedQuestions[baseIdx]?.knowledge_point || effectiveTopic,
           hasVariants: true,
           variants
         });
@@ -456,13 +443,14 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     console.log('\n📤 返回结果给客户端...');
     console.log('========================================\n');
     
+    const resultCount = isPasteMode ? questions.length : count;
     res.json({
       message: '生成成功',
-      title: parsed.title || `${topic} - ${typeLabel}练习`,
-      description: parsed.description || `共${count}道${topic}相关${typeLabel}`,
+      title: parsed.title || `${effectiveTopic} - ${typeLabel}练习`,
+      description: parsed.description || `共${resultCount}道${effectiveTopic}相关${typeLabel}`,
       subject,
       question_type,
-      question_count: count,
+      question_count: resultCount,
       total_generated: insertedIds.length,
       questions: displayQuestions,
       allQuestionIds: insertedIds
@@ -1366,25 +1354,12 @@ async function reviewSubjectiveAssignment(submissionId, assignmentId, userId) {
 
     if (config.ai_api_key && config.ai_base_url && config.ai_model) {
       for (const qa of questionAnswers) {
-        const reviewPrompt = `你是一个JSON生成器和评阅老师。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
-
-任务：请评阅以下${submission.subject}主观题作答：
-
-【题目】
-${qa.question_content}
-
-【参考答案】
-${qa.reference_answer || '无'}
-
-【学生作答】
-${qa.student_answer || '(未提供文字答案)'}
-
-请严格按照以下JSON格式返回评分结果：
-{"score": 分数(0-100), "feedback": "具体评价和建议（50字以内）", "key_points": ["得分点1", "得分点2"], "improvements": ["改进建议1"]}
-
-要求：
-1. score必须是0-100之间的数字
-2. 只返回JSON，不要任何其他内容`;
+        const reviewPrompt = fillTemplate(getPrompt('review_subjective'), {
+          subject: submission.subject,
+          question_content: qa.question_content,
+          reference_answer: qa.reference_answer || '无',
+          student_answer: qa.student_answer || '(未提供文字答案)'
+        });
 
         try {
           const resp = await axios.post(`${config.ai_base_url}/chat/completions`, {
