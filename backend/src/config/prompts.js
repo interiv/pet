@@ -224,6 +224,24 @@ const PROMPTS = {
 6. 只返回JSON，不要任何其他内容`
   },
 
+  // ===== 课堂做题：AI 快速出题 =====
+  gen_classroom: {
+    group: '生成作业',
+    label: '课堂快速出题',
+    description: '课堂做题弹窗里的AI快速出题（口答/抢答题，不入题库）。可用变量：{grade_level} {topic} {subject} {typeLabel} {difficulty} {count}',
+    default: `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
+
+任务：为{grade_level}学生生成{count}道适合课堂口答/抢答的{subject}{typeLabel}题目，围绕"{topic}"，难度{difficulty}。
+
+请严格按照以下JSON格式返回：
+{"questions": [{"content": "题目内容", "answer": "参考答案", "explanation": "简要解析（30字以内）"}]}
+
+要求：
+1. 题目要简短明了，适合课堂口头回答或抢答，题干不要冗长
+2. answer为参考答案，仅供老师核对，不会展示给学生
+3. 只返回JSON，不要任何其他内容`
+  },
+
   // ===== 主观题 AI 评阅 =====
   review_subjective: {
     group: '作业评阅',

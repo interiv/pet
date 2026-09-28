@@ -1,14 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Card, Table, Button, Modal, Form, Input, Select, InputNumber,
   message, Space, Tag, Tabs, Descriptions, Row, Col, Typography,
-  List, Avatar, Popconfirm, Empty, Badge, Spin
+  List, Avatar, Popconfirm, Empty, Badge, Spin, Radio, Checkbox
 } from 'antd';
 import {
   PlusOutlined, GiftOutlined, CheckCircleOutlined,
-  UserOutlined, EyeOutlined, PlayCircleOutlined
+  UserOutlined, EyeOutlined, PlayCircleOutlined, RobotOutlined,
+  LeftOutlined, RightOutlined, CloseOutlined, ThunderboltOutlined,
+  ExpandOutlined, UserSwitchOutlined, SearchOutlined
 } from '@ant-design/icons';
-import { classroomQuizAPI } from '../utils/api';
+import { classroomQuizAPI, questionBankAPI, itemAPI, equipmentAPI, adminAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import { getPetThumbUrl } from '../utils/petImage';
 
@@ -20,6 +22,24 @@ const REWARD_TYPES: Record<string, { label: string; color: string }> = {
   equipment: { label: '装备', color: 'blue' },
   exp: { label: '经验', color: 'orange' },
 };
+
+const subjectOptions = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治', '其他'];
+const aiTypeOptions = [
+  { value: 'choice_single', label: '单选题' },
+  { value: 'choice_multi', label: '多选题' },
+  { value: 'judgment', label: '判断题' },
+  { value: 'essay', label: '简答题' }
+];
+
+const statusMap: Record<string, { color: string; label: string }> = {
+  active: { color: 'processing', label: '进行中' },
+  completed: { color: 'success', label: '已完成' },
+  cancelled: { color: 'default', label: '已取消' },
+};
+
+const renderStatus = (s: string) => (
+  <Badge status={statusMap[s]?.color as any} text={statusMap[s]?.label || s} />
+);
 
 const ClassroomQuiz: React.FC = () => {
   const { currentClass } = useAuthStore();
@@ -39,10 +59,100 @@ const ClassroomQuiz: React.FC = () => {
   const [rewarding, setRewarding] = useState(false);
   const [createForm] = Form.useForm();
   const [rewardForm] = Form.useForm();
+  const rewardType = Form.useWatch('reward_type', rewardForm);
+
+  // 创建：班级 / 题目来源
+  const [classes, setClasses] = useState<any[]>([]);
+  const [createSource, setCreateSource] = useState<'manual' | 'bank' | 'ai'>('manual');
+
+  // 题库选题
+  const [bankQuestions, setBankQuestions] = useState<any[]>([]);
+  const [bankTotal, setBankTotal] = useState(0);
+  const [bankPage, setBankPage] = useState(1);
+  const [bankLoading, setBankLoading] = useState(false);
+  const [bankSubject, setBankSubject] = useState<string | undefined>(undefined);
+  const [bankKeyword, setBankKeyword] = useState('');
+  const [selectedBankIds, setSelectedBankIds] = useState<number[]>([]);
+
+  // AI 快速出题
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiQuestions, setAiQuestions] = useState<any[]>([]);
+  const [aiSelected, setAiSelected] = useState<Set<number>>(new Set());
+
+  // 奖励：物品 / 装备列表
+  const [items, setItems] = useState<any[]>([]);
+  const [equipments, setEquipments] = useState<any[]>([]);
+
+  // 随机点名
+  const [randomOpen, setRandomOpen] = useState(false);
+  const [randomRolling, setRandomRolling] = useState(false);
+  const [randomName, setRandomName] = useState('');
+  const [pickedStudent, setPickedStudent] = useState<any>(null);
+  const rollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 投影模式（含抢答计时）
+  const [projectOpen, setProjectOpen] = useState(false);
+  const [projIndex, setProjIndex] = useState(0);
+  const [autoPlay, setAutoPlay] = useState(false);
+  const [autoSeconds, setAutoSeconds] = useState(30);
+  const [buzzTotal, setBuzzTotal] = useState(30);
+  const [buzzLeft, setBuzzLeft] = useState<number | null>(null);
 
   useEffect(() => {
     loadQuizzes();
+    loadClasses();
   }, []);
+
+  useEffect(() => {
+    return () => { if (rollTimer.current) clearInterval(rollTimer.current); };
+  }, []);
+
+  // 奖励类型为物品/装备时，懒加载对应列表
+  useEffect(() => {
+    if (rewardModalOpen && rewardType === 'item' && items.length === 0) {
+      itemAPI.getItems().then((res: any) => setItems(res.data.items || [])).catch(() => {});
+    }
+    if (rewardModalOpen && rewardType === 'equipment' && equipments.length === 0) {
+      equipmentAPI.getAll().then((res: any) => setEquipments(res.data.equipments || [])).catch(() => {});
+    }
+  }, [rewardModalOpen, rewardType]);
+
+  // 投影模式：自动播放
+  useEffect(() => {
+    if (!projectOpen || !autoPlay || questions.length === 0) return;
+    const t = setInterval(() => {
+      setProjIndex(i => Math.min(i + 1, questions.length - 1));
+    }, autoSeconds * 1000);
+    return () => clearInterval(t);
+  }, [projectOpen, autoPlay, autoSeconds, questions.length]);
+
+  // 投影模式：抢答倒计时
+  useEffect(() => {
+    if (buzzLeft === null || buzzLeft <= 0) return;
+    const t = setTimeout(() => setBuzzLeft(v => (v === null ? null : v - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [buzzLeft]);
+
+  // 投影模式：键盘控制（←/→ 翻题，Esc 退出）
+  useEffect(() => {
+    if (!projectOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight') setProjIndex(i => Math.min(i + 1, Math.max(0, questions.length - 1)));
+      else if (e.key === 'ArrowLeft') setProjIndex(i => Math.max(i - 1, 0));
+      else if (e.key === 'Escape') setProjectOpen(false);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [projectOpen, questions.length]);
+
+  const loadClasses = async () => {
+    try {
+      const res = await adminAPI.getClasses();
+      setClasses(res.data.classes || []);
+    } catch (e) {
+      console.error('加载班级列表失败');
+    }
+  };
 
   const loadQuizzes = async () => {
     setLoading(true);
@@ -58,15 +168,93 @@ const ClassroomQuiz: React.FC = () => {
     }
   };
 
+  const loadBank = async (page = 1) => {
+    setBankLoading(true);
+    try {
+      const res = await questionBankAPI.getQuestions({
+        page,
+        pageSize: 10,
+        subject: bankSubject || undefined,
+        keyword: bankKeyword || undefined,
+      });
+      setBankQuestions(res.data.questions || []);
+      setBankTotal(res.data.total || 0);
+      setBankPage(page);
+    } catch (e) {
+      message.error('加载题库失败');
+    } finally {
+      setBankLoading(false);
+    }
+  };
+
+  const handleSourceChange = (source: 'manual' | 'bank' | 'ai') => {
+    setCreateSource(source);
+    if (source === 'bank' && bankQuestions.length === 0) {
+      loadBank(1);
+    }
+  };
+
+  const handleGenerateAI = async () => {
+    const values = createForm.getFieldsValue(['subject', 'ai_topic', 'ai_type', 'ai_count', 'ai_difficulty']);
+    if (!values.subject) { message.warning('请先选择科目'); return; }
+    if (!values.ai_topic) { message.warning('请输入知识点主题'); return; }
+    setAiLoading(true);
+    try {
+      const res = await classroomQuizAPI.aiGenerate({
+        subject: values.subject,
+        topic: values.ai_topic,
+        question_type: values.ai_type || 'choice_single',
+        count: values.ai_count || 5,
+        difficulty: values.ai_difficulty || 'medium',
+      });
+      setAiQuestions(res.data.questions || []);
+      setAiSelected(new Set((res.data.questions || []).map((_: any, i: number) => i)));
+      message.success(`AI生成了 ${res.data.questions?.length || 0} 道题目，请勾选要使用的题目`);
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'AI出题失败');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   const handleCreate = async (values: any) => {
     try {
-      const questions = values.question_texts
-        .split('\n')
-        .filter((line: string) => line.trim())
-        .map((text: string) => ({ question_text: text.trim() }));
+      let questions: { question_text: string }[] = [];
+
+      if (createSource === 'manual') {
+        questions = (values.question_texts || '')
+          .split('\n')
+          .filter((line: string) => line.trim())
+          .map((text: string) => ({ question_text: text.trim() }));
+      } else if (createSource === 'bank') {
+        if (selectedBankIds.length === 0) {
+          message.warning('请先从题库中勾选题目');
+          return;
+        }
+        questions = selectedBankIds
+          .sort((a, b) => a - b)
+          .map(id => {
+            const q = bankQuestions.find(b => b.id === id);
+            const lines = [q?.content || ''];
+            if (q?.options && Array.isArray(q.options) && q.options.length > 0) {
+              q.options.forEach((opt: string, i: number) => {
+                lines.push(`${String.fromCharCode(65 + i)}. ${opt}`);
+              });
+            }
+            return { question_text: lines.filter(Boolean).join('\n') };
+          });
+      } else {
+        if (aiSelected.size === 0) {
+          message.warning('请先点击"AI生成题目"并勾选要使用的题目');
+          return;
+        }
+        questions = aiQuestions
+          .filter((_, i) => aiSelected.has(i))
+          .map(q => ({ question_text: q.content }));
+      }
 
       if (questions.length === 0) {
-        message.warning('请至少输入一道题目');
+        message.warning('请至少准备一道题目');
         return;
       }
 
@@ -74,13 +262,17 @@ const ClassroomQuiz: React.FC = () => {
         title: values.title,
         description: values.description,
         subject: values.subject,
-        class_id: currentClass?.id || values.class_id,
+        class_id: values.class_id || currentClass?.id,
         questions,
       });
 
       message.success('课堂做题创建成功');
       setCreateModalOpen(false);
       createForm.resetFields();
+      setCreateSource('manual');
+      setSelectedBankIds([]);
+      setAiQuestions([]);
+      setAiSelected(new Set());
       loadQuizzes();
     } catch (e: any) {
       message.error(e?.response?.data?.error || '创建失败');
@@ -116,11 +308,58 @@ const ClassroomQuiz: React.FC = () => {
     }
   };
 
-  const handleOpenReward = async (quiz: any, questionId: number | null = null) => {
+  // 随机点名
+  const startRandomPick = async () => {
+    let pool = students;
+    try {
+      const res = await classroomQuizAPI.getClassStudents(currentClass?.id || selectedQuiz?.class_id);
+      pool = res.data.students || [];
+      setStudents(pool);
+    } catch (e) {
+      // 拉取失败时用已有列表
+    }
+    if (!pool || pool.length === 0) {
+      message.warning('班级暂无学生，无法随机点名');
+      return;
+    }
+    setRandomOpen(true);
+    setRandomRolling(true);
+    setPickedStudent(null);
+    let ticks = 0;
+    const totalTicks = 25;
+    if (rollTimer.current) clearInterval(rollTimer.current);
+    rollTimer.current = setInterval(() => {
+      const s = pool[Math.floor(Math.random() * pool.length)];
+      setRandomName(s.real_name || s.username);
+      ticks++;
+      if (ticks >= totalTicks && rollTimer.current) {
+        clearInterval(rollTimer.current);
+        rollTimer.current = null;
+        setRandomRolling(false);
+        setPickedStudent(s);
+      }
+    }, 90);
+  };
+
+  const handleRewardPicked = () => {
+    if (!pickedStudent) return;
+    setRandomOpen(false);
+    setSelectedStudent(pickedStudent);
+    setSelectedQuestionId(null);
+    setRewardModalOpen(true);
+    rewardForm.resetFields();
+  };
+
+  const handleOpenReward = async (quiz: any, questionId: number | null = null, preStudent: any = null) => {
     setSelectedQuiz(quiz);
     setSelectedQuestionId(questionId);
     setRewardModalOpen(true);
     rewardForm.resetFields();
+    if (preStudent) {
+      setSelectedStudent(preStudent);
+    } else {
+      setSelectedStudent(null);
+    }
 
     try {
       const res = await classroomQuizAPI.getClassStudents(currentClass?.id || quiz.class_id);
@@ -172,14 +411,7 @@ const ClassroomQuiz: React.FC = () => {
     { title: '奖励次数', dataIndex: 'reward_count', key: 'reward_count' },
     {
       title: '状态', dataIndex: 'status', key: 'status',
-      render: (s: string) => {
-        const map: Record<string, { color: string; label: string }> = {
-          active: { color: 'processing', label: '进行中' },
-          completed: { color: 'success', label: '已完成' },
-          cancelled: { color: 'default', label: '已取消' },
-        };
-        return <Badge status={map[s]?.color as any} text={map[s]?.label || s} />;
-      }
+      render: (s: string) => renderStatus(s)
     },
     {
       title: '创建时间', dataIndex: 'created_at', key: 'created_at',
@@ -222,6 +454,14 @@ const ClassroomQuiz: React.FC = () => {
     },
   ];
 
+  const bankColumns = [
+    { title: '题干', dataIndex: 'content', key: 'content', ellipsis: true },
+    { title: '知识点', dataIndex: 'knowledge_point', key: 'knowledge_point', ellipsis: true, width: 160 },
+    { title: '难度', dataIndex: 'difficulty', key: 'difficulty', width: 70, render: (v: string) => ({ easy: '简单', medium: '中等', hard: '困难' }[v] || v) },
+  ];
+
+  const currentQuestion = questions[projIndex];
+
   return (
     <div style={{ padding: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -243,43 +483,163 @@ const ClassroomQuiz: React.FC = () => {
         size="middle"
       />
 
+      {/* 创建课堂做题 */}
       <Modal
         title="创建课堂做题"
         open={createModalOpen}
-        onCancel={() => { setCreateModalOpen(false); createForm.resetFields(); }}
+        onCancel={() => { setCreateModalOpen(false); createForm.resetFields(); setCreateSource('manual'); setSelectedBankIds([]); setAiQuestions([]); setAiSelected(new Set()); }}
         onOk={() => createForm.submit()}
-        width={700}
+        width={760}
       >
         <Form form={createForm} layout="vertical" onFinish={handleCreate}>
           <Row gutter={16}>
-            <Col span={16}>
+            <Col span={10}>
               <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
                 <Input placeholder="如：第三单元随堂练习" />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col span={7}>
+              <Form.Item name="class_id" label="班级" initialValue={currentClass?.id} rules={[{ required: true, message: '请选择班级' }]}>
+                <Select placeholder="选择班级" showSearch optionFilterProp="children">
+                  {classes.map(c => <Select.Option key={c.id} value={c.id}>{c.name}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={7}>
               <Form.Item name="subject" label="科目">
-                <Input placeholder="如：数学" />
+                <Select placeholder="选择科目" allowClear>
+                  {subjectOptions.map(s => <Select.Option key={s} value={s}>{s}</Select.Option>)}
+                </Select>
               </Form.Item>
             </Col>
           </Row>
           <Form.Item name="description" label="描述（可选）">
             <Input.TextArea rows={2} placeholder="课堂做题说明" />
           </Form.Item>
-          <Form.Item
-            name="question_texts"
-            label="题目列表"
-            rules={[{ required: true, message: '请输入题目' }]}
-            extra="每行一道题目，题目将按顺序展示"
-          >
-            <Input.TextArea
-              rows={8}
-              placeholder={`1. 计算 25 × 4 = ?\n2. 一个三角形有几个角？\n3. ...`}
-            />
+
+          <Form.Item label="题目来源">
+            <Radio.Group value={createSource} onChange={(e) => handleSourceChange(e.target.value)} buttonStyle="solid">
+              <Radio.Button value="manual">手动输入</Radio.Button>
+              <Radio.Button value="bank">从题库选择</Radio.Button>
+              <Radio.Button value="ai">AI快速出题</Radio.Button>
+            </Radio.Group>
           </Form.Item>
+
+          {createSource === 'manual' && (
+            <Form.Item
+              name="question_texts"
+              label="题目列表"
+              rules={[{ required: true, message: '请输入题目' }]}
+              extra="每行一道题目，题目将按顺序展示"
+            >
+              <Input.TextArea
+                rows={8}
+                placeholder={`1. 计算 25 × 4 = ?\n2. 一个三角形有几个角？\n3. ...`}
+              />
+            </Form.Item>
+          )}
+
+          {createSource === 'bank' && (
+            <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+              <Space style={{ marginBottom: 8 }} wrap>
+                <Select
+                  placeholder="按科目筛选"
+                  style={{ width: 120 }}
+                  allowClear
+                  value={bankSubject}
+                  onChange={(v) => setBankSubject(v)}
+                >
+                  {subjectOptions.map(s => <Select.Option key={s} value={s}>{s}</Select.Option>)}
+                </Select>
+                <Input
+                  placeholder="搜索题干关键字"
+                  style={{ width: 200 }}
+                  value={bankKeyword}
+                  onChange={(e) => setBankKeyword(e.target.value)}
+                  onPressEnter={() => loadBank(1)}
+                />
+                <Button icon={<SearchOutlined />} onClick={() => loadBank(1)}>搜索</Button>
+              </Space>
+              <Table
+                dataSource={bankQuestions}
+                columns={bankColumns}
+                rowKey="id"
+                loading={bankLoading}
+                size="small"
+                pagination={{
+                  current: bankPage,
+                  pageSize: 10,
+                  total: bankTotal,
+                  onChange: (p) => loadBank(p),
+                  showTotal: (t) => `共 ${t} 题`,
+                }}
+                rowSelection={{
+                  selectedRowKeys: selectedBankIds,
+                  onChange: (keys: React.Key[]) => setSelectedBankIds(keys as number[]),
+                }}
+                locale={{ emptyText: <Empty description="暂无题目，可先在发布作业中用AI生成" /> }}
+              />
+              <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
+                已选 {selectedBankIds.length} 道题（将导入题干与选项文本，作为课堂口答题使用）
+              </div>
+            </div>
+          )}
+
+          {createSource === 'ai' && (
+            <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+              <Row gutter={8}>
+                <Col span={14}>
+                  <Form.Item name="ai_topic" label="知识点主题" rules={[{ required: true, message: '请输入知识点主题' }]}>
+                    <Input placeholder="如：分数加减法、古诗背诵" />
+                  </Form.Item>
+                </Col>
+                <Col span={5}>
+                  <Form.Item name="ai_type" label="题型" initialValue="choice_single">
+                    <Select options={aiTypeOptions} />
+                  </Form.Item>
+                </Col>
+                <Col span={5}>
+                  <Form.Item name="ai_count" label="数量" initialValue={5}>
+                    <InputNumber min={1} max={20} style={{ width: '100%' }} addonAfter="道" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Button
+                type="primary"
+                icon={<RobotOutlined />}
+                loading={aiLoading}
+                onClick={handleGenerateAI}
+                style={{ marginBottom: 12 }}
+              >
+                {aiLoading ? 'AI正在出题中...' : '🤖 AI生成题目'}
+              </Button>
+              {aiQuestions.length > 0 && (
+                <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>
+                  {aiQuestions.map((q, i) => (
+                    <div key={i} style={{ padding: '6px 4px', borderBottom: '1px dashed #eee' }}>
+                      <Checkbox
+                        checked={aiSelected.has(i)}
+                        onChange={(e) => {
+                          const s = new Set(aiSelected);
+                          if (e.target.checked) s.add(i); else s.delete(i);
+                          setAiSelected(s);
+                        }}
+                      />
+                      <span style={{ marginLeft: 8 }}>{i + 1}. {q.content}</span>
+                      {q.answer && <Tag color="green" style={{ marginLeft: 8 }}>答案: {q.answer}</Tag>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
+                参考答案仅供老师核对，不会展示给学生。已勾选 {aiSelected.size} 道。
+              </div>
+            </div>
+          )}
         </Form>
       </Modal>
 
+      {/* 详情 */}
       <Modal
         title={`课堂做题详情: ${quizDetail?.title || ''}`}
         open={detailModalOpen}
@@ -293,15 +653,22 @@ const ClassroomQuiz: React.FC = () => {
             <Descriptions size="small" column={3} style={{ marginBottom: 16 }}>
               <Descriptions.Item label="科目">{quizDetail.subject || '-'}</Descriptions.Item>
               <Descriptions.Item label="班级">{quizDetail.class_name}</Descriptions.Item>
-              <Descriptions.Item label="状态">
-                <Badge status={quizDetail.status === 'active' ? 'processing' : 'success'} text={quizDetail.status === 'active' ? '进行中' : '已完成'} />
-              </Descriptions.Item>
+              <Descriptions.Item label="状态">{renderStatus(quizDetail.status)}</Descriptions.Item>
               <Descriptions.Item label="创建者">{quizDetail.creator_name}</Descriptions.Item>
               <Descriptions.Item label="题目数">{questions.length}</Descriptions.Item>
               <Descriptions.Item label="奖励次数">{rewards.length}</Descriptions.Item>
             </Descriptions>
             {quizDetail.description && (
               <Paragraph type="secondary" style={{ marginBottom: 16 }}>{quizDetail.description}</Paragraph>
+            )}
+
+            {quizDetail.status === 'active' && questions.length > 0 && (
+              <Space style={{ marginBottom: 16 }} wrap>
+                <Button icon={<ExpandOutlined />} onClick={() => { setProjIndex(0); setBuzzLeft(null); setAutoPlay(false); setProjectOpen(true); }}>
+                  投影模式
+                </Button>
+                <Button icon={<UserSwitchOutlined />} onClick={startRandomPick}>随机点名</Button>
+              </Space>
             )}
 
             <Tabs
@@ -333,7 +700,7 @@ const ClassroomQuiz: React.FC = () => {
                         >
                           <List.Item.Meta
                             avatar={<Tag color="blue">{index + 1}</Tag>}
-                            title={q.question_text}
+                            title={<span style={{ whiteSpace: 'pre-wrap' }}>{q.question_text}</span>}
                           />
                         </List.Item>
                       )}
@@ -361,6 +728,109 @@ const ClassroomQuiz: React.FC = () => {
         </Spin>
       </Modal>
 
+      {/* 随机点名 */}
+      <Modal
+        title="随机点名"
+        open={randomOpen}
+        onCancel={() => setRandomOpen(false)}
+        footer={
+          pickedStudent ? (
+            <Space>
+              <Button onClick={startRandomPick}>再来一次</Button>
+              <Button type="primary" icon={<GiftOutlined />} onClick={handleRewardPicked}>给TA发奖励</Button>
+            </Space>
+          ) : (
+            <Button onClick={() => setRandomOpen(false)}>关闭</Button>
+          )
+        }
+        width={480}
+        centered
+      >
+        <div style={{ textAlign: 'center', padding: '32px 0' }}>
+          <div style={{ fontSize: 40, fontWeight: 'bold', color: randomRolling ? '#999' : '#1890ff', minHeight: 60 }}>
+            {randomName || '...'}
+          </div>
+          {pickedStudent && !randomRolling && (
+            <div style={{ marginTop: 8 }}>
+              {pickedStudent.pet_name && (
+                <Text type="secondary">
+                  宠物：{pickedStudent.pet_name} Lv.{pickedStudent.pet_level}（{pickedStudent.species_name}）
+                </Text>
+              )}
+            </div>
+          )}
+          {randomRolling && <div style={{ marginTop: 12, color: '#999' }}>正在随机抽取中...</div>}
+        </div>
+      </Modal>
+
+      {/* 投影模式（大屏展示 + 自动播放 + 抢答计时） */}
+      {projectOpen && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: '#141414', zIndex: 2000, display: 'flex', flexDirection: 'column', padding: 24
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ color: '#aaa', fontSize: 16 }}>
+              {quizDetail?.title} · 第 {projIndex + 1} / {questions.length} 题
+            </div>
+            <Button icon={<CloseOutlined />} onClick={() => { setProjectOpen(false); setAutoPlay(false); }} ghost>
+              退出投影（Esc）
+            </Button>
+          </div>
+
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 48px' }}>
+            {buzzLeft !== null && buzzLeft > 0 ? (
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ color: '#52c41a', fontSize: 22, marginBottom: 16 }}>抢答计时中，举手/喊答最快的同学作答！</div>
+                <div style={{ color: '#52c41a', fontSize: 160, fontWeight: 'bold', lineHeight: 1 }}>{buzzLeft}</div>
+              </div>
+            ) : buzzLeft === 0 ? (
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ color: '#ff4d4f', fontSize: 120, fontWeight: 'bold' }}>时间到！</div>
+                <Button style={{ marginTop: 24 }} size="large" onClick={() => setBuzzLeft(null)}>返回题目</Button>
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', width: '100%' }}>
+                <div style={{ color: '#666', fontSize: 24, marginBottom: 24 }}>第 {projIndex + 1} 题</div>
+                <div style={{ color: '#fff', fontSize: 48, fontWeight: 500, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                  {currentQuestion?.question_text || '暂无题目'}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <Button icon={<LeftOutlined />} onClick={() => setProjIndex(i => Math.max(i - 1, 0))}>上一题</Button>
+            <Button onClick={() => setProjIndex(i => Math.min(i + 1, questions.length - 1))}>
+              下一题 <RightOutlined />
+            </Button>
+            <span style={{ color: '#555' }}>|</span>
+            <Space>
+              <Checkbox
+                checked={autoPlay}
+                onChange={(e) => setAutoPlay(e.target.checked)}
+                style={{ color: '#aaa' }}
+              >
+                自动播放
+              </Checkbox>
+              <InputNumber min={5} max={300} value={autoSeconds} onChange={(v) => setAutoSeconds(v || 30)} addonAfter="秒/题" style={{ width: 130 }} />
+            </Space>
+            <Space>
+              <InputNumber min={5} max={300} value={buzzTotal} onChange={(v) => setBuzzTotal(v || 30)} addonAfter="秒抢答" style={{ width: 130 }} />
+              <Button
+                type="primary"
+                danger
+                icon={<ThunderboltOutlined />}
+                onClick={() => { setAutoPlay(false); setBuzzLeft(buzzTotal); }}
+              >
+                开始抢答
+              </Button>
+            </Space>
+          </div>
+        </div>
+      )}
+
+      {/* 发放奖励 */}
       <Modal
         title="发放奖励"
         open={rewardModalOpen}
@@ -436,12 +906,48 @@ const ClassroomQuiz: React.FC = () => {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="reward_value" label="奖励数值" rules={[{ required: true }]}>
-                <InputNumber min={1} style={{ width: '100%' }} placeholder="数量/金币/经验" />
-              </Form.Item>
+              {(rewardType === 'item' || rewardType === 'equipment') ? (
+                <Form.Item
+                  name="reward_value"
+                  label={rewardType === 'item' ? '选择物品' : '选择装备'}
+                  rules={[{ required: true, message: rewardType === 'item' ? '请选择物品' : '请选择装备' }]}
+                >
+                  {rewardType === 'item' ? (
+                    <Select
+                      showSearch
+                      optionFilterProp="label"
+                      loading={items.length === 0}
+                      placeholder="选择要发放的物品"
+                      options={items.map((it: any) => ({
+                        value: it.id,
+                        label: `${it.name}（${it.price ?? '-'}金币）`,
+                        name: it.name,
+                      }))}
+                      onSelect={(_, opt: any) => rewardForm.setFieldsValue({ reward_name: opt.name })}
+                    />
+                  ) : (
+                    <Select
+                      showSearch
+                      optionFilterProp="label"
+                      loading={equipments.length === 0}
+                      placeholder="选择要发放的装备"
+                      options={equipments.map((eq: any) => ({
+                        value: eq.id,
+                        label: `${eq.name}（${({ common: '普通', rare: '稀有', epic: '史诗', legendary: '传说' } as Record<string, string>)[eq.rarity] || eq.rarity}）`,
+                        name: eq.name,
+                      }))}
+                      onSelect={(_, opt: any) => rewardForm.setFieldsValue({ reward_name: opt.name })}
+                    />
+                  )}
+                </Form.Item>
+              ) : (
+                <Form.Item name="reward_value" label="奖励数值" rules={[{ required: true, message: '请输入数量' }]}>
+                  <InputNumber min={1} style={{ width: '100%' }} placeholder={rewardType === 'exp' ? '经验值' : '金币数量'} />
+                </Form.Item>
+              )}
             </Col>
           </Row>
-          <Form.Item name="reward_name" label="奖励名称（可选）">
+          <Form.Item name="reward_name" label="奖励名称（选物品/装备时自动填写）">
             <Input placeholder="如：100金币、体力药剂" />
           </Form.Item>
           <Form.Item name="reason" label="奖励原因（可选）">

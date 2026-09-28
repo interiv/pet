@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { getChinaDate } = require('../config/timezone');
+const { getAIConfig, isAIConfigured } = require('../config/ai');
+const { getPrompt, fillTemplate } = require('../config/prompts');
 
 function generateCardCode(length = 12) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -512,6 +514,88 @@ router.get('/redemption-logs', authenticateToken, (req, res) => {
 });
 
 // ==================== 课堂做题 ====================
+
+// 课堂做题：AI 快速出题（返回题目供教师选择，不入题库、不计入作业）
+router.post('/classroom-quiz/ai-generate', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role === 'student') {
+      return res.status(403).json({ error: '无权操作' });
+    }
+
+    const { subject, topic, question_type = 'choice_single', count = 5, difficulty = 'medium', grade_level = '' } = req.body;
+    if (!subject || !topic) {
+      return res.status(400).json({ error: '请填写科目和知识点主题' });
+    }
+    const n = Math.min(20, Math.max(1, parseInt(count) || 5));
+
+    const config = getAIConfig();
+    if (!isAIConfigured(config)) {
+      return res.status(500).json({ error: 'AI 配置未完成，请联系管理员' });
+    }
+
+    const typeLabels = { choice_single: '单选题', choice_multi: '多选题', judgment: '判断题', fill_blank: '填空题', essay: '简答题' };
+    const typeLabel = typeLabels[question_type] || '题目';
+    const prompt = fillTemplate(getPrompt('gen_classroom'), {
+      grade_level, topic, subject, typeLabel, difficulty, count: n
+    });
+
+    const axios = require('axios');
+    const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
+    const startTime = Date.now();
+    const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
+      model: config.ai_model,
+      messages: [{ role: 'user', content: prompt }]
+    }, {
+      headers: {
+        'Authorization': `Bearer ${config.ai_api_key}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: timeoutMs
+    });
+
+    // 记录 token 用量（与生成作业共用统计，失败不影响结果）
+    try {
+      const usage = response.data?.usage || {};
+      const hasTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'`).get();
+      if (hasTable) {
+        db.prepare(`
+          INSERT INTO token_usage (user_id, date, prompt_tokens, completion_tokens, total_tokens, model, subject, topic, question_type, question_count, duration_ms)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(req.user.userId, getChinaDate(), usage.prompt_tokens || 0, usage.completion_tokens || 0, usage.total_tokens || 0, config.ai_model, subject, topic, question_type, n, Date.now() - startTime);
+      }
+    } catch (e) {
+      // 统计写入失败不影响出题
+    }
+
+    const content = response.data.choices[0].message.content;
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e) {
+      const m = content.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
+      if (!m) return res.status(500).json({ error: 'AI返回格式错误，请重试' });
+      parsed = JSON.parse(m[0]);
+    }
+
+    const questions = (parsed.questions || []).map(q => ({
+      content: q.content || '',
+      answer: q.answer !== undefined && q.answer !== null ? String(q.answer) : '',
+      explanation: q.explanation || ''
+    })).filter(q => q.content);
+
+    if (questions.length === 0) {
+      return res.status(500).json({ error: 'AI未能生成有效题目，请调整后重试' });
+    }
+
+    res.json({ questions });
+  } catch (error) {
+    console.error('课堂AI出题失败:', error.message);
+    if (error.code === 'ECONNABORTED') {
+      return res.status(500).json({ error: 'AI请求超时，请稍后重试' });
+    }
+    res.status(500).json({ error: '课堂AI出题失败: ' + (error.message || '未知错误') });
+  }
+});
 
 // 创建课堂做题
 router.post('/classroom-quiz', authenticateToken, (req, res) => {

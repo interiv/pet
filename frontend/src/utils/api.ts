@@ -610,6 +610,8 @@ export const classroomQuizAPI = {
   }) => api.post(`/cards/classroom-quiz/${quizId}/reward`, data),
   getClassStudents: (classId: number) =>
     api.get(`/cards/classroom-quiz/students/${classId}`),
+  aiGenerate: (data: { subject: string; topic: string; question_type?: string; count?: number; difficulty?: string; grade_level?: string }, timeout?: number) =>
+    api.post('/cards/classroom-quiz/ai-generate', data, { timeout: (timeout || 300) * 1000 }),
 };
 
 export default api;
