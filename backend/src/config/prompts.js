@@ -417,6 +417,28 @@ const PROMPTS = {
 4. 只返回JSON，不要任何其他内容`
   },
 
+  // ===== 纸质作业 AI 识别评判 =====
+  judge_paper_assignment: {
+    group: '作业评阅',
+    label: '纸质作业AI识别评判',
+    description: '识别学生纸质作业照片并逐题判分（需配置支持图片输入的视觉模型）。可用变量：{subject} {question_list} {count} {image_count}',
+    default: `你是一个JSON生成器和批改老师。用户提供了学生纸质作业的照片（共{image_count}张，按拍摄顺序排列），请识别学生手写作答，并逐题判分。
+
+【科目】{subject}
+【题目清单】（共{count}题，注意照片中题号与题目ID的对应）
+{question_list}
+
+请识别照片中每道题的学生作答，并严格按照以下JSON格式返回：
+{"results": [{"question_id": 题目ID数字, "recognized_answer": "识别出的学生答案", "is_correct": true或false, "score": 0到100的整数（该题得分百分比）, "comment": "简短说明（10字以内）"}]}
+
+要求：
+1. results必须覆盖题目清单中的每一道题（question_id一一对应），不要遗漏；照片中无法识别或未作答的题，recognized_answer填"(未识别)"，is_correct为false，score为0
+2. 客观题：学生答案与参考答案一致才判正确；多选题所含选项相同但顺序不同也算正确
+3. 学生可能只写选项字母（如"A"）或√/×，注意与参考答案对应
+4. 主观题（简答/作文）：意思正确、要点齐全即可给高分，score为该题得分百分比
+5. 只返回JSON，不要任何其他内容`
+  },
+
   // ===== 管理员：学生账号生成 =====
   admin_student_accounts: {
     group: '管理员工具',

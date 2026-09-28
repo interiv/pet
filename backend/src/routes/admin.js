@@ -1768,8 +1768,8 @@ router.get('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
 // 保存大模型设置
 router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
   try {
-    const { ai_model, ai_api_key, ai_base_url, ai_report_interval_days, ai_timeout } = req.body;
-    
+    const { ai_model, ai_api_key, ai_base_url, ai_report_interval_days, ai_timeout, ai_vision_model } = req.body;
+
     const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {
       if (ai_model !== undefined) stmt.run('ai_model', ai_model);
@@ -1780,6 +1780,7 @@ router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
       if (ai_base_url !== undefined) stmt.run('ai_base_url', ai_base_url);
       if (ai_report_interval_days !== undefined) stmt.run('ai_report_interval_days', String(ai_report_interval_days));
       if (ai_timeout !== undefined) stmt.run('ai_timeout', String(ai_timeout));
+      if (ai_vision_model !== undefined) stmt.run('ai_vision_model', ai_vision_model);
     })();
 
     res.json({ message: '设置保存成功' });

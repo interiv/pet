@@ -1541,6 +1541,247 @@ router.get('/:id/statistics', authenticateToken, authorizeRole('teacher', 'admin
   }
 });
 
+// 教师代登记纸质作业（住校生等无设备场景），数据与线上提交同源
+router.post('/:id/paper-submit', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  try {
+    const { student_id, results, note } = req.body;
+    if (!student_id || !Array.isArray(results) || results.length === 0) {
+      return res.status(400).json({ error: '缺少学生或答题结果' });
+    }
+
+    const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
+    if (!assignment) return res.status(404).json({ error: '作业不存在' });
+    if (assignment.status === 'cancelled') return res.status(400).json({ error: '该作业已被取消' });
+
+    const student = db.prepare('SELECT id, class_id, username, real_name FROM users WHERE id = ?').get(student_id);
+    if (!student || student.class_id !== assignment.class_id) {
+      return res.status(400).json({ error: '该学生不属于此作业的班级' });
+    }
+
+    const existing = db.prepare('SELECT id FROM submissions WHERE assignment_id = ? AND user_id = ?').get(req.params.id, student_id);
+    if (existing) {
+      return res.status(400).json({ error: '该学生已有提交记录（线上或纸质），不能重复登记' });
+    }
+
+    const questions = db.prepare(`
+      SELECT qb.id, qb.type, qb.content, qb.answer, qb.analysis, qb.knowledge_point
+      FROM assignment_questions aq
+      JOIN question_bank qb ON aq.question_bank_id = qb.id
+      WHERE aq.assignment_id = ?
+      ORDER BY aq.sort_order
+    `).all(req.params.id);
+    const qMap = {};
+    for (const q of questions) qMap[q.id] = q;
+
+    const perQuestionMax = 100 / questions.length;
+    const rows = [];
+    let totalScore = 0;
+    for (const r of results) {
+      const q = qMap[r.question_id];
+      if (!q) continue;
+      const isCorrect = r.is_correct ? 1 : 0;
+      // 客观题：对=满分错=0分；主观题：允许教师给 0-100 的部分分（折算到本题占比）
+      let score = 0;
+      if (isCorrect) {
+        score = perQuestionMax;
+      } else if (typeof r.score === 'number' && r.score > 0) {
+        score = Math.max(0, Math.min(1, r.score / 100)) * perQuestionMax;
+      }
+      totalScore += score;
+      rows.push({
+        question_id: q.id,
+        student_answer: String(r.student_answer || '纸质作答'),
+        is_correct: isCorrect,
+        score,
+      });
+    }
+
+    if (rows.length === 0) {
+      return res.status(400).json({ error: '没有有效的题目结果' });
+    }
+
+    const finalScore = Math.round(totalScore);
+    const goldReward = Math.floor((finalScore / 100) * (assignment.max_exp || 30));
+
+    const submitTx = db.transaction(() => {
+      const result = db.prepare(`
+        INSERT INTO submissions (assignment_id, user_id, answers, status, total_score, total_max_score, gold_reward, attempt_count, review_status)
+        VALUES (?, ?, ?, 'completed', ?, 100, ?, 1, 'graded')
+      `).run(
+        req.params.id,
+        student_id,
+        JSON.stringify({ source: 'paper', note: note || '', results }),
+        finalScore,
+        goldReward
+      );
+      const submissionId = result.lastInsertRowid;
+
+      if (goldReward > 0) {
+        db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?')
+          .run(goldReward, goldReward, student_id);
+        db.prepare(`INSERT INTO gold_transactions (user_id, gold_change, reason, source)
+          VALUES (?, ?, ?, 'paper_assignment')`)
+          .run(student_id, goldReward, `纸质作业: ${assignment.title}`);
+      }
+
+      const insertQA = db.prepare(`
+        INSERT INTO question_answers (submission_id, question_bank_id, attempt_number, student_answer, is_correct, score, max_score, answered_at)
+        VALUES (?, ?, 1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `);
+      for (const row of rows) {
+        insertQA.run(submissionId, row.question_id, row.student_answer, row.is_correct, row.score, perQuestionMax);
+        if (!row.is_correct) {
+          const q = qMap[row.question_id];
+          const existingWQ = db.prepare('SELECT id, wrong_count FROM wrong_questions WHERE user_id = ? AND question_id = ?')
+            .get(student_id, row.question_id);
+          if (existingWQ) {
+            db.prepare('UPDATE wrong_questions SET wrong_count = wrong_count + 1, wrong_answer = ?, correct_answer = ?, reviewed = 0 WHERE id = ?')
+              .run(row.student_answer, q.answer, existingWQ.id);
+          } else {
+            db.prepare(`
+              INSERT OR IGNORE INTO wrong_questions (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed, wrong_count)
+              VALUES (?, ?, ?, ?, ?, ?, 0, 1)
+            `).run(student_id, req.params.id, row.question_id, row.student_answer, q.answer, q.analysis);
+          }
+        }
+      }
+
+      db.prepare(`INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
+        VALUES (?, 'paper_graded', '纸质作业已登记', ?, 'assignment', ?)`)
+        .run(student_id, `作业「${assignment.title}」已由老师登记纸质作答，得分 ${finalScore} 分${goldReward > 0 ? `，获得 ${goldReward} 金币` : ''}。`, req.params.id);
+
+      return submissionId;
+    });
+
+    const submissionId = submitTx();
+
+    res.json({
+      message: '纸质作答登记成功',
+      submission_id: submissionId,
+      total_score: finalScore,
+      gold_reward: goldReward
+    });
+  } catch (error) {
+    console.error('纸质作业登记失败:', error);
+    res.status(500).json({ error: '纸质作业登记失败: ' + (error.message || '未知错误') });
+  }
+});
+
+// 纸质作业照片 AI 识别判分（视觉模型，结果供教师确认后通过 paper-submit 入库）
+router.post('/:id/ai-paper-judge', authenticateToken, authorizeRole('teacher', 'admin'), async (req, res) => {
+  try {
+    const { images } = req.body;
+    if (!Array.isArray(images) || images.length === 0) {
+      return res.status(400).json({ error: '请先上传作业照片' });
+    }
+    if (images.length > 6) {
+      return res.status(400).json({ error: '一次最多识别6张照片' });
+    }
+
+    const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
+    if (!assignment) return res.status(404).json({ error: '作业不存在' });
+
+    const questions = db.prepare(`
+      SELECT qb.id, qb.type, qb.content, qb.answer
+      FROM assignment_questions aq
+      JOIN question_bank qb ON aq.question_bank_id = qb.id
+      WHERE aq.assignment_id = ?
+      ORDER BY aq.sort_order
+    `).all(req.params.id);
+    if (questions.length === 0) {
+      return res.status(400).json({ error: '该作业没有题目' });
+    }
+
+    const config = getAIConfig();
+    if (!config.ai_api_key || !config.ai_base_url || !config.ai_model) {
+      return res.status(500).json({ error: 'AI 配置未完成，请联系管理员' });
+    }
+    const visionModel = (config.ai_vision_model && String(config.ai_vision_model).trim()) || config.ai_model;
+
+    const tLabel = (t) => ({ choice_single: '单选题', choice_multi: '多选题', judgment: '判断题', fill_blank: '填空题', essay: '简答/主观题' }[t] || t);
+    const questionList = questions.map((q, i) =>
+      `ID:${q.id} 第${i + 1}题[${tLabel(q.type)}] 题目：${String(q.content).slice(0, 80)} 参考答案：${q.answer}`
+    ).join('\n');
+
+    const prompt = fillTemplate(getPrompt('judge_paper_assignment'), {
+      subject: assignment.subject || '',
+      question_list: questionList,
+      count: questions.length,
+      image_count: images.length
+    });
+
+    const content = [
+      { type: 'text', text: prompt },
+      ...images.map((img) => ({ type: 'image_url', image_url: { url: img } }))
+    ];
+
+    const axios = require('axios');
+    const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
+    const startTime = Date.now();
+    const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
+      model: visionModel,
+      messages: [{ role: 'user', content }],
+      max_tokens: getSystemSetting('max_tokens_per_generation', 18000)
+    }, {
+      headers: {
+        'Authorization': `Bearer ${config.ai_api_key}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: timeoutMs
+    });
+
+    try {
+      const usage = response.data?.usage || {};
+      const hasTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'`).get();
+      if (hasTable) {
+        db.prepare(`
+          INSERT INTO token_usage (user_id, date, prompt_tokens, completion_tokens, total_tokens, model, subject, topic, question_type, question_count, duration_ms)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(req.user.userId, getChinaDate(), usage.prompt_tokens || 0, usage.completion_tokens || 0, usage.total_tokens || 0, visionModel, assignment.subject || '纸质识别', '纸质作业AI识别', assignment.question_type, questions.length, Date.now() - startTime);
+      }
+    } catch (e) {
+      // 统计失败不影响识别
+    }
+
+    const aiContent = response.data.choices[0].message.content;
+    let parsed;
+    try {
+      parsed = JSON.parse(aiContent);
+    } catch (e) {
+      const m = aiContent.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
+      if (!m) return res.status(500).json({ error: 'AI返回格式错误，请重试' });
+      parsed = JSON.parse(m[0]);
+    }
+
+    const qIds = new Set(questions.map(q => q.id));
+    const results = (parsed.results || [])
+      .map((r) => ({
+        question_id: parseInt(r.question_id),
+        recognized_answer: r.recognized_answer ? String(r.recognized_answer) : '',
+        is_correct: r.is_correct === true || r.is_correct === 'true',
+        score: Math.max(0, Math.min(100, parseInt(r.score) || 0)),
+        comment: r.comment ? String(r.comment) : ''
+      }))
+      .filter((r) => qIds.has(r.question_id));
+
+    if (results.length === 0) {
+      return res.status(500).json({ error: 'AI未能识别出有效结果，请重新拍照（光线充足、字迹清晰）后再试' });
+    }
+
+    res.json({ results, model: visionModel });
+  } catch (error) {
+    console.error('纸质作业AI识别失败:', error.message);
+    if (error.code === 'ECONNABORTED') {
+      return res.status(500).json({ error: 'AI识别超时，请稍后重试' });
+    }
+    if (error.response) {
+      console.error('视觉模型响应:', error.response.status, JSON.stringify(error.response.data).slice(0, 300));
+      return res.status(500).json({ error: '视觉模型调用失败，请确认已配置支持图片的模型（AI设置→视觉模型）' });
+    }
+    res.status(500).json({ error: '纸质作业AI识别失败: ' + (error.message || '未知错误') });
+  }
+});
+
 router.get('/wrong/my', authenticateToken, (req, res) => {
   try {
     const { subject } = req.query;

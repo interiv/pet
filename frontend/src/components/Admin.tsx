@@ -2615,6 +2615,7 @@ const AISettings: React.FC = () => {
       setHasApiKey(data.ai_api_key === '***');
       settingsForm.setFieldsValue({
         ai_model: data.ai_model || 'gpt-3.5-turbo',
+        ai_vision_model: data.ai_vision_model || '',
         ai_base_url: data.ai_base_url || 'https://api.openai.com/v1',
         ai_api_key: data.ai_api_key || '',
         ai_report_interval_days: data.ai_report_interval_days || '3',
@@ -2708,6 +2709,9 @@ const AISettings: React.FC = () => {
         </Form.Item>
         <Form.Item name="ai_api_key" label="API Key" extra="留空则保留当前密钥，录入新值将替换">
           <Input.Password placeholder="留空保留当前设置，或输入新 API 密钥" />
+        </Form.Item>
+        <Form.Item name="ai_vision_model" label="视觉模型（可选，用于识别纸质作业照片）" extra="留空则使用上面的大模型。识别手写作业照片需要支持图片输入的模型（如 qwen-vl、gpt-4o 等），且服务接口需兼容 OpenAI 图片格式。">
+          <Input placeholder="如 qwen-vl-plus，留空使用上方大模型" />
         </Form.Item>
         <Form.Item name="ai_report_interval_days" label="AI报告重新生成间隔（天）" rules={[{ required: true, message: '请输入间隔天数' }]} extra="学生生成学习规划或诊断报告后，需间隔多少天才可重新生成。默认3天。">
           <Input type="number" min={1} max={30} placeholder="3" />

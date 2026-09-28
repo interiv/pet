@@ -115,8 +115,13 @@ export const assignmentAPI = {
   getSubmissionDetail: (id: number) => 
     api.get(`/assignments/submissions/${id}`),
   
-  getStatistics: (id: number) => 
+  getStatistics: (id: number) =>
     api.get(`/assignments/${id}/statistics`),
+
+  paperSubmit: (id: number, data: { student_id: number; results: { question_id: number; is_correct: boolean; score?: number; student_answer?: string }[]; note?: string }) =>
+    api.post(`/assignments/${id}/paper-submit`, data),
+  aiPaperJudge: (id: number, data: { images: string[] }, timeout?: number) =>
+    api.post(`/assignments/${id}/ai-paper-judge`, data, { timeout: (timeout || 300) * 1000 }),
   
   getMyWrongQuestions: (params?: { subject?: string }) => 
     api.get('/assignments/wrong/my', { params }),

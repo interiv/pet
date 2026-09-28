@@ -3,8 +3,9 @@ import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber
 import { assignmentAPI, adminAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
-import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined } from '@ant-design/icons';
+import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined } from '@ant-design/icons';
 import CelebrationAnimation from './CelebrationAnimation';
+import PaperRegister from './PaperRegister';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -90,6 +91,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [showVariantQuestions, setShowVariantQuestions] = useState<Record<number, boolean>>({});
   const [filterSubject, setFilterSubject] = useState<string | undefined>(undefined);
   const [filterDateRange, setFilterDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
+  const [paperRegister, setPaperRegister] = useState<{ id: number; title: string } | null>(null);
   
   const [form] = Form.useForm();
   const [submitForm] = Form.useForm();
@@ -305,6 +307,53 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       loadAssignments();
     } catch (e: any) {
       message.error(e.response?.data?.error || '发布失败');
+    }
+  };
+
+  const escapeHtml = (s: string) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  // 打印纸质作业纸（住校生等无设备场景）
+  const handlePrintPaper = async (record: any) => {
+    try {
+      const res = await assignmentAPI.getAssignment(record.id);
+      const a = res.data.assignment;
+      const qs: any[] = a.questions || [];
+      const tLabel = (t: string) => ({ choice_single: '单选题', choice_multi: '多选题', judgment: '判断题', fill_blank: '填空题', essay: '简答/主观题' } as Record<string, string>)[t] || t;
+      const items = qs.map((q: any, i: number) => {
+        const opts = Array.isArray(q.options) && q.options.length > 0
+          ? `<div class="opts">${q.options.map((o: string, oi: number) => `<div class="opt">${String.fromCharCode(65 + oi)}. ${escapeHtml(o)}</div>`).join('')}</div>`
+          : '';
+        const judgment = q.type === 'judgment' ? '<div class="opt">（&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;）对　（&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;）错</div>' : '';
+        const answer = (q.type === 'essay' || q.type === 'fill_blank')
+          ? `<div class="answer-lines"></div>`
+          : '';
+        return `<div class="q"><div class="qt">${i + 1}. ${escapeHtml(q.content)}　<span class="tt">[${tLabel(q.type)}]</span></div>${opts}${judgment}${answer}</div>`;
+      }).join('');
+      const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${escapeHtml(a.title)} - 作业纸</title><style>
+@page { size: A4; margin: 14mm; }
+body { font-family: 'Microsoft YaHei', sans-serif; font-size: 12px; color: #222; }
+h2 { text-align: center; margin: 0 0 2mm; font-size: 16px; }
+.meta { margin: 0 0 4mm; font-size: 13px; }
+.desc { color: #555; margin-bottom: 3mm; }
+.q { margin-bottom: 5mm; page-break-inside: avoid; }
+.qt { font-size: 13px; font-weight: bold; margin-bottom: 1mm; }
+.tt { font-weight: normal; color: #666; font-size: 11px; }
+.opts { margin-left: 6mm; }
+.opt { margin: 1mm 0; }
+.answer-lines { height: 110px; margin-top: 2mm; background: repeating-linear-gradient(to bottom, transparent 0, transparent 30px, #bbb 30px, #bbb 31px); }
+</style></head><body>
+<h2>${escapeHtml(a.title)}</h2>
+<div class="meta">班级：${escapeHtml(a.class_name || '________')}　　姓名：____________　　学号：__________　　得分：__________</div>
+${a.description ? `<div class="desc">${escapeHtml(a.description)}</div>` : ''}
+${items}
+</body></html>`;
+      const w = window.open('', '_blank', 'width=820,height=640');
+      if (!w) { message.warning('浏览器拦截了弹出窗口，请允许弹窗后重试'); return; }
+      w.document.write(html);
+      w.document.close();
+    } catch (e) {
+      message.error('获取作业内容失败');
     }
   };
 
@@ -1073,7 +1122,11 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           {isTeacher && (
             <>
               {record.teacher_id === user?.id && (
-                <Button size="small" icon={<EditOutlined />} onClick={() => handleStartDoing(record)}>编辑</Button>
+                <>
+                  <Button size="small" icon={<EditOutlined />} onClick={() => handleStartDoing(record)}>编辑</Button>
+                  <Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintPaper(record)}>打印</Button>
+                  <Button size="small" icon={<FileTextOutlined />} onClick={() => setPaperRegister({ id: record.id, title: record.title })}>纸质登记</Button>
+                </>
               )}
               <Button size="small" icon={<BarChartOutlined />} onClick={() => handleViewStatistics(record)}>统计</Button>
               {record.status !== 'cancelled' && record.teacher_id === user?.id && (
@@ -1207,7 +1260,11 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                   }}>查看结果</Button>
                 )}
                 {isTeacher && record.teacher_id === user?.id && (
-                  <Button size="small" icon={<EditOutlined />} onClick={() => handleStartDoing(record)}>编辑</Button>
+                  <>
+                    <Button size="small" icon={<EditOutlined />} onClick={() => handleStartDoing(record)}>编辑</Button>
+                    <Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintPaper(record)}>打印</Button>
+                    <Button size="small" icon={<FileTextOutlined />} onClick={() => setPaperRegister({ id: record.id, title: record.title })}>登记</Button>
+                  </>
                 )}
                 {isTeacher && (
                   <Button size="small" icon={<BarChartOutlined />} onClick={() => handleViewStatistics(record)}>统计</Button>
@@ -1254,6 +1311,17 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           pageSizeOptions: ['10', '20', '50'],
           showTotal: (total) => `共 ${total} 条`
         }} scroll={{ x: true }} />
+      )}
+
+      {/* 纸质作业登记 */}
+      {paperRegister && (
+        <PaperRegister
+          assignmentId={paperRegister.id}
+          title={paperRegister.title}
+          open={!!paperRegister}
+          onClose={() => setPaperRegister(null)}
+          onSaved={loadAssignments}
+        />
       )}
 
       {/* 教师发布作业弹窗 */}
