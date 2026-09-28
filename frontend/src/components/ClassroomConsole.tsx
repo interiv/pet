@@ -20,7 +20,12 @@ const REWARD_TYPES: Record<string, string> = {
 };
 
 const QUICK_AMOUNTS = [1, 5, 10, 20, 50];
-const KEYPAD_LETTERS = 'abcdefghijklmnopqrstuvwxyz'.split('');
+// QWERTY 键盘布局，符合输入习惯
+const KEYPAD_ROWS = [
+  ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
+  ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
+  ['z', 'x', 'c', 'v', 'b', 'n', 'm'],
+];
 
 const rarityLabel = (r: string) =>
   ({ common: '普通', rare: '稀有', epic: '史诗', legendary: '传说' } as Record<string, string>)[r] || r;
@@ -47,6 +52,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [query, setQuery] = useState('');
+  const cardRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   // 随机点名
   const [randomState, setRandomState] = useState<{ rolling: boolean; name: string; student: any } | null>(null);
@@ -90,8 +96,9 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     if (!synth) return;
     const load = () => {
       const vs: any[] = synth.getVoices() || [];
-      const zh = vs.filter(v => /zh|cmn|Chinese/i.test(v.lang) || /中文|汉语|普通话/.test(v.name));
-      setVoices(zh.length > 0 ? zh : vs);
+      // 全部列出，中文语音排最前
+      const isZh = (v: any) => /^zh|cmn/i.test(v.lang) || /中文|汉语|普通话|Chinese/i.test(v.name);
+      setVoices([...vs].sort((a, b) => (isZh(a) ? 0 : 1) - (isZh(b) ? 0 : 1)));
     };
     load();
     synth.addEventListener?.('voiceschanged', load);
@@ -145,7 +152,18 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     setStudentsLoading(true);
     try {
       const res = await classroomQuizAPI.getClassStudents(quiz.class_id);
-      setStudents(res.data.students || []);
+      const list: any[] = res.data.students || [];
+      // 按姓名拼音排序，便于查找
+      list.sort((a, b) => {
+        const na = a.real_name || a.username || '';
+        const nb = b.real_name || b.username || '';
+        try {
+          return pinyin(na, { toneType: 'none' }).localeCompare(pinyin(nb, { toneType: 'none' }));
+        } catch (e) {
+          return na.localeCompare(nb, 'zh');
+        }
+      });
+      setStudents(list);
     } catch (e) {
       message.error('加载学生列表失败');
     } finally {
@@ -255,6 +273,14 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
 
   const clearSelection = () => setSelectedIds(new Set());
 
+  // 将某个学生的卡片滚动到列表中间
+  const scrollStudentIntoView = (id: number) => {
+    setQuery(''); // 清空搜索，确保该学生显示在列表中
+    setTimeout(() => {
+      cardRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 150);
+  };
+
   // 随机点名（自动绑定为答题人）
   const startRandomPick = () => {
     if (students.length === 0) { message.warning('班级暂无学生'); return; }
@@ -271,6 +297,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
         rollTimer.current = null;
         setRandomState({ rolling: false, name: s.real_name || s.username, student: s });
         setAnswerer(s);
+        scrollStudentIntoView(s.id);
       }
     }, 90);
   };
@@ -360,6 +387,32 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     }
   };
 
+  // 按AI结果发放金币
+  const handleRewardByResult = async () => {
+    if (!judgeResult) return;
+    const coins = Math.max(0, Math.round((judgeResult.score / 100) * perQValue));
+    if (coins <= 0) {
+      message.warning('按当前得分计算发放为0，可调大本题分值后再发');
+      return;
+    }
+    try {
+      await classroomQuizAPI.rewardStudent(quiz.id, {
+        student_ids: [judgeResult.student.id],
+        reward_type: 'gold',
+        reward_value: coins,
+        reward_name: '课堂答题奖励',
+        question_id: currentQuestion?.id,
+        reason: `第${judgeResult.questionIndex + 1}题AI评判${judgeResult.score}分`,
+      });
+      message.success(`已向 ${judgeResult.student.real_name || judgeResult.student.username} 发放 ${coins} 金币`);
+      setJudgeResult((r: any) => ({ ...r, coins }));
+      setSessionAnswers(prev => prev.map((a, i) => i === prev.length - 1 ? { ...a, coins } : a));
+      onRewarded();
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || '发放失败');
+    }
+  };
+
   // 批量发放奖励（奖励栏，发给所有勾选学生）
   const handleReward = async () => {
     if (selectedIds.size === 0) { message.warning('请先勾选学生（学生卡片上的勾选框）'); return; }
@@ -387,38 +440,13 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     }
   };
 
-  // 按AI结果发放金币
-  const handleRewardByResult = async () => {
-    if (!judgeResult) return;
-    const coins = Math.max(0, Math.round((judgeResult.score / 100) * perQValue));
-    if (coins <= 0) {
-      message.warning('按当前得分计算发放为0，可调大本题分值后再发');
-      return;
-    }
-    try {
-      await classroomQuizAPI.rewardStudent(quiz.id, {
-        student_ids: [judgeResult.student.id],
-        reward_type: 'gold',
-        reward_value: coins,
-        reward_name: '课堂答题奖励',
-        question_id: currentQuestion?.id,
-        reason: `第${judgeResult.questionIndex + 1}题AI评判${judgeResult.score}分`,
-      });
-      message.success(`已向 ${judgeResult.student.real_name || judgeResult.student.username} 发放 ${coins} 金币`);
-      setJudgeResult((r: any) => ({ ...r, coins }));
-      setSessionAnswers(prev => prev.map((a, i) => i === prev.length - 1 ? { ...a, coins } : a));
-      onRewarded();
-    } catch (e: any) {
-      message.error(e?.response?.data?.error || '发放失败');
-    }
-  };
-
   const renderStudentCard = (s: any) => {
     const selected = selectedIds.has(s.id);
     const isAnswerer = answerer?.id === s.id;
     return (
       <div
         key={s.id}
+        ref={(el) => { cardRefs.current[s.id] = el; }}
         onClick={() => { setAnswerer(s); setJudgeResult(null); setAnswerText(''); }}
         style={{
           display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
@@ -474,8 +502,16 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
             </span>
           </div>
           <div style={{ color: '#ddd', fontSize: 22, maxWidth: 720, margin: '0 auto' }}>{judgeResult.comment}</div>
+          {judgeResult.correct_answer && (
+            <div style={{
+              color: '#bae637', fontSize: 20, maxWidth: 720, margin: '16px auto 0',
+              background: '#1c2b12', border: '1px solid #3a5318', borderRadius: 8, padding: '10px 16px'
+            }}>
+              正确答案：{judgeResult.correct_answer}
+            </div>
+          )}
           <div style={{ color: '#888', fontSize: 16, marginTop: 12 }}>回答：{judgeResult.answer}</div>
-          <Space style={{ marginTop: 24 }}>
+          <Space style={{ marginTop: 24 }} wrap>
             {judgeResult.coins > 0 ? (
               <Tag color="gold" style={{ fontSize: 16, padding: '4px 12px' }}>已发放 {judgeResult.coins} 金币</Tag>
             ) : (
@@ -483,7 +519,17 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
                 按结果发放 {coins} 金币（本题值{perQValue}）
               </Button>
             )}
-            <Button onClick={() => { setJudgeResult(null); setAnswerText(''); }}>继续答题</Button>
+            {!speaking ? (
+              <Button
+                icon={<SoundOutlined />}
+                onClick={() => speakText(`${judgeResult.student.real_name || judgeResult.student.username}同学，${judgeResult.is_correct ? '回答正确' : '回答不够准确'}，得分${judgeResult.score}分。${judgeResult.comment}${judgeResult.correct_answer ? ` 正确答案是：${judgeResult.correct_answer}。` : ''}`)}
+              >
+                朗读结果
+              </Button>
+            ) : (
+              <Button icon={<StopOutlined />} onClick={stopSpeech}>停止朗读</Button>
+            )}
+            <Button onClick={() => { stopSpeech(); setJudgeResult(null); setAnswerText(''); }}>继续答题</Button>
           </Space>
         </div>
       );
@@ -560,10 +606,10 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
           {voices.length > 0 && (
             <Select
               size="small"
-              style={{ width: 220 }}
-              value={voiceURI || voices.find(v => /yunxi|云希/i.test(v.name))?.voiceURI || voices[0]?.voiceURI}
+              style={{ width: 260 }}
+              value={voiceURI || voices.find(v => /yunxi|云希/i.test(v.name))?.voiceURI || voices.find(v => /^zh/i.test(v.lang))?.voiceURI || voices[0]?.voiceURI}
               onChange={(v) => { setVoiceURI(v); localStorage.setItem('cls_tts_voice', v); }}
-              options={voices.map(v => ({ value: v.voiceURI, label: v.name }))}
+              options={voices.map(v => ({ value: v.voiceURI, label: `${v.name}（${v.lang}）` }))}
               placeholder="朗读声音"
             />
           )}
@@ -588,7 +634,21 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
   }, [sessionAnswers]);
 
   return (
-    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: '#141414', zIndex: 2000, display: 'flex', flexDirection: 'column' }}>
+    <div className="cc-dark" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: '#141414', zIndex: 2000, display: 'flex', flexDirection: 'column' }}>
+      {/* 深色主题下修正 antd 输入控件配色 */}
+      <style>{`
+        .cc-dark .ant-input-number { background: #1f1f1f; border-color: #444; }
+        .cc-dark .ant-input-number-group-addon { background: #2a2a2a; color: #ccc; border-color: #444; }
+        .cc-dark .ant-input-number-input { color: #fff; }
+        .cc-dark .ant-input-affix-wrapper { background: #1f1f1f; border-color: #444; }
+        .cc-dark .ant-input, .cc-dark input.ant-input { background: transparent; color: #fff; }
+        .cc-dark input::placeholder { color: #666; }
+        .cc-dark textarea::placeholder { color: #666; }
+        .cc-dark .ant-select-selector { background: #1f1f1f !important; border-color: #444 !important; }
+        .cc-dark .ant-select-selection-item { color: #eee; }
+        .cc-dark .ant-select-arrow { color: #999; }
+      `}</style>
+
       {/* 顶栏 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 20px', borderBottom: '1px solid #333' }}>
         <div style={{ color: '#ccc', fontSize: 15 }}>
@@ -603,7 +663,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
       </div>
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* 左侧：题目 + 答题 + 奖励栏 */}
+        {/* 左侧：题目 + 答题 */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto', padding: '12px 16px' }}>
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -657,32 +717,89 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
             <Button onClick={() => setIndex(i => Math.min(i + 1, questions.length - 1))}>下一题 <RightOutlined /></Button>
             <span style={{ color: '#555' }}>|</span>
             <Checkbox checked={autoPlay} onChange={(e) => setAutoPlay(e.target.checked)} style={{ color: '#aaa' }}>自动播放</Checkbox>
-            <InputNumber min={5} max={300} value={autoSeconds} onChange={(v) => setAutoSeconds(v || 30)} addonAfter="秒/题" style={{ width: 130 }} />
-            <InputNumber min={5} max={300} value={buzzTotal} onChange={(v) => setBuzzTotal(v || 30)} addonAfter="秒抢答" style={{ width: 130 }} />
+            <span>
+              <InputNumber min={5} max={300} value={autoSeconds} onChange={(v) => setAutoSeconds(v || 30)} style={{ width: 90 }} />
+              <span style={{ color: '#aaa', marginLeft: 4, fontSize: 12 }}>秒/题</span>
+            </span>
+            <span>
+              <InputNumber min={5} max={300} value={buzzTotal} onChange={(v) => setBuzzTotal(v || 30)} style={{ width: 90 }} />
+              <span style={{ color: '#aaa', marginLeft: 4, fontSize: 12 }}>秒抢答</span>
+            </span>
             <Button type="primary" danger icon={<ThunderboltOutlined />} onClick={() => { setAutoPlay(false); setRandomState(null); setJudgeResult(null); setBuzzLeft(buzzTotal); }}>
               开始抢答
             </Button>
             <Button icon={<UserSwitchOutlined />} onClick={startRandomPick}>随机点名</Button>
           </div>
+        </div>
 
-          {/* 奖励栏 */}
-          <div style={{ borderTop: '1px solid #333', padding: '10px 16px', display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap', background: '#1a1a1a' }}>
-            <div>
-              <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>奖励类型</div>
+        {/* 右侧：学生面板 + 奖励栏 */}
+        <div style={{ width: 400, borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* 搜索 + 小键盘 */}
+          <div style={{ padding: 12, borderBottom: '1px solid #333' }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <Input
+                placeholder="姓名/拼音首字母/用户名"
+                prefix={<SearchOutlined style={{ color: '#999' }} />}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                allowClear
+              />
+              <Button icon={<DeleteOutlined />} onClick={() => setQuery('')} title="清空搜索" />
+            </div>
+            {/* 屏幕小键盘（QWERTY布局） */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {KEYPAD_ROWS.map((row, ri) => (
+                <div key={ri} style={{ display: 'flex', gap: 4 }}>
+                  {row.map(k => (
+                    <Button key={k} size="small" style={{ flex: 1 }} onClick={() => setQuery(q => q + k)}>
+                      {k.toUpperCase()}
+                    </Button>
+                  ))}
+                  {ri === 2 && (
+                    <Button size="small" style={{ flex: 2 }} icon={<DeleteOutlined />} onClick={() => setQuery(q => q.slice(0, -1))} title="退格" />
+                  )}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, color: '#888', fontSize: 12 }}>
+              <span>已选 {selectedIds.size} 人 / 共 {students.length} 人（点卡片=定答题人）</span>
+              <span>
+                <a style={{ color: '#1890ff' }} onClick={selectAllFiltered}>全选</a>
+                <span style={{ margin: '0 6px' }}>|</span>
+                <a style={{ color: '#1890ff' }} onClick={clearSelection}>清空</a>
+              </span>
+            </div>
+          </div>
+
+          {/* 学生列表 */}
+          <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+            <Spin spinning={studentsLoading}>
+              {filteredStudents.length > 0 ? (
+                filteredStudents.map(renderStudentCard)
+              ) : (
+                <Empty description={students.length === 0 ? '暂无学生' : '没有匹配的学生'} />
+              )}
+            </Spin>
+          </div>
+
+          {/* 奖励栏（学生列表下方） */}
+          <div style={{ borderTop: '1px solid #333', padding: 12, background: '#1a1a1a' }}>
+            <div style={{ color: '#ccc', fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
+              <GiftOutlined style={{ marginRight: 6 }} />发放奖励
+              {selectedIds.size > 0 && <Tag color="blue" style={{ marginLeft: 8 }}>已选{selectedIds.size}人</Tag>}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
               <Select
                 value={rewardType}
-                style={{ width: 110 }}
+                style={{ flex: 1 }}
                 onChange={setRewardType}
                 options={Object.entries(REWARD_TYPES).map(([k, v]) => ({ value: k, label: v }))}
               />
-            </div>
-            <div>
-              <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>奖励数值</div>
               {rewardType === 'item' || rewardType === 'equipment' ? (
                 <Select
                   showSearch
                   optionFilterProp="label"
-                  style={{ width: 220 }}
+                  style={{ flex: 2 }}
                   placeholder="选择物品/装备"
                   loading={rewardType === 'item' ? items.length === 0 : equipments.length === 0}
                   value={rewardValue ?? undefined}
@@ -696,92 +813,39 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
                 />
               ) : (
                 <>
-                  <InputNumber
-                    min={1}
-                    max={999999}
-                    value={rewardValue}
-                    onChange={(v) => setRewardValue(v)}
-                    style={{ width: 130 }}
-                    size="large"
-                  />
-                  <Space style={{ marginLeft: 8 }}>
+                  <InputNumber min={1} max={999999} value={rewardValue} onChange={(v) => setRewardValue(v)} style={{ width: 110 }} />
+                  <Space size={4}>
                     {QUICK_AMOUNTS.map(n => (
-                      <Button key={n} size="small" onClick={() => setRewardValue(n)}>+{n}</Button>
+                      <Button key={n} size="small" onClick={() => setRewardValue(n)}>{n}</Button>
                     ))}
                   </Space>
                 </>
               )}
             </div>
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>奖励名称（自动填，可改）</div>
-              <Input
-                value={rewardName}
-                onChange={(e) => { setRewardName(e.target.value); setNameTouched(true); }}
-                placeholder="奖励名称"
-                maxLength={50}
-              />
-            </div>
-            <div style={{ flex: 1.4, minWidth: 240 }}>
-              <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>奖励原因（自动填，可改）</div>
-              <Input
-                value={rewardReason}
-                onChange={(e) => { setRewardReason(e.target.value); setReasonTouched(true); }}
-                placeholder="奖励原因"
-                maxLength={100}
-              />
-            </div>
+            <Input
+              value={rewardName}
+              onChange={(e) => { setRewardName(e.target.value); setNameTouched(true); }}
+              placeholder="奖励名称（自动填，可改）"
+              maxLength={50}
+              style={{ marginBottom: 8 }}
+            />
+            <Input
+              value={rewardReason}
+              onChange={(e) => { setRewardReason(e.target.value); setReasonTouched(true); }}
+              placeholder="奖励原因（自动填，可改）"
+              maxLength={100}
+              style={{ marginBottom: 8 }}
+            />
             <Button
               type="primary"
-              size="large"
               icon={<GiftOutlined />}
               loading={rewarding}
               disabled={selectedIds.size === 0}
               onClick={handleReward}
+              block
             >
-              发奖励（已选{selectedIds.size}人）
+              发奖励给已选的 {selectedIds.size} 名学生
             </Button>
-          </div>
-        </div>
-
-        {/* 右侧：学生面板 */}
-        <div style={{ width: 360, borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ padding: 12, borderBottom: '1px solid #333' }}>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-              <Input
-                placeholder="姓名/拼音首字母/用户名"
-                prefix={<SearchOutlined style={{ color: '#999' }} />}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                allowClear
-              />
-              <Button icon={<DeleteOutlined />} onClick={() => setQuery('')} title="清空搜索" />
-            </div>
-            {/* 屏幕小键盘 */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(9, 1fr)', gap: 4 }}>
-              {KEYPAD_LETTERS.map(k => (
-                <Button key={k} size="small" onClick={() => setQuery(q => q + k)}>
-                  {k.toUpperCase()}
-                </Button>
-              ))}
-              <Button size="small" style={{ gridColumn: 'span 2' }} icon={<DeleteOutlined />} onClick={() => setQuery(q => q.slice(0, -1))} />
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, color: '#888', fontSize: 12 }}>
-              <span>已选 {selectedIds.size} 人 / 共 {students.length} 人（点卡片=定答题人）</span>
-              <span>
-                <a style={{ color: '#1890ff' }} onClick={selectAllFiltered}>全选</a>
-                <span style={{ margin: '0 6px' }}>|</span>
-                <a style={{ color: '#1890ff' }} onClick={clearSelection}>清空</a>
-              </span>
-            </div>
-          </div>
-          <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
-            <Spin spinning={studentsLoading}>
-              {filteredStudents.length > 0 ? (
-                filteredStudents.map(renderStudentCard)
-              ) : (
-                <Empty description={students.length === 0 ? '暂无学生' : '没有匹配的学生'} />
-              )}
-            </Spin>
           </div>
         </div>
       </div>

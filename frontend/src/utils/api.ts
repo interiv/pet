@@ -613,7 +613,7 @@ export const classroomQuizAPI = {
   aiGenerate: (data: { subject: string; topic?: string; question_type?: string; count?: number; difficulty?: string; grade_level?: string; mode?: 'topic' | 'requirements' | 'paste'; requirements?: string; raw_text?: string }, timeout?: number) =>
     api.post('/cards/classroom-quiz/ai-generate', data, { timeout: (timeout || 300) * 1000 }),
   aiJudge: (data: { subject?: string; question_text: string; reference_answer?: string; student_answer: string }, timeout?: number) =>
-    api.post('/cards/classroom-quiz/ai-judge', data, { timeout: (timeout || 60) * 1000 }),
+    api.post('/cards/classroom-quiz/ai-judge', data, { timeout: (timeout || 300) * 1000 }),
   saveAnswer: (quizId: number, data: { question_id?: number; student_id: number; answer_text?: string; judged_by_ai?: boolean; is_correct?: boolean; score?: number; coin_rewarded?: number }) =>
     api.post(`/cards/classroom-quiz/${quizId}/answers`, data),
 };

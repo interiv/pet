@@ -7,8 +7,7 @@ import {
 import {
   PlusOutlined, GiftOutlined, CheckCircleOutlined,
   UserOutlined, EyeOutlined, PlayCircleOutlined, RobotOutlined,
-  LeftOutlined, RightOutlined, CloseOutlined, ThunderboltOutlined,
-  ExpandOutlined, UserSwitchOutlined, SearchOutlined, StopOutlined
+  UserSwitchOutlined, SearchOutlined
 } from '@ant-design/icons';
 import { classroomQuizAPI, questionBankAPI, itemAPI, equipmentAPI, adminAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
@@ -96,14 +95,6 @@ const ClassroomQuiz: React.FC = () => {
   const [pickedStudent, setPickedStudent] = useState<any>(null);
   const rollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 投影模式（含抢答计时）
-  const [projectOpen, setProjectOpen] = useState(false);
-  const [projIndex, setProjIndex] = useState(0);
-  const [autoPlay, setAutoPlay] = useState(false);
-  const [autoSeconds, setAutoSeconds] = useState(30);
-  const [buzzTotal, setBuzzTotal] = useState(30);
-  const [buzzLeft, setBuzzLeft] = useState<number | null>(null);
-
   // 课堂控制台
   const [consoleData, setConsoleData] = useState<{ quiz: any; questions: any[] } | null>(null);
 
@@ -126,34 +117,6 @@ const ClassroomQuiz: React.FC = () => {
       equipmentAPI.getAll().then((res: any) => setEquipments(res.data.equipments || [])).catch(() => {});
     }
   }, [rewardModalOpen, rewardType]);
-
-  // 投影模式：自动播放
-  useEffect(() => {
-    if (!projectOpen || !autoPlay || questions.length === 0) return;
-    const t = setInterval(() => {
-      setProjIndex(i => Math.min(i + 1, questions.length - 1));
-    }, autoSeconds * 1000);
-    return () => clearInterval(t);
-  }, [projectOpen, autoPlay, autoSeconds, questions.length]);
-
-  // 投影模式：抢答倒计时
-  useEffect(() => {
-    if (buzzLeft === null || buzzLeft <= 0) return;
-    const t = setTimeout(() => setBuzzLeft(v => (v === null ? null : v - 1)), 1000);
-    return () => clearTimeout(t);
-  }, [buzzLeft]);
-
-  // 投影模式：键盘控制（←/→ 翻题，Esc 退出）
-  useEffect(() => {
-    if (!projectOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight') setProjIndex(i => Math.min(i + 1, Math.max(0, questions.length - 1)));
-      else if (e.key === 'ArrowLeft') setProjIndex(i => Math.max(i - 1, 0));
-      else if (e.key === 'Escape') setProjectOpen(false);
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [projectOpen, questions.length]);
 
   const loadClasses = async () => {
     try {
@@ -509,8 +472,6 @@ const ClassroomQuiz: React.FC = () => {
     { title: '难度', dataIndex: 'difficulty', key: 'difficulty', width: 70, render: (v: string) => ({ easy: '简单', medium: '中等', hard: '困难' }[v] || v) },
   ];
 
-  const currentQuestion = questions[projIndex];
-
   return (
     <div style={{ padding: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -775,9 +736,6 @@ const ClassroomQuiz: React.FC = () => {
                 <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => handleOpenConsole(quizDetail)}>
                   进入课堂控制台
                 </Button>
-                <Button icon={<ExpandOutlined />} onClick={() => { setProjIndex(0); setBuzzLeft(null); setAutoPlay(false); setProjectOpen(true); }}>
-                  投影模式
-                </Button>
                 <Button icon={<UserSwitchOutlined />} onClick={startRandomPick}>随机点名</Button>
               </Space>
             )}
@@ -894,82 +852,6 @@ const ClassroomQuiz: React.FC = () => {
           {randomRolling && <div style={{ marginTop: 12, color: '#999' }}>正在随机抽取中...</div>}
         </div>
       </Modal>
-
-      {/* 投影模式（大屏展示 + 自动播放 + 抢答计时） */}
-      {projectOpen && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: '#141414', zIndex: 2000, display: 'flex', flexDirection: 'column', padding: 24
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ color: '#aaa', fontSize: 16 }}>
-              {quizDetail?.title} · 第 {projIndex + 1} / {questions.length} 题
-            </div>
-            <Button icon={<CloseOutlined />} onClick={() => { setProjectOpen(false); setAutoPlay(false); }} ghost>
-              退出投影（Esc）
-            </Button>
-          </div>
-
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 48px' }}>
-            {buzzLeft !== null && buzzLeft > 0 ? (
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ color: '#52c41a', fontSize: 22, marginBottom: 16 }}>抢答计时中！</div>
-                <div style={{ color: '#52c41a', fontSize: 160, fontWeight: 'bold', lineHeight: 1 }}>{buzzLeft}</div>
-                <Button
-                  danger
-                  size="large"
-                  icon={<StopOutlined />}
-                  style={{ marginTop: 24 }}
-                  onClick={() => setBuzzLeft(null)}
-                >
-                  提前结束（有人举手了）
-                </Button>
-              </div>
-            ) : buzzLeft === 0 ? (
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ color: '#ff4d4f', fontSize: 120, fontWeight: 'bold' }}>时间到！</div>
-                <Button style={{ marginTop: 24 }} size="large" onClick={() => setBuzzLeft(null)}>返回题目</Button>
-              </div>
-            ) : (
-              <div style={{ textAlign: 'center', width: '100%' }}>
-                <div style={{ color: '#666', fontSize: 24, marginBottom: 24 }}>第 {projIndex + 1} 题</div>
-                <div style={{ color: '#fff', fontSize: 48, fontWeight: 500, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                  {currentQuestion?.question_text || '暂无题目'}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-            <Button icon={<LeftOutlined />} onClick={() => setProjIndex(i => Math.max(i - 1, 0))}>上一题</Button>
-            <Button onClick={() => setProjIndex(i => Math.min(i + 1, questions.length - 1))}>
-              下一题 <RightOutlined />
-            </Button>
-            <span style={{ color: '#555' }}>|</span>
-            <Space>
-              <Checkbox
-                checked={autoPlay}
-                onChange={(e) => setAutoPlay(e.target.checked)}
-                style={{ color: '#aaa' }}
-              >
-                自动播放
-              </Checkbox>
-              <InputNumber min={5} max={300} value={autoSeconds} onChange={(v) => setAutoSeconds(v || 30)} addonAfter="秒/题" style={{ width: 130 }} />
-            </Space>
-            <Space>
-              <InputNumber min={5} max={300} value={buzzTotal} onChange={(v) => setBuzzTotal(v || 30)} addonAfter="秒抢答" style={{ width: 130 }} />
-              <Button
-                type="primary"
-                danger
-                icon={<ThunderboltOutlined />}
-                onClick={() => { setAutoPlay(false); setBuzzLeft(buzzTotal); }}
-              >
-                开始抢答
-              </Button>
-            </Space>
-          </div>
-        </div>
-      )}
 
       {/* 发放奖励 */}
       <Modal

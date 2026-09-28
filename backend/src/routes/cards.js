@@ -804,7 +804,7 @@ router.post('/classroom-quiz/ai-judge', authenticateToken, async (req, res) => {
     });
 
     const axios = require('axios');
-    const timeoutMs = Math.min((parseInt(config.ai_timeout) || 300) * 1000, 60000);
+    const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
     const startTime = Date.now();
     const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
       model: config.ai_model,
@@ -843,7 +843,8 @@ router.post('/classroom-quiz/ai-judge', authenticateToken, async (req, res) => {
     res.json({
       is_correct: parsed.is_correct === true || parsed.is_correct === 'true',
       score: Math.max(0, Math.min(100, parseInt(parsed.score) || 0)),
-      comment: parsed.comment || ''
+      comment: parsed.comment || '',
+      correct_answer: parsed.correct_answer ? String(parsed.correct_answer) : ''
     });
   } catch (error) {
     console.error('课堂答题AI评判失败:', error.message);
