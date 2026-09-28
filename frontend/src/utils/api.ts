@@ -616,6 +616,8 @@ export const classroomQuizAPI = {
     api.post('/cards/classroom-quiz/ai-judge', data, { timeout: (timeout || 300) * 1000 }),
   saveAnswer: (quizId: number, data: { question_id?: number; student_id: number; answer_text?: string; judged_by_ai?: boolean; is_correct?: boolean; score?: number; coin_rewarded?: number }) =>
     api.post(`/cards/classroom-quiz/${quizId}/answers`, data),
+  updateAnswerReward: (answerId: number, coin_rewarded: number) =>
+    api.put(`/cards/classroom-quiz/answers/${answerId}`, { coin_rewarded }),
 };
 
 export default api;

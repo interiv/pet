@@ -894,6 +894,22 @@ router.post('/classroom-quiz/:quizId/answers', authenticateToken, (req, res) => 
   }
 });
 
+// 更新课堂答题记录的金币发放数额（发奖后回填）
+router.put('/classroom-quiz/answers/:answerId', authenticateToken, (req, res) => {
+  try {
+    if (req.user.role === 'student') {
+      return res.status(403).json({ error: '无权操作' });
+    }
+    const { coin_rewarded } = req.body;
+    db.prepare('UPDATE classroom_quiz_answers SET coin_rewarded = ? WHERE id = ?')
+      .run(Math.max(0, parseInt(coin_rewarded) || 0), parseInt(req.params.answerId));
+    res.json({ message: '已更新' });
+  } catch (error) {
+    console.error('更新课堂答题记录失败:', error);
+    res.status(500).json({ error: '更新答题记录失败' });
+  }
+});
+
 // 更新课堂做题状态
 router.put('/classroom-quiz/:quizId', authenticateToken, (req, res) => {
   try {

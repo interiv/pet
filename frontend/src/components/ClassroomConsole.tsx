@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Button, Select, InputNumber, Input, Tag, Avatar, Empty, Spin, message, Checkbox, Space, Modal, Table
+  Button, Select, InputNumber, Input, Tag, Avatar, Empty, Spin, message, Checkbox, Space, Modal, Table, Slider
 } from 'antd';
 import {
   LeftOutlined, RightOutlined, CloseOutlined, ThunderboltOutlined,
@@ -85,8 +85,14 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
   const [judgeSeconds, setJudgeSeconds] = useState(0);
   const [judgeResult, setJudgeResult] = useState<any>(null);
   const [perQValue, setPerQValue] = useState(10);
-  const [sessionAnswers, setSessionAnswers] = useState<any[]>([]);
+  // 本课堂的全部答题记录（服务端持久化，打开控制台即加载）
+  const [records, setRecords] = useState<any[]>([]);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  // 投屏字号缩放
+  const [fontScale, setFontScale] = useState<number>(() => {
+    const v = parseFloat(localStorage.getItem('cls_font_scale') || '1');
+    return isNaN(v) ? 1 : Math.min(1.8, Math.max(0.7, v));
+  });
   const recRef = useRef<any>(null);
 
   const currentQuestion = questions[index];
@@ -181,8 +187,25 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     }
   };
 
+  // 加载本课堂的全部答题记录
+  const loadAnswers = async () => {
+    try {
+      const res = await classroomQuizAPI.getQuizDetail(quiz.id);
+      const list: any[] = res.data.answers || [];
+      // 顺序：按时间正序展示
+      const normalized = list.slice().reverse().map(a => ({
+        ...a,
+        questionIndex: Math.max(0, questions.findIndex(q => q.id === a.question_id)),
+      }));
+      setRecords(normalized);
+    } catch (e) {
+      // 加载失败不影响课堂进行
+    }
+  };
+
   useEffect(() => {
     loadStudents();
+    loadAnswers();
     return () => {
       if (rollTimer.current) clearInterval(rollTimer.current);
       window.speechSynthesis?.cancel();
@@ -379,7 +402,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
       const r = res.data;
       setJudgeResult({ ...r, student: answerer, answer: answerText, questionIndex: index, coins: 0 });
       try {
-        await classroomQuizAPI.saveAnswer(quiz.id, {
+        const saved = await classroomQuizAPI.saveAnswer(quiz.id, {
           question_id: currentQuestion.id,
           student_id: answerer.id,
           answer_text: answerText,
@@ -388,15 +411,9 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
           score: r.score,
           coin_rewarded: 0,
         });
+        setJudgeResult((prev: any) => ({ ...prev, answerId: saved.data.answer_id }));
       } catch (e) { /* 记录失败不影响展示 */ }
-      setSessionAnswers(prev => [...prev, {
-        questionIndex: index,
-        student: answerer,
-        answer: answerText,
-        is_correct: r.is_correct,
-        score: r.score,
-        coins: 0,
-      }]);
+      loadAnswers();
       stopSpeech();
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'AI评判失败');
@@ -424,7 +441,11 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
       });
       message.success(`已向 ${judgeResult.student.real_name || judgeResult.student.username} 发放 ${coins} 金币`);
       setJudgeResult((r: any) => ({ ...r, coins }));
-      setSessionAnswers(prev => prev.map((a, i) => i === prev.length - 1 ? { ...a, coins } : a));
+      // 把金币数额回填到该条答题记录
+      if (judgeResult.answerId) {
+        try { await classroomQuizAPI.updateAnswerReward(judgeResult.answerId, coins); } catch (e) { /* 忽略 */ }
+      }
+      loadAnswers();
       onRewarded();
     } catch (e: any) {
       message.error(e?.response?.data?.error || '发放失败');
@@ -509,21 +530,21 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
           <div style={{ color: '#aaa', fontSize: 'clamp(16px, 1.8vw, 24px)', marginBottom: 8 }}>
             第 {judgeResult.questionIndex + 1} 题 · 答题人
           </div>
-          <div style={{ color: '#fff', fontSize: 'clamp(30px, 4vw, 56px)', fontWeight: 'bold' }}>
+          <div style={{ color: '#fff', fontSize: `calc(clamp(30px, 4vw, 56px) * ${fontScale})`, fontWeight: 'bold' }}>
             {judgeResult.student.real_name || judgeResult.student.username}
           </div>
           <div style={{ margin: '20px 0' }}>
             {judgeResult.is_correct
               ? <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 'clamp(48px, 5vw, 80px)' }} />
               : <CloseCircleOutlined style={{ color: '#ff4d4f', fontSize: 'clamp(48px, 5vw, 80px)' }} />}
-            <span style={{ color: judgeResult.is_correct ? '#52c41a' : '#ff4d4f', fontSize: 'clamp(56px, 8vw, 110px)', fontWeight: 'bold', marginLeft: 20 }}>
+            <span style={{ color: judgeResult.is_correct ? '#52c41a' : '#ff4d4f', fontSize: `calc(clamp(56px, 8vw, 110px) * ${fontScale})`, fontWeight: 'bold', marginLeft: 20 }}>
               {judgeResult.score}分
             </span>
           </div>
-          <div style={{ color: '#ddd', fontSize: 'clamp(18px, 2.4vw, 32px)', maxWidth: 900, margin: '0 auto' }}>{judgeResult.comment}</div>
+          <div style={{ color: '#ddd', fontSize: `calc(clamp(18px, 2.4vw, 32px) * ${fontScale})`, maxWidth: 900, margin: '0 auto' }}>{judgeResult.comment}</div>
           {judgeResult.correct_answer && (
             <div style={{
-              color: '#bae637', fontSize: 'clamp(18px, 2.2vw, 30px)', maxWidth: 900, margin: '16px auto 0',
+              color: '#bae637', fontSize: `calc(clamp(18px, 2.2vw, 30px) * ${fontScale})`, maxWidth: 900, margin: '16px auto 0',
               background: '#1c2b12', border: '1px solid #3a5318', borderRadius: 8, padding: '10px 16px'
             }}>
               正确答案：{judgeResult.correct_answer}
@@ -557,7 +578,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
           <div style={{ color: '#aaa', fontSize: 'clamp(16px, 2vw, 26px)', marginBottom: 16 }}>
             {randomState.rolling ? '随机点名中...' : '被点到的同学是'}
           </div>
-          <div style={{ color: randomState.rolling ? '#999' : '#1890ff', fontSize: 'clamp(56px, 10vw, 140px)', fontWeight: 'bold' }}>
+          <div style={{ color: randomState.rolling ? '#999' : '#1890ff', fontSize: `calc(clamp(56px, 10vw, 140px) * ${fontScale})`, fontWeight: 'bold' }}>
             {randomState.name || '...'}
           </div>
           {!randomState.rolling && (
@@ -606,7 +627,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
           {autoPlay && <Tag color="blue" style={{ marginLeft: 12 }}>自动播放中</Tag>}
           {answerer && <Tag color="green" style={{ marginLeft: 12 }}>答题人：{answerer.real_name || answerer.username}</Tag>}
         </div>
-        <div style={{ color: '#fff', fontSize: 'clamp(30px, 4.5vw, 64px)', fontWeight: 500, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+        <div style={{ color: '#fff', fontSize: `calc(clamp(30px, 4.5vw, 64px) * ${fontScale})`, fontWeight: 500, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
           {currentQuestion?.question_text || '暂无题目'}
         </div>
         {/* 朗读控制 */}
@@ -637,20 +658,20 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     );
   };
 
-  // 汇总数据
+  // 汇总数据（基于本课堂全部持久化记录）
   const summaryByStudent = useMemo(() => {
     const map = new Map<number, { name: string; count: number; correct: number; totalScore: number; coins: number }>();
-    for (const a of sessionAnswers) {
-      const key = a.student.id;
-      const item = map.get(key) || { name: a.student.real_name || a.student.username, count: 0, correct: 0, totalScore: 0, coins: 0 };
+    for (const a of records) {
+      const key = a.student_id;
+      const item = map.get(key) || { name: a.student_name, count: 0, correct: 0, totalScore: 0, coins: 0 };
       item.count++;
       if (a.is_correct) item.correct++;
       item.totalScore += a.score || 0;
-      item.coins += a.coins || 0;
+      item.coins += a.coin_rewarded || 0;
       map.set(key, item);
     }
     return Array.from(map.values());
-  }, [sessionAnswers]);
+  }, [records]);
 
   return (
     <div className="cc-dark" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: '#141414', zIndex: 2000, display: 'flex', flexDirection: 'column' }}>
@@ -666,6 +687,11 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
         .cc-dark .ant-select-selector { background: #1f1f1f !important; border-color: #444 !important; }
         .cc-dark .ant-select-selection-item { color: #eee; }
         .cc-dark .ant-select-arrow { color: #999; }
+        .cc-dark .ant-btn-primary:disabled, .cc-dark .ant-btn-primary.ant-btn-disabled {
+          background: #3a3a3a !important; color: #fff !important; border-color: #555 !important;
+        }
+        .cc-dark .ant-slider-track { background: #1890ff; }
+        .cc-dark .ant-slider-rail { background: #333; }
       `}</style>
 
       {/* 顶栏 */}
@@ -676,7 +702,7 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
           <span style={{ marginLeft: 12, color: '#888' }}>课堂控制台（←/→ 翻题，Esc 退出）</span>
         </div>
         <Space>
-          <Button icon={<BarChartOutlined />} onClick={() => setSummaryOpen(true)}>课堂总结（{sessionAnswers.length}条）</Button>
+          <Button icon={<BarChartOutlined />} onClick={() => setSummaryOpen(true)}>课堂总结（{records.length}条）</Button>
           <Button icon={<CloseOutlined />} ghost onClick={onClose}>退出控制台</Button>
         </Space>
       </div>
@@ -684,8 +710,11 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* 左侧：题目 + 答题 */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto', padding: '12px 16px' }}>
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{
+            flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto', minHeight: 0,
+            WebkitOverflowScrolling: 'touch', padding: '12px 16px'
+          }}>
+            <div style={{ margin: 'auto', width: '100%' }}>
               {mainArea()}
             </div>
 
@@ -736,6 +765,18 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
             <Button onClick={() => setIndex(i => Math.min(i + 1, questions.length - 1))}>下一题 <RightOutlined /></Button>
             <span style={{ color: '#555' }}>|</span>
             <Checkbox checked={autoPlay} onChange={(e) => setAutoPlay(e.target.checked)} style={{ color: '#aaa' }}>自动播放</Checkbox>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: '#aaa', fontSize: 12 }}>字号</span>
+              <Slider
+                min={0.7}
+                max={1.8}
+                step={0.1}
+                value={fontScale}
+                onChange={(v) => { setFontScale(v); localStorage.setItem('cls_font_scale', String(v)); }}
+                style={{ width: 120, margin: 0 }}
+                tooltip={{ formatter: (v) => `${Math.round((v || 1) * 100)}%` }}
+              />
+            </span>
             <span>
               <InputNumber min={5} max={300} value={autoSeconds} onChange={(v) => setAutoSeconds(v || 30)} style={{ width: 90 }} />
               <span style={{ color: '#aaa', marginLeft: 4, fontSize: 12 }}>秒/题</span>
@@ -877,21 +918,21 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
         footer={<Button type="primary" onClick={() => setSummaryOpen(false)}>关闭</Button>}
         width={760}
       >
-        {sessionAnswers.length === 0 ? (
-          <Empty description="本轮还没有答题记录" />
+        {records.length === 0 ? (
+          <Empty description="本课堂还没有答题记录" />
         ) : (
           <>
             <Table
-              dataSource={sessionAnswers.map((a, i) => ({ ...a, key: i }))}
+              dataSource={records.map((a, i) => ({ ...a, key: i }))}
               columns={[
                 { title: '题号', width: 70, render: (_: any, r: any) => `第${r.questionIndex + 1}题` },
-                { title: '答题人', render: (_: any, r: any) => r.student.real_name || r.student.username },
-                { title: '回答', dataIndex: 'answer', ellipsis: true },
+                { title: '答题人', dataIndex: 'student_name', width: 90 },
+                { title: '回答', dataIndex: 'answer_text', ellipsis: true },
                 { title: '判定', width: 80, render: (_: any, r: any) => r.is_correct ? <Tag color="green">正确</Tag> : <Tag color="red">错误</Tag> },
-                { title: '得分', width: 70, render: (_: any, r: any) => `${r.score}分` },
-                { title: '金币', width: 70, render: (_: any, r: any) => r.coins > 0 ? `+${r.coins}` : '-' },
+                { title: '得分', width: 70, render: (v: number) => `${v ?? 0}分` },
+                { title: '金币', width: 70, render: (v: number) => v > 0 ? `+${v}` : '-' },
               ]}
-              pagination={false}
+              pagination={{ pageSize: 8 }}
               size="small"
               style={{ marginBottom: 16 }}
             />
