@@ -1,0 +1,570 @@
+const express = require('express');
+const router = express.Router();
+const bcrypt = require('bcryptjs');
+const { db } = require('../../config/database');
+const { authenticateToken } = require('../../middleware/auth');
+const {
+  USERNAME_MAX_LEN,
+  AI_USERNAME_BATCH_SIZE,
+  requireAdmin,
+  purgeUserData,
+  applyApplicationToClass,
+  approveTeacherPendingApplications,
+  checkDataPermission,
+  cleanStudentNames,
+  findDuplicateNames,
+  sanitizeUsername,
+  sanitizeSequencePrefix,
+  isUsernameTaken,
+  ensureUniqueUsername,
+  randomPassword,
+  parseJSONArray,
+  generateUsernamesByAI,
+  ensureSettingsTable,
+} = require('./_shared');
+
+router.get('/classes', authenticateToken, (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    let classes;
+    if (userRole === 'admin') {
+      classes = db.prepare(`
+        SELECT c.*, COALESCE(u.real_name, u.username) as teacher_name, s.name AS school_name,
+          (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') as student_count,
+          (SELECT COALESCE(SUM(exp), 0) FROM pets WHERE user_id IN (SELECT id FROM users WHERE class_id = c.id AND role = 'student')) as total_exp,
+          (SELECT COALESCE(SUM(gold), 0) FROM users WHERE class_id = c.id AND role = 'student') as total_gold
+        FROM classes c
+        LEFT JOIN users u ON c.teacher_id = u.id
+        LEFT JOIN schools s ON c.school_id = s.id
+        ORDER BY c.created_at DESC
+      `).all();
+    } else {
+      classes = db.prepare(`
+        SELECT c.*, COALESCE(u.real_name, u.username) as teacher_name, s.name AS school_name,
+          (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') as student_count,
+          (SELECT COALESCE(SUM(exp), 0) FROM pets WHERE user_id IN (SELECT id FROM users WHERE class_id = c.id AND role = 'student')) as total_exp,
+          (SELECT COALESCE(SUM(gold), 0) FROM users WHERE class_id = c.id AND role = 'student') as total_gold
+        FROM classes c
+        LEFT JOIN users u ON c.teacher_id = u.id
+        LEFT JOIN schools s ON c.school_id = s.id
+        INNER JOIN class_teachers ct ON c.id = ct.class_id
+        WHERE ct.teacher_id = ?
+        ORDER BY c.created_at DESC
+      `).all(userId);
+    }
+
+    const classesWithTeachers = classes.map(cls => {
+      const teachers = db.prepare(`
+        SELECT ct.id as class_teacher_id, ct.role, u.id as teacher_id, u.username, u.real_name
+        FROM class_teachers ct
+        JOIN users u ON ct.teacher_id = u.id
+        WHERE ct.class_id = ?
+      `).all(cls.id);
+      return { ...cls, teachers };
+    });
+
+    res.json({ classes: classesWithTeachers });
+  } catch (error) {
+    console.error('获取班级列表失败:', error);
+    res.status(500).json({ error: '获取班级列表失败' });
+  }
+});
+
+router.post('/classes/:id/teachers', authenticateToken, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { teacher_id, role } = req.body;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    const cls = db.prepare(`SELECT id, name, head_teacher_id FROM classes WHERE id = ?`).get(id);
+    if (!cls) {
+      return res.status(404).json({ error: '班级不存在' });
+    }
+
+    if (!teacher_id) {
+      return res.status(400).json({ error: '请指定教师' });
+    }
+
+    if (userRole !== 'admin') {
+      const myHeadTeacherClass = db.prepare(`SELECT id FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'`).get(userId, id);
+      if (!myHeadTeacherClass) {
+        return res.status(403).json({ error: '只有班主任可以添加本班教师' });
+      }
+    }
+
+    const teacher = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher' AND status = 'active'`).get(teacher_id);
+    if (!teacher) {
+      return res.status(400).json({ error: '指定的教师不存在或未激活' });
+    }
+
+    const existing = db.prepare(`SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ?`).get(id, teacher_id);
+    if (existing) {
+      return res.status(400).json({ error: '该教师已在班级中' });
+    }
+
+    const targetRole = role === 'head_teacher' ? 'head_teacher' : 'teacher';
+
+    // 指定为班主任时：校验班主任唯一性（一个班一个班主任、一个教师只能带一个班）
+    if (targetRole === 'head_teacher') {
+      const hasHeadTeacher = cls.head_teacher_id
+        || db.prepare(`SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(id);
+      if (hasHeadTeacher) {
+        return res.status(400).json({ error: `班级「${cls.name}」已有班主任` });
+      }
+      const otherClass = db.prepare('SELECT name FROM classes WHERE head_teacher_id = ?').get(teacher_id);
+      if (otherClass) {
+        return res.status(400).json({ error: `该教师已是班级「${otherClass.name}」的班主任` });
+      }
+    }
+
+    const addTeacher = db.transaction(() => {
+      const result = db.prepare(`
+        INSERT INTO class_teachers (class_id, teacher_id, role)
+        VALUES (?, ?, ?)
+      `).run(id, teacher_id, targetRole);
+
+      // 关键：指定班主任时必须同步 classes.head_teacher_id，否则"我的班级"等依赖该字段的功能会失效
+      if (targetRole === 'head_teacher') {
+        db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?').run(teacher_id, id);
+      }
+      return result;
+    });
+
+    const result = addTeacher();
+
+    res.json({
+      message: targetRole === 'head_teacher' ? `已将教师设为「${cls.name}」的班主任` : '教师已添加到班级',
+      class_teacher_id: result.lastInsertRowid,
+    });
+  } catch (error) {
+    console.error('添加教师到班级失败:', error);
+    res.status(500).json({ error: '添加教师到班级失败' });
+  }
+});
+
+router.delete('/classes/:id/teachers/:teacherId', authenticateToken, (req, res) => {
+  try {
+    const { id, teacherId } = req.params;
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    if (userRole !== 'admin') {
+      const isHeadTeacher = db.prepare(
+        `SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ? AND role = 'head_teacher'`
+      ).get(id, userId);
+      if (!isHeadTeacher) {
+        return res.status(403).json({ error: '只有班主任或管理员可以移除教师' });
+      }
+    }
+
+    const targetRecord = db.prepare(
+      `SELECT role FROM class_teachers WHERE class_id = ? AND teacher_id = ?`
+    ).get(id, teacherId);
+    if (!targetRecord) {
+      return res.status(404).json({ error: '该教师不在班级中' });
+    }
+    if (targetRecord.role === 'head_teacher') {
+      return res.status(400).json({ error: '不能移除班主任，请先更换班主任' });
+    }
+
+    const result = db.prepare(`DELETE FROM class_teachers WHERE class_id = ? AND teacher_id = ?`).run(id, teacherId);
+    if (result.changes === 0) {
+      return res.status(404).json({ error: '该教师不在班级中' });
+    }
+
+    res.json({ message: '教师已从班级移除' });
+  } catch (error) {
+    console.error('从班级移除教师失败:', error);
+    res.status(500).json({ error: '从班级移除教师失败' });
+  }
+});
+
+router.get('/class-applications', authenticateToken, (req, res) => {
+  try {
+    const { class_id, status } = req.query;
+
+    let sql = `
+      SELECT ca.*, u.username, u.real_name, u.email, c.name as class_name
+      FROM class_applications ca
+      JOIN users u ON ca.user_id = u.id
+      JOIN classes c ON ca.class_id = c.id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    // 权限检查：班主任只能查看本班申请
+    if (req.user.role === 'teacher') {
+      const teacherClasses = db.prepare(`
+        SELECT class_id FROM class_teachers WHERE teacher_id = ? AND role = 'head_teacher'
+      `).all(req.user.userId);
+      if (teacherClasses.length === 0) {
+        return res.status(403).json({ error: '只有班主任才能审批申请' });
+      }
+      const classIds = teacherClasses.map(tc => tc.class_id);
+      if (class_id) {
+        if (!classIds.includes(parseInt(class_id))) {
+          return res.status(403).json({ error: '只能查看本班的申请' });
+        }
+        sql += ` AND ca.class_id = ?`;
+        params.push(parseInt(class_id));
+      } else {
+        sql += ` AND ca.class_id IN (${classIds.map(() => '?').join(',')})`;
+        params.push(...classIds);
+      }
+    } else if (req.user.role === 'student') {
+      return res.status(403).json({ error: '学生无法查看申请列表' });
+    } else if (req.user.role === 'admin') {
+      if (class_id) {
+        sql += ` AND ca.class_id = ?`;
+        params.push(parseInt(class_id));
+      }
+    }
+
+    if (status) {
+      sql += ` AND ca.status = ?`;
+      params.push(status);
+    }
+
+    sql += ` ORDER BY ca.created_at DESC`;
+
+    const applications = db.prepare(sql).all(...params);
+    res.json({ applications });
+  } catch (error) {
+    console.error('获取申请列表失败:', error);
+    res.status(500).json({ error: '获取申请列表失败' });
+  }
+});
+
+router.put('/class-applications/:id/review', authenticateToken, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: '无效的审批状态' });
+    }
+
+    // 获取申请信息
+    const application = db.prepare(`
+      SELECT ca.*, c.teacher_id as head_teacher_id
+      FROM class_applications ca
+      JOIN classes c ON ca.class_id = c.id
+      WHERE ca.id = ?
+    `).get(id);
+
+    if (!application) {
+      return res.status(404).json({ error: '申请不存在' });
+    }
+
+    // 权限检查：只有班主任或管理员可以审批
+    if (req.user.role === 'teacher') {
+      const isHeadTeacher = db.prepare(`
+        SELECT id FROM class_teachers
+        WHERE class_id = ? AND teacher_id = ? AND role = 'head_teacher'
+      `).get(application.class_id, req.user.userId);
+      if (!isHeadTeacher) {
+        return res.status(403).json({ error: '只有班主任才能审批申请' });
+      }
+    } else if (req.user.role === 'student') {
+      return res.status(403).json({ error: '学生无法审批申请' });
+    }
+
+    // 审批：通过与拒绝都走统一的"申请落地"逻辑（内部含班主任唯一性等校验）
+    const runApproval = db.transaction(() => {
+      if (status === 'approved') {
+        const result = applyApplicationToClass(application, req.user.userId);
+        if (!result.ok) {
+          throw new Error(result.reason);
+        }
+        return result;
+      }
+      db.prepare(`
+        UPDATE class_applications
+        SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(status, req.user.userId, id);
+      return null;
+    });
+
+    let applied = null;
+    try {
+      applied = runApproval();
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+
+    res.json({
+      message: status === 'approved'
+        ? `已批准申请${applied?.className ? `，已加入班级「${applied.className}」` : ''}`
+        : '已拒绝申请',
+    });
+  } catch (error) {
+    console.error('审批申请失败:', error);
+    res.status(500).json({ error: '审批申请失败' });
+  }
+});
+
+router.post('/classes', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const { name, grade, teacher_id, school_id } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: '班级名称不能为空' });
+    }
+
+    if (teacher_id) {
+      const teacher = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher' AND status = 'active'`).get(teacher_id);
+      if (!teacher) {
+        return res.status(400).json({ error: '指定的教师不存在或未激活' });
+      }
+    }
+
+    if (!school_id) {
+      return res.status(400).json({ error: '请选择所属学校' });
+    }
+    const school = db.prepare(`SELECT id FROM schools WHERE id = ?`).get(school_id);
+    if (!school) {
+      return res.status(400).json({ error: '指定的学校不存在' });
+    }
+
+    const result = db.prepare(`
+      INSERT INTO classes (name, grade, teacher_id, school_id, student_count, total_exp, created_at)
+      VALUES (?, ?, ?, ?, 0, 0, datetime('now'))
+    `).run(name, grade || null, teacher_id || null, school_id);
+    
+    res.json({ message: '班级创建成功', class_id: result.lastInsertRowid });
+  } catch (error) {
+    console.error('创建班级失败:', error);
+    res.status(500).json({ error: '创建班级失败' });
+  }
+});
+
+router.put('/classes/:id', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, grade, teacher_id, description, is_public, cover_image, slug, school_id } = req.body;
+
+    const cls = db.prepare(`SELECT id FROM classes WHERE id = ?`).get(id);
+    if (!cls) {
+      return res.status(404).json({ error: '班级不存在' });
+    }
+
+    const updates = [];
+    const params = [];
+    if (name !== undefined) { updates.push('name = ?'); params.push(name); }
+    if (grade !== undefined) { updates.push('grade = ?'); params.push(grade); }
+    if (teacher_id !== undefined) {
+      if (teacher_id) {
+        const teacher = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher' AND status = 'active'`).get(teacher_id);
+        if (!teacher) {
+          return res.status(400).json({ error: '指定的教师不存在或未激活' });
+        }
+      }
+      updates.push('teacher_id = ?');
+      params.push(teacher_id || null);
+    }
+    if (description !== undefined) { updates.push('description = ?'); params.push(description || null); }
+    if (is_public !== undefined) { updates.push('is_public = ?'); params.push(is_public ? 1 : 0); }
+    if (cover_image !== undefined) { updates.push('cover_image = ?'); params.push(cover_image || null); }
+    if (slug !== undefined) {
+      const s = String(slug || '').trim();
+      if (!/^[a-z0-9][a-z0-9-]{2,31}$/i.test(s)) {
+        return res.status(400).json({ error: 'slug 需 3-32 位字母/数字/连字符，且首字符为字母或数字' });
+      }
+      const dup = db.prepare(`SELECT id FROM classes WHERE slug = ? AND id <> ?`).get(s, id);
+      if (dup) return res.status(400).json({ error: '该 slug 已被占用' });
+      updates.push('slug = ?'); params.push(s);
+    }
+    if (school_id !== undefined) {
+      if (school_id) {
+        const school = db.prepare(`SELECT id FROM schools WHERE id = ?`).get(school_id);
+        if (!school) return res.status(400).json({ error: '指定的学校不存在' });
+      }
+      updates.push('school_id = ?'); params.push(school_id || null);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: '没有要更新的字段' });
+    }
+
+    params.push(id);
+    db.prepare(`UPDATE classes SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    res.json({ message: '班级信息更新成功' });
+  } catch (error) {
+    console.error('更新班级信息失败:', error);
+    res.status(500).json({ error: '更新班级信息失败' });
+  }
+});
+
+router.delete('/classes/:id', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const cls = db.prepare(`SELECT id, student_count FROM classes WHERE id = ?`).get(id);
+    if (!cls) {
+      return res.status(404).json({ error: '班级不存在' });
+    }
+    
+    if (cls.student_count > 0) {
+      return res.status(400).json({ error: '班级中还有学生，无法删除' });
+    }
+    
+    // 清理关联记录，避免外键约束失败
+    db.prepare(`DELETE FROM class_applications WHERE class_id = ?`).run(id);
+    db.prepare(`DELETE FROM class_teachers WHERE class_id = ?`).run(id);
+    db.prepare(`DELETE FROM class_invitations WHERE class_id = ?`).run(id);
+    db.prepare(`UPDATE users SET class_id = NULL WHERE class_id = ?`).run(id);
+    db.prepare(`UPDATE classes SET teacher_id = NULL, head_teacher_id = NULL WHERE id = ?`).run(id);
+    db.prepare(`DELETE FROM classes WHERE id = ?`).run(id);
+    res.json({ message: '班级已删除' });
+  } catch (error) {
+    console.error('删除班级失败:', error);
+    res.status(500).json({ error: '删除班级失败' });
+  }
+});
+
+router.get('/classes/:id/teacher-activity', authenticateToken, (req, res) => {
+  try {
+    const classId = parseInt(req.params.id, 10);
+    if (!classId) return res.status(400).json({ error: '班级 ID 无效' });
+    const userId = req.user.userId;
+    const userRole = req.user.role;
+
+    // 权限检查：班主任或管理员
+    if (userRole === 'teacher') {
+      const isHeadTeacher = db.prepare(`
+        SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'
+      `).get(userId, classId);
+      if (!isHeadTeacher) {
+        return res.status(403).json({ error: '需要班主任权限' });
+      }
+    } else if (userRole !== 'admin') {
+      return res.status(403).json({ error: '权限不足' });
+    }
+
+    // 班级基本信息
+    const classInfo = db.prepare(`SELECT id, name, grade, student_count FROM classes WHERE id = ?`).get(classId);
+    if (!classInfo) {
+      return res.status(404).json({ error: '班级不存在' });
+    }
+
+    // 任课老师列表及其教学数据
+    let teachers = [];
+    try {
+      teachers = db.prepare(`
+        SELECT
+          u.id as teacher_id,
+          u.username,
+          u.real_name,
+          u.avatar,
+          ct.role as class_role,
+          COUNT(DISTINCT a.id) as total_assignments,
+          COUNT(DISTINCT CASE WHEN a.created_at >= DATE('now', '-30 days', 'localtime') THEN a.id END) as recent_assignments,
+          (SELECT COUNT(*) FROM submissions s WHERE s.assignment_id IN (SELECT id FROM assignments WHERE teacher_id = u.id AND class_id = ?)) as total_submissions,
+          (SELECT COUNT(*) FROM submissions s WHERE s.assignment_id IN (SELECT id FROM assignments WHERE teacher_id = u.id AND class_id = ?) AND s.status = 'submitted' AND (s.teacher_score IS NULL OR s.review_status = 'pending')) as ungraded_count,
+          (SELECT COUNT(*) FROM submissions s WHERE s.assignment_id IN (SELECT id FROM assignments WHERE teacher_id = u.id AND class_id = ?) AND s.submitted_at >= DATE('now', '-7 days', 'localtime')) as recent_submissions
+        FROM class_teachers ct
+        JOIN users u ON ct.teacher_id = u.id
+        LEFT JOIN assignments a ON a.teacher_id = u.id AND a.class_id = ?
+        WHERE ct.class_id = ? AND u.status = 'active'
+        GROUP BY u.id
+        ORDER BY total_assignments DESC
+      `).all(classId, classId, classId, classId, classId);
+    } catch (e) {
+      console.error('获取任课老师数据失败:', e);
+    }
+
+    // 各科成绩对比
+    let subjectStats = [];
+    try {
+      subjectStats = db.prepare(`
+        SELECT
+          a.subject,
+          COUNT(DISTINCT a.id) as assignment_count,
+          COUNT(DISTINCT s.user_id) as active_students,
+          ROUND(AVG(CASE WHEN s.total_score IS NOT NULL AND s.total_max_score > 0 THEN s.total_score * 100.0 / s.total_max_score END), 1) as avg_accuracy,
+          ROUND(AVG(CASE WHEN s.total_score IS NOT NULL THEN s.total_score END), 1) as avg_score
+        FROM assignments a
+        LEFT JOIN submissions s ON s.assignment_id = a.id
+        WHERE a.class_id = ? AND a.subject IS NOT NULL AND a.subject != ''
+        GROUP BY a.subject
+        ORDER BY assignment_count DESC
+      `).all(classId);
+    } catch (e) { /* assignments/submissions may not exist */ }
+
+    // 学生薄弱情况（正确率低于60%的知识点数）
+    let strugglingStudents = [];
+    try {
+      strugglingStudents = db.prepare(`
+        SELECT
+          u.id as user_id,
+          u.username,
+          u.real_name,
+          u.avatar,
+          COUNT(DISTINCT CASE WHEN kps.accuracy < 60 THEN kps.knowledge_point END) as weak_kp_count,
+          COUNT(DISTINCT kps.knowledge_point) as total_kp_count,
+          ROUND(AVG(kps.accuracy), 1) as avg_accuracy
+        FROM users u
+        LEFT JOIN knowledge_point_stats kps ON kps.user_id = u.id AND kps.date >= DATE('now', '-30 days', 'localtime')
+        WHERE u.role = 'student' AND u.class_id = ?
+        GROUP BY u.id
+        HAVING weak_kp_count > 0 OR total_kp_count = 0
+        ORDER BY weak_kp_count DESC
+        LIMIT 10
+      `).all(classId);
+    } catch (e) { /* knowledge_point_stats may not exist */ }
+
+    // 不活跃学生（7天内无活动）
+    let inactiveStudents = [];
+    try {
+      inactiveStudents = db.prepare(`
+        SELECT u.id, u.username, u.real_name, u.avatar, u.last_login
+        FROM users u
+        WHERE u.role = 'student' AND u.class_id = ?
+          AND (u.last_login IS NULL OR u.last_login < DATE('now', '-7 days', 'localtime'))
+        ORDER BY u.last_login ASC
+        LIMIT 10
+      `).all(classId);
+    } catch (e) { /* users may not have last_login */ }
+
+    // 待处理入学申请
+    let pendingApps = 0;
+    try {
+      pendingApps = db.prepare(`SELECT COUNT(*) as count FROM class_applications WHERE class_id = ? AND status = 'pending'`).get(classId).count;
+    } catch (e) { /* class_applications may not exist */ }
+
+    // 最近提交的作业（实时动态）
+    let recentSubmissions = [];
+    try {
+      recentSubmissions = db.prepare(`
+        SELECT s.id, s.total_score, s.total_max_score, s.submitted_at,
+               COALESCE(u.real_name, u.username) as student_name,
+               a.title as assignment_title, a.subject
+        FROM submissions s
+        JOIN users u ON s.user_id = u.id
+        JOIN assignments a ON s.assignment_id = a.id
+        WHERE a.class_id = ?
+        ORDER BY s.submitted_at DESC
+        LIMIT 10
+      `).all(classId);
+    } catch (e) { /* submissions may not exist */ }
+
+    res.json({
+      class_info: classInfo,
+      teachers,
+      subject_stats: subjectStats,
+      struggling_students: strugglingStudents,
+      inactive_students: inactiveStudents,
+      pending_applications: pendingApps,
+      recent_submissions: recentSubmissions
+    });
+  } catch (error) {
+    console.error('获取班级教学数据失败:', error);
+    res.status(500).json({ error: '获取班级教学数据失败' });
+  }
+});
+
+module.exports = router;
