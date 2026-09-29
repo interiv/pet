@@ -6,7 +6,9 @@ import Assignments from './Assignments';
 import WrongQuestions from './WrongQuestions';
 import DailyTasks from './DailyTasks';
 import ClassDashboard from './ClassDashboard';
-import { ClassTeachingOverview } from './Admin';
+// 原先从 './Admin' 具名导入，会把整个 Admin.tsx（含全部 antd 组件与 15 个子组件）打进包里。
+// Admin.tsx 拆分后改为直接引用独立文件，断开这层耦合。
+import { ClassTeachingOverview } from './admin/ClassTeachingOverview';
 import BossBattleManager from './BossBattleManager';
 import Achievements from './Achievements';
 import LearningDashboard from './LearningDashboard';
