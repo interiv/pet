@@ -59,9 +59,14 @@ pet/
 │   ├── migrations/        # 数据库迁移文件
 │   ├── seeds/             # 种子数据文件
 │   ├── src/
-│   │   ├── config/          # 数据库配置
+│   │   ├── config/          # 配置（database / ai / achievementConditions 等）
+│   │   │   └── prompts/     # AI 提示词模板（gen / classroom / coach / judge / admin）
 │   │   ├── middleware/      # 认证中间件
+│   │   ├── utils/           # 公共工具（判分标准化等）
+│   │   ├── services/        # 服务
+│   │   │   └── demoData/    # 演示数据（导入 / 清除 / 统计）
 │   │   ├── routes/         # API 路由
+│   │   │   ├── admin/       # 管理后台子路由（teachers / students / classes / announcements / statistics / settings / assignments / monitor / maintenance）
 │   │   │   ├── achievements.js  # 成就系统
 │   │   │   ├── admin.js         # 管理后台
 │   │   │   ├── ai-coach.js     # AI 教练
@@ -262,13 +267,19 @@ FRONTEND_URL=https://your-domain.com
 
 ### 成长阶段
 
-1. **宠物蛋**：初始状态
-2. **初生期**：1-10 级
-3. **幼年期**：11-20 级
-4. **成长期**：21-35 级
-5. **成年期**：36-50 级
-6. **完全体**：51-80 级
-7. **究极体**：81-100 级
+判定逻辑见 `backend/src/routes/pets.js` 的 `checkLevelUp`，实际等级区间如下：
+
+| 阶段 | 等级区间 |
+|------|----------|
+| 宠物蛋 | 1-4 级 |
+| 初生期 | 5-9 级（满 5 级进化） |
+| 幼年期 | 10-19 级（满 10 级进化） |
+| 成长期 | 20-34 级（满 20 级进化） |
+| 成年期 | 35-54 级（满 35 级进化） |
+| 完全体 | 55-79 级（满 55 级进化） |
+| 究极体 | 80 级及以上（满 80 级进化） |
+
+升级所需经验：`100 × 当前等级^1.5`，支持一次发放经验后连续升多级。
 
 ### 宠物类型与克制
 
