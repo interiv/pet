@@ -1,0 +1,45 @@
+# ============================================
+# Docker 构建上下文排除清单
+# ============================================
+
+# ---- 真实环境变量：绝不能打进镜像 ----
+# 容器运行时由 docker-compose 的 environment 传入，
+# 镜像内只保留 .env.example 作为模板。
+# 注意：不要把 .env.example 也排除掉，否则 Dockerfile 的
+# `COPY backend/.env* ./` 会因匹配不到文件而构建失败。
+.env
+**/.env
+**/.env.local
+**/.env.*.local
+
+# ---- 依赖目录：镜像内会重新 npm ci，不需要宿主机的 ----
+node_modules
+**/node_modules
+
+# ---- 版本控制 ----
+.git
+.gitignore
+**/.gitignore
+
+# ---- 本地运行产物 ----
+backend/data
+**/data/*.sqlite
+**/data/*.sqlite3
+backend/uploads
+**/uploads/*
+dist
+**/dist
+frontend/dist
+
+# ---- 日志 ----
+*.log
+dev-backend.log
+dev-frontend.log
+
+# ---- 文档：不影响运行，减小构建上下文 ----
+docs
+部署速查.md
+手动部署指南.md
+DOCKER.md
+ROADMAP.md
+deploy.sh
