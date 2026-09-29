@@ -3,6 +3,9 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const { db } = require('../../config/database');
 const { authenticateToken } = require('../../middleware/auth');
+const { getChinaDate } = require('../../config/timezone');
+const { getAIConfig, isAIConfigured, getAITimeoutMs } = require('../../config/ai');
+const { PROMPTS, SETTING_PREFIX, getPrompt, fillTemplate } = require('../../config/prompts');
 const {
   USERNAME_MAX_LEN,
   AI_USERNAME_BATCH_SIZE,

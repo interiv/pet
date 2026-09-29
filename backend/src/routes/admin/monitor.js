@@ -3,6 +3,9 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const { db } = require('../../config/database');
 const { authenticateToken } = require('../../middleware/auth');
+const { getChinaDate } = require('../../config/timezone');
+const { getAIConfig, isAIConfigured, getAITimeoutMs } = require('../../config/ai');
+const { PROMPTS, SETTING_PREFIX, getPrompt, fillTemplate } = require('../../config/prompts');
 const {
   USERNAME_MAX_LEN,
   AI_USERNAME_BATCH_SIZE,
@@ -129,7 +132,8 @@ router.get('/shop-records', authenticateToken, (req, res) => {
 router.get('/token-usage/dashboard', authenticateToken, requireAdmin, (req, res) => {
   try {
     ensureSettingsTable();
-    const { getChinaDate } = require('../config/timezone');
+    // 注意：本文件位于 routes/admin/ 下，相对路径要比原 admin.js 多一层
+    const { getChinaDate } = require('../../config/timezone');
     const today = getChinaDate();
 
     const todayStats = db.prepare(`
@@ -236,7 +240,8 @@ router.get('/token-usage/my-limit', authenticateToken, (req, res) => {
       return res.status(403).json({ error: '仅教师可查看' });
     }
     ensureSettingsTable();
-    const { getChinaDate } = require('../config/timezone');
+    // 注意：本文件位于 routes/admin/ 下，相对路径要比原 admin.js 多一层
+    const { getChinaDate } = require('../../config/timezone');
     const today = getChinaDate();
 
     const dailyLimit = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'daily_teacher_gen_limit'`).get()?.value || '5');
