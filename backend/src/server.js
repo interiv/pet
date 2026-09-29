@@ -45,10 +45,14 @@ initDatabase();
 
 const { db } = require('./config/database');
 
-const allowedOrigins = (process.env.FRONTEND_URL || '')
+// 未配置 FRONTEND_URL 时（本地开发 / 首次部署）默认为空数组会拒绝所有跨域请求，
+// 这里回退到本地常用开发地址，避免出现「接口通但前端全被 CORS 拦掉」的假故障。
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173,http://localhost:3000')
   .split(',')
   .map(u => u.trim())
   .filter(Boolean);
+
+console.log(`CORS 允许来源: ${allowedOrigins.join(', ') || '(无)'}`);
 
 const app = express();
 const server = http.createServer(app);
