@@ -3,6 +3,9 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 
+// 胜率榜最小场次门槛（低于该场次不进入排名）
+const MIN_BATTLES_FOR_RANK = 5;
+
 function parseLimit(raw, def = 20, max = 100) {
   const n = parseInt(raw, 10);
   if (!Number.isFinite(n) || n <= 0) return def;
@@ -10,7 +13,8 @@ function parseLimit(raw, def = 20, max = 100) {
 }
 
 // 等级排行榜（可按班级过滤）
-router.get('/level', (req, res) => {
+// 需要登录：原实现无鉴权，未登录即可拉取全站学生的真实姓名
+router.get('/level', authenticateToken, (req, res) => {
   try {
     const { class_id } = req.query;
     const limit = parseLimit(req.query.limit, 20);
@@ -55,7 +59,9 @@ router.get('/battle', authenticateToken, (req, res) => {
       sql += ` AND u.class_id = ?`;
       params.push(parseInt(class_id, 10));
     }
-    sql += ` ORDER BY win_rate DESC LIMIT ?`;
+    // 最小场次门槛：原先 1 战 1 胜即可登顶，榜首没有参考价值
+    sql += ` AND p.total_battles >= ${MIN_BATTLES_FOR_RANK}`;
+    sql += ` ORDER BY win_rate DESC, p.total_battles DESC LIMIT ?`;
     params.push(limit);
     const leaderboard = db.prepare(sql).all(...params);
     res.json({ leaderboard });

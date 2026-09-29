@@ -6,6 +6,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { getChinaDate } = require('../config/timezone');
 const { getAIConfig, isAIConfigured } = require('../config/ai');
 const { getPrompt, fillTemplate } = require('../config/prompts');
+const { checkLevelUp } = require('./pets');
 
 function generateCardCode(length = 12) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -17,133 +18,10 @@ function generateCardCode(length = 12) {
   return code;
 }
 
-function ensureTables() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS cards (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      code TEXT NOT NULL UNIQUE,
-      type TEXT NOT NULL CHECK(type IN ('gold', 'item', 'equipment', 'exp', 'mystery')),
-      reward_type TEXT NOT NULL,
-      reward_value TEXT NOT NULL,
-      reward_name TEXT,
-      batch_id INTEGER,
-      class_id INTEGER,
-      created_by INTEGER NOT NULL,
-      is_used INTEGER DEFAULT 0,
-      used_by INTEGER,
-      used_at DATETIME,
-      expires_at DATETIME,
-      is_active INTEGER DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (batch_id) REFERENCES card_batches(id),
-      FOREIGN KEY (class_id) REFERENCES classes(id),
-      FOREIGN KEY (created_by) REFERENCES users(id),
-      FOREIGN KEY (used_by) REFERENCES users(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS card_batches (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('gold', 'item', 'equipment', 'exp', 'mystery')),
-      reward_type TEXT NOT NULL,
-      reward_value TEXT NOT NULL,
-      reward_name TEXT,
-      quantity INTEGER NOT NULL,
-      class_id INTEGER,
-      created_by INTEGER NOT NULL,
-      note TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (class_id) REFERENCES classes(id),
-      FOREIGN KEY (created_by) REFERENCES users(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS card_redemption_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      card_id INTEGER NOT NULL,
-      code TEXT NOT NULL,
-      user_id INTEGER NOT NULL,
-      type TEXT NOT NULL,
-      reward_type TEXT NOT NULL,
-      reward_value TEXT NOT NULL,
-      reward_name TEXT,
-      redeemed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (card_id) REFERENCES cards(id),
-      FOREIGN KEY (user_id) REFERENCES users(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS classroom_quizzes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      description TEXT,
-      subject TEXT,
-      class_id INTEGER NOT NULL,
-      created_by INTEGER NOT NULL,
-      status TEXT DEFAULT 'active' CHECK(status IN ('active', 'completed', 'cancelled')),
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      completed_at DATETIME,
-      FOREIGN KEY (class_id) REFERENCES classes(id),
-      FOREIGN KEY (created_by) REFERENCES users(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS classroom_quiz_questions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      quiz_id INTEGER NOT NULL,
-      question_text TEXT NOT NULL,
-      sort_order INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (quiz_id) REFERENCES classroom_quizzes(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS classroom_quiz_rewards (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      quiz_id INTEGER NOT NULL,
-      question_id INTEGER,
-      student_id INTEGER NOT NULL,
-      pet_id INTEGER,
-      reward_type TEXT NOT NULL CHECK(reward_type IN ('gold', 'item', 'equipment', 'exp')),
-      reward_value TEXT NOT NULL,
-      reward_name TEXT,
-      reason TEXT,
-      awarded_by INTEGER NOT NULL,
-      awarded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (quiz_id) REFERENCES classroom_quizzes(id),
-      FOREIGN KEY (question_id) REFERENCES classroom_quiz_questions(id),
-      FOREIGN KEY (student_id) REFERENCES users(id),
-      FOREIGN KEY (pet_id) REFERENCES pets(id),
-      FOREIGN KEY (awarded_by) REFERENCES users(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS classroom_quiz_answers (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      quiz_id INTEGER NOT NULL,
-      question_id INTEGER,
-      student_id INTEGER NOT NULL,
-      answer_text TEXT,
-      judged_by_ai INTEGER DEFAULT 0,
-      is_correct INTEGER,
-      score INTEGER DEFAULT 0,
-      coin_rewarded INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (quiz_id) REFERENCES classroom_quizzes(id),
-      FOREIGN KEY (question_id) REFERENCES classroom_quiz_questions(id),
-      FOREIGN KEY (student_id) REFERENCES users(id)
-    );
-  `);
-
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_cards_code ON cards(code);
-    CREATE INDEX IF NOT EXISTS idx_cards_batch ON cards(batch_id);
-    CREATE INDEX IF NOT EXISTS idx_cards_created_by ON cards(created_by);
-    CREATE INDEX IF NOT EXISTS idx_cards_class ON cards(class_id);
-    CREATE INDEX IF NOT EXISTS idx_card_batches_created ON card_batches(created_by);
-    CREATE INDEX IF NOT EXISTS idx_card_redemption_user ON card_redemption_logs(user_id);
-    CREATE INDEX IF NOT EXISTS idx_classroom_quizzes_class ON classroom_quizzes(class_id);
-    CREATE INDEX IF NOT EXISTS idx_classroom_quiz_rewards_quiz ON classroom_quiz_rewards(quiz_id);
-    CREATE INDEX IF NOT EXISTS idx_classroom_quiz_rewards_student ON classroom_quiz_rewards(student_id);
-  `);
-}
-
-ensureTables();
+// 建表已收编到 knex 迁移：cards / card_batches / card_redemption_logs /
+// classroom_quizzes / classroom_quiz_questions / classroom_quiz_rewards 见 001_initial_schema，
+// classroom_quiz_answers 见 004_consolidate_runtime_tables。此处不再于模块加载时建表，
+// 避免 require 早于迁移执行造成的双轨建表。
 
 // ==================== 卡管理（教师端） ====================
 
@@ -412,12 +290,15 @@ router.post('/redeem', authenticateToken, (req, res) => {
         }
 
         case 'exp': {
-          const pet = db.prepare('SELECT * FROM pets WHERE user_id = ? AND status = ? ORDER BY id DESC LIMIT 1')
-            .get(req.user.userId, 'normal');
+          // 原先限定 status='normal'，宠物昏迷时经验会静默消失；改为按 user_id 直接取
+          const pet = db.prepare('SELECT * FROM pets WHERE user_id = ? ORDER BY id DESC LIMIT 1')
+            .get(req.user.userId);
 
           if (pet) {
             db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
               .run(rewardValue, rewardValue, pet.id);
+            // 经验变化后触发升级检查（原先缺失，经验卡加了经验却不升级）
+            try { checkLevelUp(pet); } catch (e) { console.error('经验卡升级检查失败:', e); }
           }
           break;
         }
@@ -433,11 +314,13 @@ router.post('/redeem', authenticateToken, (req, res) => {
               .run(req.user.userId, goldAmount, `神秘卡 ${cleanCode}: 获得 ${goldAmount} 金币`);
           } else if (roll < 0.7) {
             const expAmount = Math.floor(Math.random() * 100) + 30;
-            const pet = db.prepare('SELECT * FROM pets WHERE user_id = ? AND status = ? ORDER BY id DESC LIMIT 1')
-              .get(req.user.userId, 'normal');
+            // 同 exp 分支：不再限定 status='normal'，并补上升级检查
+            const pet = db.prepare('SELECT * FROM pets WHERE user_id = ? ORDER BY id DESC LIMIT 1')
+              .get(req.user.userId);
             if (pet) {
               db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
                 .run(expAmount, expAmount, pet.id);
+              try { checkLevelUp(pet); } catch (e) { console.error('神秘卡升级检查失败:', e); }
             }
           } else {
             const itemIds = db.prepare('SELECT id FROM items ORDER BY RANDOM() LIMIT 1').all();
@@ -658,6 +541,14 @@ router.post('/classroom-quiz', authenticateToken, (req, res) => {
 
     if (!title || !class_id) {
       return res.status(400).json({ error: '缺少必要参数' });
+    }
+
+    // 校验班级归属：原先不校验，教师可为任意班级创建课堂做题
+    if (req.user.role !== 'admin') {
+      const belongs = db.prepare('SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?').get(req.user.userId, class_id);
+      if (!belongs) {
+        return res.status(403).json({ error: '无权为该班级创建课堂做题' });
+      }
     }
 
     const result = db.prepare(`
@@ -900,9 +791,25 @@ router.put('/classroom-quiz/answers/:answerId', authenticateToken, (req, res) =>
     if (req.user.role === 'student') {
       return res.status(403).json({ error: '无权操作' });
     }
-    const { coin_rewarded } = req.body;
+    const answerId = parseInt(req.params.answerId);
+    const answer = db.prepare(`
+      SELECT cqa.id, cq.created_by, cq.class_id
+      FROM classroom_quiz_answers cqa
+      JOIN classroom_quizzes cq ON cqa.quiz_id = cq.id
+      WHERE cqa.id = ?
+    `).get(answerId);
+    if (!answer) return res.status(404).json({ error: '答题记录不存在' });
+
+    // 归属校验：原先无校验，任何教师都能改任意班级的答题奖励金额
+    if (req.user.role !== 'admin' && answer.created_by !== req.user.userId) {
+      const isHeadTeacher = db.prepare(
+        "SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'"
+      ).get(req.user.userId, answer.class_id);
+      if (!isHeadTeacher) return res.status(403).json({ error: '无权修改该答题记录' });
+    }
+
     db.prepare('UPDATE classroom_quiz_answers SET coin_rewarded = ? WHERE id = ?')
-      .run(Math.max(0, parseInt(coin_rewarded) || 0), parseInt(req.params.answerId));
+      .run(Math.max(0, parseInt(coin_rewarded) || 0), answerId);
     res.json({ message: '已更新' });
   } catch (error) {
     console.error('更新课堂答题记录失败:', error);
@@ -919,6 +826,22 @@ router.put('/classroom-quiz/:quizId', authenticateToken, (req, res) => {
 
     const { quizId } = req.params;
     const { status } = req.body;
+
+    const quiz = db.prepare('SELECT created_by, class_id FROM classroom_quizzes WHERE id = ?').get(quizId);
+    if (!quiz) return res.status(404).json({ error: '课堂做题不存在' });
+
+    // 归属校验：原先无校验，任何教师都能改别人创建的课堂做题状态
+    if (req.user.role !== 'admin' && quiz.created_by !== req.user.userId) {
+      const isHeadTeacher = db.prepare(
+        "SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'"
+      ).get(req.user.userId, quiz.class_id);
+      if (!isHeadTeacher) return res.status(403).json({ error: '无权修改该课堂做题' });
+    }
+
+    // 状态值白名单（与表 CHECK 约束保持一致）
+    if (!['active', 'completed', 'cancelled'].includes(status)) {
+      return res.status(400).json({ error: '无效的课堂做题状态' });
+    }
 
     if (status === 'completed') {
       db.prepare('UPDATE classroom_quizzes SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?')
@@ -962,6 +885,36 @@ router.post('/classroom-quiz/:quizId/reward', authenticateToken, (req, res) => {
       return res.status(404).json({ error: '课堂做题不存在' });
     }
 
+    // 权限校验：原先完全不校验归属，任何教师都能给任意班级的任意学生发奖励。
+    // 放行条件：管理员 / 该课堂做题的创建者 / 该班班主任。
+    if (req.user.role !== 'admin' && quiz.created_by !== req.user.userId) {
+      const isHeadTeacher = db.prepare(
+        "SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'"
+      ).get(req.user.userId, quiz.class_id);
+      if (!isHeadTeacher) {
+        return res.status(403).json({ error: '无权为该课堂做题发放奖励' });
+      }
+    }
+
+    // 学生必须属于该课堂做题所在班级
+    const classStudentIds = new Set(
+      db.prepare("SELECT id FROM users WHERE class_id = ? AND role = 'student'").all(quiz.class_id).map(r => r.id)
+    );
+    if (targetIds.some(id => !classStudentIds.has(id))) {
+      return res.status(400).json({ error: '存在不属于该班级的学生' });
+    }
+
+    // 奖励对象必须真实存在，避免把不存在的 id 写进背包/装备表
+    if (reward_type === 'item') {
+      if (!db.prepare('SELECT id FROM items WHERE id = ?').get(parseInt(reward_value) || 0)) {
+        return res.status(400).json({ error: '物品不存在' });
+      }
+    } else if (reward_type === 'equipment') {
+      if (!db.prepare('SELECT id FROM equipment WHERE id = ?').get(parseInt(reward_value) || 0)) {
+        return res.status(400).json({ error: '装备不存在' });
+      }
+    }
+
     const rewardTransaction = db.transaction(() => {
       const value = parseInt(reward_value) || 0;
 
@@ -1001,6 +954,9 @@ router.post('/classroom-quiz/:quizId/reward', authenticateToken, (req, res) => {
 
           case 'exp': {
             if (pet_id && targetIds.length === 1) {
+              // 校验宠物归属，避免把经验加到别人的宠物上
+              const petRow = db.prepare('SELECT id FROM pets WHERE id = ? AND user_id = ?').get(pet_id, sid);
+              if (!petRow) break;
               db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
                 .run(value, value, pet_id);
             } else {

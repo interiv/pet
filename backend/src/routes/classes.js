@@ -79,19 +79,11 @@ router.get('/by-slug/:slug', (req, res) => {
       };
     }
 
-    // 一个有效的公开邀请码（若存在）
-    const publicInvite = db.prepare(`
-      SELECT invitation_code FROM class_invitations
-      WHERE class_id = ? AND is_active = 1
-        AND (expires_at IS NULL OR expires_at > datetime('now'))
-        AND (max_uses IS NULL OR used_count < max_uses)
-      ORDER BY created_at DESC LIMIT 1
-    `).get(cls.id);
-
+    // 安全：本接口未登录即可访问，绝不能返回邀请码。
+    // 原先会把一个有效邀请码直接暴露给任意访客，任何人都能拿它免审批注册进班。
     res.json({
       class: cls,
-      active_boss: bossProgress,
-      public_invitation_code: publicInvite ? publicInvite.invitation_code : null
+      active_boss: bossProgress
     });
   } catch (error) {
     console.error('获取班级公开主页失败:', error);
@@ -532,6 +524,16 @@ router.post('/register-with-invite', async (req, res) => {
       });
     }
 
+    // 角色归一化：role 可能未传（默认学生）。原实现入库存的是 'student'，
+    // 但后面判断是否累加班级人数时用的是原始 role，导致学生数永远不增加。
+    const finalRole = role === 'teacher' ? 'teacher' : 'student';
+
+    // 校验班级仍然存在（原先未校验，班级被删除后邀请码仍能注册出孤儿账号）
+    const targetClass = db.prepare('SELECT id FROM classes WHERE id = ?').get(invitation.class_id);
+    if (!targetClass) {
+      return res.status(400).json({ error: '该邀请码对应的班级已不存在' });
+    }
+
     // 密码加密
     const passwordHash = await bcrypt.hash(password, 10);
 
@@ -539,19 +541,19 @@ router.post('/register-with-invite', async (req, res) => {
     const result = db.prepare(`
       INSERT INTO users (username, password_hash, email, real_name, role, class_id, status)
       VALUES (?, ?, ?, ?, ?, ?, 'active')
-    `).run(uname, passwordHash, email, String(real_name || '').trim() || null, role || 'student', invitation.class_id);
+    `).run(uname, passwordHash, email, String(real_name || '').trim() || null, finalRole, invitation.class_id);
 
     const userId = result.lastInsertRowid;
 
     // 如果是学生，更新班级学生数
-    if (role === 'student') {
+    if (finalRole === 'student') {
       db.prepare(
         'UPDATE classes SET student_count = student_count + 1 WHERE id = ?'
       ).run(invitation.class_id);
     }
 
     // 如果是教师，添加到 class_teachers 表
-    if (role === 'teacher') {
+    if (finalRole === 'teacher') {
       db.prepare(`
         INSERT INTO class_teachers (class_id, teacher_id, role)
         VALUES (?, ?, 'teacher')
@@ -576,7 +578,7 @@ router.post('/register-with-invite', async (req, res) => {
         VALUES (?, 'class_join_request', ?, ?, 'class_member', ?)
       `).run(
         teacher.teacher_id,
-        `新${role === 'teacher' ? '教师' : '学生'}已加入班级`,
+        `新${finalRole === 'teacher' ? '教师' : '学生'}已加入班级`,
         `${real_name || username} 通过邀请码加入了你的班级「${className}」。`,
         userId
       );
@@ -585,7 +587,7 @@ router.post('/register-with-invite', async (req, res) => {
     // 生成 JWT token
     const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
     const token = jwt.sign(
-      { userId, username, role: role || 'student' },
+      { userId, username, role: finalRole },
       jwtSecret,
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
@@ -597,7 +599,7 @@ router.post('/register-with-invite', async (req, res) => {
         id: userId,
         username,
         email,
-        role: role || 'student',
+        role: finalRole,
         class_id: invitation.class_id
       }
     });
@@ -645,36 +647,36 @@ router.post('/join-with-invite', authenticateToken, (req, res) => {
       });
     }
 
-    // 检查用户是否已经在班级中
+    // 检查用户是否已经在班级中（教师按 class_teachers 判断，学生按 users.class_id 判断）
     const user = db.prepare('SELECT class_id FROM users WHERE id = ?').get(userId);
-    if (user.class_id === invitation.class_id) {
-      return res.status(400).json({ error: '您已经在该班级中' });
-    }
+    const oldClassId = user?.class_id || null;
+    const newClassId = invitation.class_id;
 
-    // 更新用户的班级
-    db.prepare(
-      'UPDATE users SET class_id = ? WHERE id = ?'
-    ).run(invitation.class_id, userId);
-
-    // 如果是学生，更新班级学生数
-    if (userRole === 'student' && (!user.class_id || user.class_id === 0)) {
-      db.prepare(
-        'UPDATE classes SET student_count = student_count + 1 WHERE id = ?'
-      ).run(invitation.class_id);
-    }
-
-    // 如果是教师，添加到 class_teachers 表
     if (userRole === 'teacher') {
       const existingTeacher = db.prepare(
         'SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ?'
-      ).get(invitation.class_id, userId);
-
-      if (!existingTeacher) {
-        db.prepare(`
-          INSERT INTO class_teachers (class_id, teacher_id, role)
-          VALUES (?, ?, 'teacher')
-        `).run(invitation.class_id, userId);
+      ).get(newClassId, userId);
+      if (existingTeacher) {
+        return res.status(400).json({ error: '您已经在该班级中' });
       }
+      // 教师的多班级归属由 class_teachers 维护，不再覆盖 users.class_id
+      // （原先直接 UPDATE users.class_id，会让教师丢失其它班级的归属）
+      db.prepare(`
+        INSERT INTO class_teachers (class_id, teacher_id, role)
+        VALUES (?, ?, 'teacher')
+      `).run(newClassId, userId);
+    } else {
+      if (oldClassId === newClassId) {
+        return res.status(400).json({ error: '您已经在该班级中' });
+      }
+      // 转班时旧班减一、新班加一（原先仅在「原本没有班级」时加，转班导致学生数计数漂移）
+      db.transaction(() => {
+        db.prepare('UPDATE users SET class_id = ? WHERE id = ?').run(newClassId, userId);
+        if (oldClassId && oldClassId !== newClassId) {
+          db.prepare('UPDATE classes SET student_count = MAX(0, student_count - 1) WHERE id = ?').run(oldClassId);
+        }
+        db.prepare('UPDATE classes SET student_count = student_count + 1 WHERE id = ?').run(newClassId);
+      })();
     }
 
     // 更新邀请码使用次数
