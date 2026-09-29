@@ -63,7 +63,9 @@ const optionalAuth = (req, res, next) => {
     const token = authHeader && authHeader.split(' ')[1];
 
     if (token) {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      // 与 authenticateToken 保持一致：未配置 JWT_SECRET 时回退到默认密钥。
+      // 否则 verify 会直接抛错并被下面的 catch 吞掉，导致已登录用户被静默当成游客。
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
       req.user = decoded;
     }
 

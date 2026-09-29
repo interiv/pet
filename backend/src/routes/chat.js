@@ -22,13 +22,14 @@ router.get('/conversations', authenticateToken, (req, res) => {
         // 获取最后一条消息
         const lastMsg = db.prepare(`
           SELECT * FROM chat_messages
-          WHERE room_type = 'class' AND room_id = ?
+          WHERE room_type = 'class' AND room_id = ? AND COALESCE(deleted, 0) = 0
           ORDER BY created_at DESC LIMIT 1
         `).get(cls.id);
 
         const unreadCount = db.prepare(`
           SELECT COUNT(*) as cnt FROM chat_messages
           WHERE room_type = 'class' AND room_id = ? AND user_id != ?
+            AND COALESCE(deleted, 0) = 0
             AND created_at > COALESCE(
               (SELECT last_read_at FROM chat_read_status
                 WHERE user_id = ? AND room_type = 'class' AND room_id = ?),
@@ -66,13 +67,14 @@ router.get('/conversations', authenticateToken, (req, res) => {
       const lastMsg = db.prepare(`
         SELECT * FROM chat_messages
         WHERE ((user_id = ? AND target_user_id = ?) OR (user_id = ? AND target_user_id = ?))
-          AND room_type = 'private'
+          AND room_type = 'private' AND COALESCE(deleted, 0) = 0
         ORDER BY created_at DESC LIMIT 1
       `).get(userId, chat.other_user_id, chat.other_user_id, userId);
 
       const unreadCount = db.prepare(`
         SELECT COUNT(*) as cnt FROM chat_messages
         WHERE user_id = ? AND target_user_id = ? AND room_type = 'private'
+          AND COALESCE(deleted, 0) = 0
           AND created_at > COALESCE(
             (SELECT last_read_at FROM chat_read_status
               WHERE user_id = ? AND target_user_id = ?),
@@ -119,7 +121,7 @@ router.get('/messages', authenticateToken, (req, res) => {
         SELECT cm.*, u.username, u.real_name, u.avatar, u.role
         FROM chat_messages cm
         JOIN users u ON cm.user_id = u.id
-        WHERE cm.room_type = 'class' AND cm.room_id = ?
+        WHERE cm.room_type = 'class' AND cm.room_id = ? AND COALESCE(cm.deleted, 0) = 0
         ORDER BY cm.created_at ASC
         LIMIT ? OFFSET ?
       `).all(parseInt(room_id), parseInt(limit), parseInt(offset));
@@ -140,6 +142,7 @@ router.get('/messages', authenticateToken, (req, res) => {
         FROM chat_messages cm
         JOIN users u ON cm.user_id = u.id
         WHERE cm.room_type = 'private'
+          AND COALESCE(cm.deleted, 0) = 0
           AND (
             (cm.user_id = ? AND cm.target_user_id = ?)
             OR (cm.user_id = ? AND cm.target_user_id = ?)

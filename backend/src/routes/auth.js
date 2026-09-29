@@ -131,13 +131,8 @@ router.post('/register', async (req, res) => {
       }
     }
 
-    // 生成 JWT token
-    const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
-    const token = jwt.sign(
-      { userId, username: uname, role },
-      jwtSecret,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-    );
+    // 注意：注册后账号处于 pending_approval，即使签发 token 也会被认证中间件 403 拦截，
+    // 因此这里不再生成 token（原实现生成后从未返回，属死代码）。
 
     return res.status(201).json({
       message: applyAs === 'head_teacher'
@@ -193,6 +188,9 @@ router.post('/login', async (req, res) => {
 
     // 成就检查
     try {
+      // 口径说明：这里统计的是「有活跃记录的去重天数」（登录天数），不是登录次数。
+      // 必须与 achievements.js /status 中 login 进度的算法保持一致，否则会出现
+      // 进度条显示 100% 但成就未解锁（或反之）。
       const loginDays = db.prepare('SELECT COUNT(DISTINCT date) as c FROM daily_tasks WHERE user_id = ?').get(user.id)?.c || 0;
       checkAndAwardAchievement(user.id, 'login', loginDays + 1);
       const today = getChinaDate();
