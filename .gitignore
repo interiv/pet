@@ -51,6 +51,7 @@ backend/uploads/
 *.temp
 
 # IDE/Agent 目录
+.codebuddy/
 .qoder/
 .trae/
 .claude/
