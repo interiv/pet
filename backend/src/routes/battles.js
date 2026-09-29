@@ -5,8 +5,15 @@ const { authenticateToken } = require('../middleware/auth');
 const { checkLevelUp } = require('./pets');
 const { checkAndAwardAchievement } = require('./achievements');
 
-// 生成战斗日志
-function generateBattleLog(myPet, opponentPet, winner, myWinChance, moodCriticalBonus = 0) {
+// 防御减伤：伤害按 100/(100+防御) 折算，让 defense 真正参与战斗
+// （原先只有 attack 参与伤害计算，堆防御完全没用）
+function mitigateDamage(damage, defense) {
+  const d = Number.isFinite(defense) && defense > 0 ? defense : 0;
+  return Math.max(1, Math.round(damage * (100 / (100 + d))));
+}
+
+// 生成战斗日志：胜负由模拟结果决定，保证日志与最终判定一致
+function generateBattleLog(myPet, opponentPet, myWinChance, moodCriticalBonus = 0) {
   const log = [];
   const maxRounds = 3;
 
@@ -14,31 +21,42 @@ function generateBattleLog(myPet, opponentPet, winner, myWinChance, moodCritical
   let opponentHp = 100;
 
   for (let round = 1; round <= maxRounds; round++) {
-    const myDamage = Math.floor(myPet.attack * (0.8 + Math.random() * 0.4));
-    const opponentDamage = Math.floor(opponentPet.attack * (0.8 + Math.random() * 0.4));
+    const rawMyDamage = Math.floor(myPet.attack * (0.8 + Math.random() * 0.4));
+    const rawOpponentDamage = Math.floor(opponentPet.attack * (0.8 + Math.random() * 0.4));
 
+    // 心情影响暴击率
     const baseCritChance = 0.1 + moodCriticalBonus;
     const isCritical = Math.random() < baseCritChance;
-    const finalMyDamage = isCritical ? Math.floor(myDamage * 1.5) : myDamage;
+    const finalMyDamage = isCritical ? Math.floor(rawMyDamage * 1.5) : rawMyDamage;
 
     // 对手也有暴击判定
     const isOpponentCritical = Math.random() < 0.1;
-    const finalOpponentDamage = isOpponentCritical ? Math.floor(opponentDamage * 1.5) : opponentDamage;
+    const finalOpponentDamage = isOpponentCritical ? Math.floor(rawOpponentDamage * 1.5) : rawOpponentDamage;
 
-    opponentHp = Math.max(0, opponentHp - finalMyDamage);
-    myHp = Math.max(0, myHp - finalOpponentDamage);
+    const myDamage = mitigateDamage(finalMyDamage, opponentPet.defense);
+    const opponentDamage = mitigateDamage(finalOpponentDamage, myPet.defense);
+
+    opponentHp = Math.max(0, opponentHp - myDamage);
+    myHp = Math.max(0, myHp - opponentDamage);
 
     log.push({
       round,
-      myPet: { hp: myHp, damage: finalMyDamage, critical: isCritical },
-      opponent: { hp: opponentHp, damage: finalOpponentDamage, critical: isOpponentCritical }
+      myPet: { hp: myHp, damage: myDamage, critical: isCritical },
+      opponent: { hp: opponentHp, damage: opponentDamage, critical: isOpponentCritical }
     });
 
     if (opponentHp <= 0 || myHp <= 0) break;
   }
 
+  // 胜负完全由模拟结果决定（原先先用概率掷骰子定胜负、再单独模拟日志，
+  // 两者独立，经常出现「日志里对手血已空、判定却是对方赢」）
+  let winner;
+  if (myHp > opponentHp) winner = 'myPet';
+  else if (opponentHp > myHp) winner = 'opponent';
+  else winner = (myPet.speed || 0) >= (opponentPet.speed || 0) ? 'myPet' : 'opponent'; // 平局由速度决出
+
   return {
-    winner: winner === myPet.id ? 'myPet' : 'opponent',
+    winner,
     myWinChance: Math.round(myWinChance * 100),
     rounds: log
   };
@@ -90,7 +108,9 @@ router.post('/start', authenticateToken, (req, res) => {
     const powerDiff = myPower - opponentPower;
     const myWinChance = Math.max(0.1, Math.min(0.9, 0.5 + powerDiff * 0.001 + moodBonus));
 
-    const winner = Math.random() < myWinChance ? myPet.id : opponentPet.id;
+    // 先跑模拟，由模拟结果决定胜负（myWinChance 仅作为战力评估展示给前端）
+    const battleLog = generateBattleLog(myPet, opponentPet, myWinChance, moodCriticalBonus);
+    const winner = battleLog.winner === 'myPet' ? myPet.id : opponentPet.id;
 
     const levelDiff = opponentPet.level - myPet.level;
     const baseExp = 30;
@@ -108,8 +128,6 @@ router.post('/start', authenticateToken, (req, res) => {
       rewardExp = opponentExpGain;
       myExpGain = Math.max(5, Math.floor(opponentExpGain * 0.3));
     }
-
-    const battleLog = generateBattleLog(myPet, opponentPet, winner, myWinChance, moodCriticalBonus);
 
     db.prepare(`
       UPDATE battles SET winner_id = ?, reward_exp = ?, reward_gold = 0, battle_log = ? WHERE id = ?
@@ -185,7 +203,8 @@ router.post('/start', authenticateToken, (req, res) => {
     res.json({
       message: '战斗结束',
       winner: winner === myPet.id ? '我' : '对手',
-      rewardExp: winner === myPet.id ? myExpGain : 10,
+      // 原先战败时硬编码返回 10，与实际发放的 myExpGain 不符
+      rewardExp: myExpGain,
       rewardGold: 0,
       moodChange,
       myWinChance: Math.round(myWinChance * 100),

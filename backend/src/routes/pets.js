@@ -4,58 +4,63 @@ const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { updateTaskProgress } = require('./daily-tasks');
 const { checkAndAwardAchievement } = require('./achievements');
+// 技能槽规则统一复用 skills.js 的实现，避免两个学习接口口径不一致
+const { allocateSkillSlot, countPetSkills, MAX_SKILL_SLOTS } = require('./skills');
 
-// 确保数据库列存在（运行时迁移）
-try {
-  db.exec('ALTER TABLE pets ADD COLUMN feed_count INTEGER DEFAULT 0');
-} catch (e) { /* 列已存在则忽略 */ }
+// feed_count 已由 001_initial_schema 创建，缺失时由 004 号迁移兜底，不再在运行时 ALTER
 
-// 检查升级
+// 检查升级（支持一次连续升多级）
 function checkLevelUp(pet) {
-  const levelThreshold = Math.floor(100 * Math.pow(pet.level, 1.5));
-  
-  if (pet.exp >= levelThreshold) {
-    const newLevel = pet.level + 1;
-    db.prepare(`
-      UPDATE pets 
-      SET level = ?, exp = exp - ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(newLevel, levelThreshold, pet.id);
+  // 以库里的当前值为准，避免调用方传入的 pet 对象已过期导致经验被算错
+  const row = db.prepare('SELECT level, exp, growth_stage FROM pets WHERE id = ?').get(pet.id);
+  if (!row) return { leveledUp: false };
 
-    let newStage = pet.growth_stage;
-    if (newLevel >= 5 && pet.growth_stage === '宠物蛋') {
-      newStage = '初生期';
-    } else if (newLevel >= 10 && pet.growth_stage === '初生期') {
-      newStage = '幼年期';
-    } else if (newLevel >= 20 && pet.growth_stage === '幼年期') {
-      newStage = '成长期';
-    } else if (newLevel >= 35 && pet.growth_stage === '成长期') {
-      newStage = '成年期';
-    } else if (newLevel >= 55 && pet.growth_stage === '成年期') {
-      newStage = '完全体';
-    } else if (newLevel >= 80 && pet.growth_stage === '完全体') {
-      newStage = '究极体';
-    }
+  let newLevel = row.level;
+  let newStage = row.growth_stage;
+  let restExp = row.exp;
+  let levelsGained = 0;
 
-    if (newStage !== pet.growth_stage) {
-      db.prepare('UPDATE pets SET growth_stage = ? WHERE id = ?').run(newStage, pet.id);
-    }
+  // 一次获得大量经验（作业/BOSS奖励/经验卡）时可能连升多级，
+  // 原先只升一级，多余经验会被卡住，必须等到下一次操作才继续升。
+  // guard 防止阈值异常时死循环。
+  for (let guard = 0; guard < 200; guard++) {
+    const levelThreshold = Math.floor(100 * Math.pow(newLevel, 1.5));
+    if (restExp < levelThreshold) break;
 
-    try {
-      checkAndAwardAchievement(pet.user_id, 'pet_level', newLevel);
-      // total_exp_earned 已在调用方更新，这里检查累计经验成就
-      const updatedPet = db.prepare('SELECT total_exp_earned FROM pets WHERE id = ?').get(pet.id);
-      if (updatedPet) checkAndAwardAchievement(pet.user_id, 'total_exp', updatedPet.total_exp_earned);
-    } catch (e) { console.error('成就检查失败:', e); }
+    restExp -= levelThreshold;
+    newLevel += 1;
+    levelsGained += 1;
 
-    return {
-      leveledUp: true,
-      newLevel,
-      newStage: newStage !== pet.growth_stage ? newStage : null
-    };
+    // 每升一级都重新判定成长阶段
+    if (newLevel >= 5 && newStage === '宠物蛋') newStage = '初生期';
+    else if (newLevel >= 10 && newStage === '初生期') newStage = '幼年期';
+    else if (newLevel >= 20 && newStage === '幼年期') newStage = '成长期';
+    else if (newLevel >= 35 && newStage === '成长期') newStage = '成年期';
+    else if (newLevel >= 55 && newStage === '成年期') newStage = '完全体';
+    else if (newLevel >= 80 && newStage === '完全体') newStage = '究极体';
   }
 
-  return { leveledUp: false };
+  if (levelsGained === 0) return { leveledUp: false };
+
+  db.prepare(`
+    UPDATE pets
+    SET level = ?, exp = ?, growth_stage = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(newLevel, restExp, newStage, pet.id);
+
+  try {
+    checkAndAwardAchievement(pet.user_id, 'pet_level', newLevel);
+    // total_exp_earned 已在调用方更新，这里检查累计经验成就
+    const updatedPet = db.prepare('SELECT total_exp_earned FROM pets WHERE id = ?').get(pet.id);
+    if (updatedPet) checkAndAwardAchievement(pet.user_id, 'total_exp', updatedPet.total_exp_earned);
+  } catch (e) { console.error('成就检查失败:', e); }
+
+  return {
+    leveledUp: true,
+    newLevel,
+    levelsGained,
+    newStage: newStage !== row.growth_stage ? newStage : null
+  };
 }
 
 // 获取学生宠物（必须按班级过滤，防止跨校数据泄露）
@@ -491,13 +496,15 @@ router.post('/revive', authenticateToken, (req, res) => {
       return res.status(400).json({ error: '宠物不需要复活' });
     }
 
-    if (item_id) {
-      const userItem = db.prepare('SELECT * FROM user_items WHERE user_id = ? AND item_id = ? AND quantity > 0').get(req.user.userId, item_id);
-      if (!userItem) {
-        return res.status(400).json({ error: '没有复活道具' });
-      }
-      db.prepare('UPDATE user_items SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?').run(req.user.userId, item_id);
+    // 必须消耗复活道具：原先 item_id 可省略，不传即可零成本复活，复活道具形同虚设
+    if (!item_id) {
+      return res.status(400).json({ error: '复活需要消耗复活道具' });
     }
+    const userItem = db.prepare('SELECT * FROM user_items WHERE user_id = ? AND item_id = ? AND quantity > 0').get(req.user.userId, item_id);
+    if (!userItem) {
+      return res.status(400).json({ error: '没有复活道具' });
+    }
+    db.prepare('UPDATE user_items SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?').run(req.user.userId, item_id);
 
     const penalty = 0.1 + Math.random() * 0.05;
     const newAttack = Math.floor(pet.attack * (1 - penalty));
@@ -599,9 +606,14 @@ router.post('/learn-skill', authenticateToken, (req, res) => {
       return res.status(404).json({ error: '还没有宠物' });
     }
 
-    const existingCount = db.prepare('SELECT COUNT(*) as count FROM pet_skills WHERE pet_id = ?').get(pet.id);
-    if (existingCount.count >= 4) {
-      return res.status(400).json({ error: '技能槽已满，需要遗忘一个技能才能学习新技能' });
+    // 与 skills.js /learn 保持同一套规则：等级门槛 + 4 槽上限 + 最小空位分配
+    if (skill.required_level && pet.level < skill.required_level) {
+      return res.status(400).json({ error: `宠物等级不足，需要等级 ${skill.required_level}` });
+    }
+
+    const slot = allocateSkillSlot(pet.id);
+    if (slot === null) {
+      return res.status(400).json({ error: `技能槽已满（最多 ${MAX_SKILL_SLOTS} 个），请先遗忘一个技能` });
     }
 
     const alreadyLearned = db.prepare('SELECT * FROM pet_skills WHERE pet_id = ? AND skill_id = ?').get(pet.id, skill_id);
@@ -609,8 +621,7 @@ router.post('/learn-skill', authenticateToken, (req, res) => {
       return res.status(400).json({ error: '已经学会这个技能了' });
     }
 
-    const slot = existingCount.count + 1;
-    db.prepare('INSERT INTO pet_skills (pet_id, skill_id, slot) VALUES (?, ?, ?)').run(pet.id, skill_id, slot);
+    db.prepare('INSERT INTO pet_skills (pet_id, skill_id, slot, level, mastery) VALUES (?, ?, ?, 1, 0)').run(pet.id, skill_id, slot);
 
     res.json({ message: `学会技能：${skill.name}`, skill });
   } catch (error) {

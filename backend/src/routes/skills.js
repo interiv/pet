@@ -3,6 +3,30 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 
+// 宠物技能槽上限
+const MAX_SKILL_SLOTS = 4;
+
+// 已占用的技能槽
+function usedSkillSlots(petId) {
+  return db.prepare('SELECT slot FROM pet_skills WHERE pet_id = ?').all(petId)
+    .map((r) => r.slot)
+    .filter((s) => Number.isInteger(s));
+}
+
+function countPetSkills(petId) {
+  return db.prepare('SELECT COUNT(*) as c FROM pet_skills WHERE pet_id = ?').get(petId)?.c || 0;
+}
+
+// 分配技能槽：取 1..MAX_SKILL_SLOTS 中最小的空位。
+// 原先 pets.js 用「已有数量 + 1」，遗忘中间槽位后再学会产生重复槽号。
+function allocateSkillSlot(petId) {
+  const used = usedSkillSlots(petId);
+  for (let i = 1; i <= MAX_SKILL_SLOTS; i++) {
+    if (!used.includes(i)) return i;
+  }
+  return null;
+}
+
 // 获取所有可用技能
 router.get('/available', authenticateToken, (req, res) => {
   try {
@@ -83,10 +107,16 @@ router.post('/learn', authenticateToken, (req, res) => {
       return res.status(400).json({ error: `宠物等级不足，需要等级 ${skill.required_level}` });
     }
 
+    // 技能槽上限校验（原先本接口完全没有校验，可无限学技能）
+    const slot = allocateSkillSlot(pet.id);
+    if (slot === null) {
+      return res.status(400).json({ error: `技能槽已满（最多 ${MAX_SKILL_SLOTS} 个），请先遗忘一个技能` });
+    }
+
     db.prepare(`
-      INSERT INTO pet_skills (pet_id, skill_id, level, mastery)
-      VALUES (?, ?, 1, 0)
-    `).run(pet.id, skill_id);
+      INSERT INTO pet_skills (pet_id, skill_id, slot, level, mastery)
+      VALUES (?, ?, ?, 1, 0)
+    `).run(pet.id, skill_id, slot);
 
     res.json({
       message: `成功学习技能: ${skill.name}`,
@@ -149,7 +179,8 @@ router.post('/upgrade', authenticateToken, (req, res) => {
 // 使用技能（在战斗中）
 router.post('/use', authenticateToken, (req, res) => {
   try {
-    const { skill_id, battle_id } = req.body;
+    // battle_id 目前未参与任何校验（原实现接收后即丢弃），保留仅为兼容旧前端传参
+    const { skill_id, battle_id: _battleId } = req.body;
     if (!skill_id) {
       return res.status(400).json({ error: '请提供技能ID' });
     }
@@ -159,8 +190,29 @@ router.post('/use', authenticateToken, (req, res) => {
       return res.status(404).json({ error: '还没有宠物' });
     }
 
+    // 显式列出字段并给 skills 的同名列加别名。
+    // 原先写 SELECT ps.*, s.* ，s.* 会覆盖 ps.id / ps.level，
+    // 导致下面 UPDATE pet_skills WHERE id = ? 用到的是 skills 表的 id，改到别的记录上。
     const petSkill = db.prepare(`
-      SELECT ps.*, s.*
+      SELECT
+        ps.id            AS pet_skill_id,
+        ps.pet_id        AS pet_id,
+        ps.skill_id      AS skill_id,
+        ps.level         AS pet_skill_level,
+        ps.mastery       AS mastery,
+        ps.use_count     AS use_count,
+        ps.last_used     AS last_used,
+        s.id             AS skill_row_id,
+        s.name           AS name,
+        s.description    AS description,
+        s.icon           AS icon,
+        s.skill_type     AS skill_type,
+        s.subject        AS subject,
+        s.required_level AS required_level,
+        s.cooldown       AS cooldown,
+        s.base_damage    AS base_damage,
+        s.base_defense   AS base_defense,
+        s.base_speed     AS base_speed
       FROM pet_skills ps
       JOIN skills s ON ps.skill_id = s.id
       WHERE ps.pet_id = ? AND ps.skill_id = ?
@@ -183,15 +235,15 @@ router.post('/use', authenticateToken, (req, res) => {
       }
     }
 
-    // 使用技能
+    // 使用技能（注意用别名后的 pet_skill_id，避免误用 skills 表 id）
     db.prepare(`
       UPDATE pet_skills 
       SET last_used = CURRENT_TIMESTAMP, use_count = use_count + 1, mastery = mastery + 1
       WHERE id = ?
-    `).run(petSkill.id);
+    `).run(petSkill.pet_skill_id);
 
-    // 计算技能效果
-    const levelBonus = petSkill.level * 0.1;
+    // 计算技能效果（用宠物自身技能等级，而非技能模板等级）
+    const levelBonus = petSkill.pet_skill_level * 0.1;
     const effect = {
       damage: Math.round(petSkill.base_damage * (1 + levelBonus)),
       defense: Math.round(petSkill.base_defense * (1 + levelBonus)),
@@ -212,3 +264,6 @@ router.post('/use', authenticateToken, (req, res) => {
 });
 
 module.exports = router;
+module.exports.MAX_SKILL_SLOTS = MAX_SKILL_SLOTS;
+module.exports.allocateSkillSlot = allocateSkillSlot;
+module.exports.countPetSkills = countPetSkills;

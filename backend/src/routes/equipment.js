@@ -132,7 +132,8 @@ router.post('/sell', authenticateToken, (req, res) => {
       return res.status(400).json({ error: '请先卸下装备再出售' });
     }
 
-    const levelMultiplier = 1 + (equip.level - 1) * 0.15;
+    // 与强化/面板加成保持一致，使用 0.2 系数（原先卖出用 0.15，两处口径不一致）
+    const levelMultiplier = 1 + (equip.level - 1) * 0.2;
     const sellPrice = Math.floor(equip.price * 0.4 * levelMultiplier);
 
     const sellTransaction = db.transaction(() => {
@@ -246,7 +247,7 @@ router.post('/upgrade', authenticateToken, (req, res) => {
     let statsBefore, statsAfter;
     try {
       statsBefore = JSON.parse(equip.stats_bonus);
-      const oldMultiplier = 1 + (currentLevel - 1) * 0.2;
+      // oldMultiplier 原先计算后从未使用（死代码），已移除
       const newMultiplier = 1 + currentLevel * 0.2;
       statsAfter = {};
       for (const [key, baseValue] of Object.entries(statsBefore)) {

@@ -35,15 +35,18 @@ router.post('/buy', authenticateToken, (req, res) => {
       return res.status(400).json({ error: '金币不足' });
     }
 
-    db.prepare('UPDATE users SET gold = gold - ? WHERE id = ?').run(totalCost, req.user.userId);
+    // 扣金币与入背包必须同生同死：原先无事务，入背包失败会导致金币白白扣掉
+    db.transaction(() => {
+      db.prepare('UPDATE users SET gold = gold - ? WHERE id = ?').run(totalCost, req.user.userId);
 
-    const existing = db.prepare('SELECT * FROM user_items WHERE user_id = ? AND item_id = ?').get(req.user.userId, item_id);
-    
-    if (existing) {
-      db.prepare('UPDATE user_items SET quantity = quantity + ? WHERE user_id = ? AND item_id = ?').run(quantity, req.user.userId, item_id);
-    } else {
-      db.prepare('INSERT INTO user_items (user_id, item_id, quantity) VALUES (?, ?, ?)').run(req.user.userId, item_id, quantity);
-    }
+      const existing = db.prepare('SELECT * FROM user_items WHERE user_id = ? AND item_id = ?').get(req.user.userId, item_id);
+
+      if (existing) {
+        db.prepare('UPDATE user_items SET quantity = quantity + ? WHERE user_id = ? AND item_id = ?').run(quantity, req.user.userId, item_id);
+      } else {
+        db.prepare('INSERT INTO user_items (user_id, item_id, quantity) VALUES (?, ?, ?)').run(req.user.userId, item_id, quantity);
+      }
+    })();
 
     const updatedItems = db.prepare(`
       SELECT ui.*, i.name, i.type, i.effect_type, i.effect_value, i.description, i.image_url
