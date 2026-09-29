@@ -7,6 +7,7 @@ const { updateTaskProgress } = require('./daily-tasks');
 const { checkAndAwardAchievement } = require('./achievements');
 const { getChinaDate } = require('../config/timezone');
 const { getPrompt, fillTemplate } = require('../config/prompts');
+const { isAnswerCorrect } = require('../utils/answerCheck');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
@@ -110,34 +111,47 @@ function getSystemSetting(key, defaultVal) {
   }
 }
 
-function ensureTokenUsageTable() {
-  const hasTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'`).get();
-  if (!hasTable) {
-    db.prepare(`
-      CREATE TABLE token_usage (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        date TEXT NOT NULL,
-        prompt_tokens INTEGER DEFAULT 0,
-        completion_tokens INTEGER DEFAULT 0,
-        total_tokens INTEGER DEFAULT 0,
-        model TEXT DEFAULT '',
-        subject TEXT DEFAULT '',
-        topic TEXT DEFAULT '',
-        question_type TEXT DEFAULT '',
-        question_count INTEGER DEFAULT 0,
-        duration_ms INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT (datetime('now'))
-      )
-    `).run();
-    db.prepare(`CREATE INDEX IF NOT EXISTS idx_token_usage_user_date ON token_usage(user_id, date)`).run();
-    db.prepare(`CREATE INDEX IF NOT EXISTS idx_token_usage_date ON token_usage(date)`).run();
+/**
+ * 金币奖励统一算法：基础分 + 连对 Combo + 全对奖励。
+ *
+ * 提交作业（POST /:id/submit）与教师改答案后的重算（PATCH /questions/:id）
+ * 必须共用这一套公式——原先两处各自实现且重算处漏掉了 Combo / 满分奖励，
+ * 导致老师一改答案，学生的金币就被倒扣。
+ *
+ * @param {number} totalScore   百分制总分 0-100
+ * @param {number} questionCount 作业题目总数
+ * @param {Array<{is_correct:boolean}>} results 逐题结果（按题目顺序）
+ * @param {number} maxExp       作业金币上限
+ */
+function calcGoldReward(totalScore, questionCount, results, maxExp) {
+  const list = Array.isArray(results) ? results : [];
+  const base = Math.floor((totalScore / 100) * (maxExp || 30));
+
+  let bestStreak = 0;
+  let streak = 0;
+  for (const r of list) {
+    if (r.is_correct) {
+      streak++;
+      if (streak > bestStreak) bestStreak = streak;
+    } else {
+      streak = 0;
+    }
   }
+
+  let combo = 0;
+  if (bestStreak >= 10) combo = 20;
+  else if (bestStreak >= 5) combo = 10;
+  else if (bestStreak >= 3) combo = 5;
+
+  const correctCount = list.filter(r => r.is_correct).length;
+  const perfect = (questionCount >= 3 && correctCount === questionCount) ? 15 : 0;
+
+  return { gold: base + combo + perfect, base, combo, perfect, bestStreak, correctCount };
 }
 
 router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), async (req, res) => {
   try {
-    ensureTokenUsageTable();
+    // token_usage 表由 004 号迁移创建，不再在请求时动态建表
     const { subject, topic, difficulty = 'medium', question_type, count = 10, grade_level = '', mode = 'topic', requirements = '', raw_text = '' } = req.body;
     
     console.log('\n========== AI 生成作业请求 ==========');
@@ -481,8 +495,9 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
     if (!existing) return res.status(404).json({ error: '题目不存在' });
 
     if (req.user.role === 'teacher') {
-      const assignmentQ = db.prepare('SELECT a.teacher_id FROM assignment_questions aq JOIN assignments a ON aq.assignment_id = a.id WHERE aq.question_bank_id = ?').get(qid);
-      if (assignmentQ && assignmentQ.teacher_id !== req.user.userId) {
+      // 必须遍历全部引用该题的作业：原先只取第一条匹配记录，只要有一条属于自己就放行，存在越权编辑他人题目
+      const assignmentQs = db.prepare('SELECT a.teacher_id FROM assignment_questions aq JOIN assignments a ON aq.assignment_id = a.id WHERE aq.question_bank_id = ?').all(qid);
+      if (assignmentQs.some(row => row.teacher_id !== req.user.userId)) {
         return res.status(403).json({ error: '只能编辑自己发布的作业题目' });
       }
     }
@@ -531,22 +546,12 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
       const notifiedUsers = new Set();
 
       for (const qa of affectedAnswers) {
-        let newCorrect = false;
         const ua = qa.student_answer;
-
-        if (updatedQuestion.type === 'choice_single' || updatedQuestion.type === 'fill_blank') {
-          newCorrect = String(ua).trim().toLowerCase() === String(updatedQuestion.answer).trim().toLowerCase();
-        } else if (updatedQuestion.type === 'choice_multi') {
-          const correctSet = updatedQuestion.answer.split(',').map(s => s.trim().toLowerCase()).sort().join(',');
-          const userSet = (Array.isArray(ua) ? ua : [ua]).map(s => String(s).trim().toLowerCase()).sort().join(',');
-          newCorrect = correctSet === userSet;
-        } else if (updatedQuestion.type === 'judgment') {
-          const uas = String(ua).trim().toLowerCase();
-          const cas = String(updatedQuestion.answer).trim().toLowerCase();
-          newCorrect = uas === cas || (uas === 'true' && cas === 'true') || (uas === 'false' && cas === 'false');
-        } else {
+        // 主观题无法自动重判，跳过；客观题走统一判分口径
+        if (!['choice_single', 'choice_multi', 'judgment', 'fill_blank'].includes(updatedQuestion.type)) {
           continue;
         }
+        const newCorrect = isAnswerCorrect(updatedQuestion.type, ua, updatedQuestion.answer);
 
         const wasCorrect = qa.is_correct === 1;
         if (wasCorrect === newCorrect) continue;
@@ -567,21 +572,42 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
         }
 
         // 重新计算该提交的总分
-        const allQA = db.prepare('SELECT score, max_score FROM question_answers WHERE submission_id = ?').all(qa.submission_id);
-        const totalScore = allQA.reduce((sum, a) => sum + (a.score || 0), 0);
-        const maxTotal = allQA.reduce((sum, a) => sum + (a.max_score || 100), 0);
+        // 同一题可能存在多轮重做记录，只取每题最近一次作答，避免重复计分
+        const attemptRows = db.prepare(
+          'SELECT id, question_bank_id, attempt_number, score, max_score, is_correct FROM question_answers WHERE submission_id = ? ORDER BY attempt_number ASC'
+        ).all(qa.submission_id);
+        const latestByQ = new Map();
+        for (const r of attemptRows) latestByQ.set(r.question_bank_id, r);
+        const allQA = [...latestByQ.values()];
+
+        const rawScore = allQA.reduce((sum, a) => sum + (a.score || 0), 0);
+        const maxTotal = allQA.reduce((sum, a) => sum + (a.max_score || 0), 0);
+        // 用真实满分归一化到百分制；maxTotal 为 0（异常数据）时退回 0 分，避免除零得到 NaN
+        const totalScore = maxTotal > 0 ? Math.round((rawScore / maxTotal) * 100) : 0;
+
         const assignmentInfo = db.prepare('SELECT max_exp FROM assignments WHERE id = ?').get(qa.assignment_id);
-        const maxExp = assignmentInfo?.max_exp || 100;
-        const newGoldReward = Math.floor((totalScore / maxTotal) * maxExp);
+        const maxExp = assignmentInfo?.max_exp || 30;
+        const assignmentQuestionCount = db.prepare('SELECT COUNT(*) as c FROM assignment_questions WHERE assignment_id = ?').get(qa.assignment_id)?.c || allQA.length;
+        // 与提交时共用同一套公式，保证 Combo / 满分奖励不会被算丢
+        const newGoldReward = calcGoldReward(
+          totalScore,
+          assignmentQuestionCount,
+          allQA.map(a => ({ is_correct: a.is_correct === 1 })),
+          maxExp
+        ).gold;
         const oldGold = db.prepare('SELECT gold_reward FROM submissions WHERE id = ?').get(qa.submission_id)?.gold_reward || 0;
         const goldDiff = newGoldReward - oldGold;
 
         db.prepare('UPDATE submissions SET total_score = ?, gold_reward = ? WHERE id = ?')
           .run(totalScore, newGoldReward, qa.submission_id);
 
-        if (goldDiff !== 0) {
+        if (goldDiff > 0) {
           db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?')
             .run(goldDiff, goldDiff, qa.user_id);
+        } else if (goldDiff < 0) {
+          const loss = -goldDiff;
+          db.prepare('UPDATE users SET gold = MAX(0, gold - ?), total_gold_earned = MAX(0, total_gold_earned - ?) WHERE id = ?')
+            .run(loss, loss, qa.user_id);
         }
 
         // 通知受影响的学生
@@ -907,6 +933,10 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
     const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
     if (!assignment) return res.status(404).json({ error: '作业不存在' });
     if (assignment.status === 'cancelled') return res.status(400).json({ error: '该作业已被取消，无法提交' });
+    // 截止时间校验（原先完全没有校验，作业过期后仍可无限提交）
+    if (assignment.due_date && new Date() > new Date(assignment.due_date)) {
+      return res.status(400).json({ error: '作业已过截止时间，无法提交' });
+    }
 
     const student = db.prepare('SELECT class_id FROM users WHERE id = ?').get(req.user.userId);
     if (!student || student.class_id !== assignment.class_id) {
@@ -929,6 +959,9 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
     const isObj = isObjectiveType(assignment.question_type);
     const submissionId = existingSubmission ? existingSubmission.id : null;
     const isRetry = !!submissionId;
+    // 重做模式专用：待重做的原始题目数、以及「本次作答题目 id → 本作业原始题目 id」的映射
+    let retryWrongOriginalCount = 0;
+    let originalOfRetry = {};
 
     if (isObj) {
       const results = [];
@@ -936,53 +969,108 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
       let wrongQuestions = [];
 
       if (isRetry) {
-        const retryQuestionIds = answers.map(a => a.question_id).filter(id => Number.isInteger(id) && id > 0);
-        const retryQuestions = retryQuestionIds.length > 0
-          ? db.prepare(`
-              SELECT id, type, content, options, answer, explanation, analysis, variant_group_id, knowledge_point
-              FROM question_bank WHERE id IN (${retryQuestionIds.map(() => '?').join(',')})
-            `).all(...retryQuestionIds)
-          : [];
+        // ============ 重做合法性校验 ============
+        // 原实现只校验 question_id 是正整数，学生可用任意简单题替换错题；
+        // 且 totalQuestionCount 取 answers.length，只提交 1 道会的题即可拿满分。
+        // 这里白名单收敛为「最近一次作答仍答错的题 + 其变体组内未做过的变体」，并要求全部覆盖。
+
+        const attemptRows = db.prepare(`
+          SELECT qa.question_bank_id, qa.attempt_number, qa.is_correct, qb.variant_group_id
+          FROM question_answers qa
+          JOIN question_bank qb ON qa.question_bank_id = qb.id
+          WHERE qa.submission_id = ?
+        `).all(submissionId);
+
+        // 同一题可能有多轮作答记录，只取最近一次的结果，避免历史错误作答被反复计入
+        const latestByQ = new Map();
+        for (const r of attemptRows) {
+          const prev = latestByQ.get(r.question_bank_id);
+          if (!prev || r.attempt_number > prev.attempt_number) latestByQ.set(r.question_bank_id, r);
+        }
+
+        // 本作业题目 id 集合；变体组 → 原始题目 id（用于把变体题折算回作业维度）
+        const assignmentQIds = new Set(questions.map(q => q.id));
+        const originalByGroup = new Map();
+        for (const q of questions) {
+          if (q.variant_group_id) originalByGroup.set(q.variant_group_id, q.id);
+        }
+        const resolveOriginalId = (qid, variantGroupId) =>
+          assignmentQIds.has(qid) ? qid : (variantGroupId ? (originalByGroup.get(variantGroupId) || null) : null);
+
+        const wrongOriginalIds = new Set();
+        for (const r of latestByQ.values()) {
+          if (r.is_correct === 1) continue;
+          const oid = resolveOriginalId(r.question_bank_id, r.variant_group_id);
+          if (oid != null) wrongOriginalIds.add(oid);
+        }
+        retryWrongOriginalCount = wrongOriginalIds.size;
+
+        // 允许提交的题目 = 错题本体 + 该错题变体组内尚未作答过的变体
+        const attemptedIds = new Set(attemptRows.map(r => r.question_bank_id));
+        const allowedIds = new Set();
+        const variantsByGroup = new Map();
+        for (const oid of wrongOriginalIds) {
+          allowedIds.add(oid);
+          const grp = questions.find(q => q.id === oid)?.variant_group_id;
+          if (!grp) continue;
+          if (!variantsByGroup.has(grp)) {
+            variantsByGroup.set(grp, db.prepare('SELECT id FROM question_bank WHERE variant_group_id = ?').all(grp));
+          }
+          for (const v of variantsByGroup.get(grp)) {
+            if (!attemptedIds.has(v.id)) allowedIds.add(v.id);
+          }
+        }
+
+        const submittedIds = [...new Set(answers.map(a => parseInt(a.question_id, 10)).filter(n => Number.isInteger(n)))];
+        if (submittedIds.length === 0) {
+          return res.status(400).json({ error: '请提交有效的答案' });
+        }
+        const illegalIds = submittedIds.filter(id => !allowedIds.has(id));
+        if (illegalIds.length > 0) {
+          return res.status(400).json({ error: '只能重做上次答错的题目' });
+        }
+
+        // 必须覆盖全部错题，否则可只挑会做的题提交来刷高分
+        const coveredOriginals = new Set();
+        for (const id of submittedIds) {
+          const row = attemptRows.find(r => r.question_bank_id === id);
+          const grp = row ? row.variant_group_id : questions.find(q => q.id === id)?.variant_group_id;
+          const oid = resolveOriginalId(id, grp);
+          if (oid != null) coveredOriginals.add(oid);
+        }
+        if ([...wrongOriginalIds].some(oid => !coveredOriginals.has(oid))) {
+          return res.status(400).json({ error: '请完成全部错题的重做后再提交' });
+        }
+
+        const retryQuestionIds = submittedIds;
+        const retryQuestions = db.prepare(`
+            SELECT id, type, content, options, answer, explanation, analysis, variant_group_id, knowledge_point
+            FROM question_bank WHERE id IN (${retryQuestionIds.map(() => '?').join(',')})
+          `).all(...retryQuestionIds);
 
         const retryQuestionMap = {};
         for (const rq of retryQuestions) {
           retryQuestionMap[rq.id] = rq;
+          const oid = resolveOriginalId(rq.id, rq.variant_group_id);
+          if (oid != null) originalOfRetry[rq.id] = oid;
         }
-
-        const previousWrongQAs = db.prepare(`
-          SELECT qa.question_bank_id, qb.variant_group_id
-          FROM question_answers qa
-          JOIN question_bank qb ON qa.question_bank_id = qb.id
-          WHERE qa.submission_id = ? AND qa.is_correct = 0
-        `).all(submissionId);
 
         for (const ans of answers) {
           const q = retryQuestionMap[ans.question_id];
           if (!q) continue;
 
           const userAnswer = ans.answer;
-          let isCorrect = false;
-          if (q.type === 'choice_single' || q.type === 'fill_blank') {
-            isCorrect = String(userAnswer).trim().toLowerCase() === String(q.answer).trim().toLowerCase();
-          } else if (q.type === 'choice_multi') {
-            const correctSet = q.answer.split(',').map(s => s.trim().toLowerCase()).sort().join(',');
-            const userSet = (Array.isArray(userAnswer) ? userAnswer : [userAnswer]).map(s => String(s).trim().toLowerCase()).sort().join(',');
-            isCorrect = correctSet === userSet;
-          } else if (q.type === 'judgment') {
-            const ua = String(userAnswer).trim().toLowerCase();
-            const ca = String(q.answer).trim().toLowerCase();
-            isCorrect = ua === ca || (ua === 'true' && ca === 'true') || (ua === 'false' && ca === 'false');
-          }
+          // 统一判分口径（原先此处不认「正确/错误」等中文答案写法）
+          const isCorrect = isAnswerCorrect(q.type, userAnswer, q.answer);
 
-          if (isCorrect) correctCount++;
-
+          // 重做分支不在此处累加 correctCount，改在分支结束后统一按「作业全部题目」维度计算
           results.push({
             question_id: q.id,
             question_content: q.content,
             user_answer: userAnswer,
             correct_answer: q.answer,
             is_correct: isCorrect,
-            score: isCorrect ? (100 / answers.length) : 0,
+            score: isCorrect ? (100 / questions.length) : 0,
             explanation: q.explanation,
             analysis: q.analysis
           });
@@ -1049,19 +1137,8 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
       for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
         const userAnswer = answers.find(a => a.question_id === q.id)?.answer;
-        
-        let isCorrect = false;
-        if (q.type === 'choice_single' || q.type === 'fill_blank') {
-          isCorrect = String(userAnswer).trim().toLowerCase() === String(q.answer).trim().toLowerCase();
-        } else if (q.type === 'choice_multi') {
-          const correctSet = q.answer.split(',').map(s => s.trim().toLowerCase()).sort().join(',');
-          const userSet = (Array.isArray(userAnswer) ? userAnswer : [userAnswer]).map(s => String(s).trim().toLowerCase()).sort().join(',');
-          isCorrect = correctSet === userSet;
-        } else if (q.type === 'judgment') {
-          const ua = String(userAnswer).trim().toLowerCase();
-          const ca = String(q.answer).trim().toLowerCase();
-          isCorrect = ua === ca || (ua === 'true' && ca === 'true') || (ua === 'false' && ca === 'false');
-        }
+        // 统一判分口径（原先此处不认「正确/错误」等中文答案写法）
+        const isCorrect = isAnswerCorrect(q.type, userAnswer, q.answer);
 
         if (isCorrect) correctCount++;
 
@@ -1098,31 +1175,37 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
       }
       } // end of else (non-retry)
 
-      const totalQuestionCount = isRetry ? answers.length : questions.length;
-      const totalScore = Math.round((correctCount / totalQuestionCount) * 100);
-      const baseGoldReward = Math.floor((totalScore / 100) * (assignment.max_exp || 30));
-
-      // 计算本次提交内的最长连续答对（streak）以及 Combo 加成
-      let bestStreak = 0, currentStreak = 0;
-      for (const r of results) {
-        if (r.is_correct) {
-          currentStreak++;
-          if (currentStreak > bestStreak) bestStreak = currentStreak;
-        } else {
-          currentStreak = 0;
+      // 重做分支统一折算回「作业全部题目」维度：
+      // 未重做的题（上次已答对）保持正确，重做的题以本次结果为准。
+      if (isRetry) {
+        const newlyCorrect = new Set();
+        for (const r of results) {
+          if (r.is_correct && originalOfRetry[r.question_id] != null) {
+            newlyCorrect.add(originalOfRetry[r.question_id]);
+          }
         }
+        correctCount = Math.max(0, questions.length - retryWrongOriginalCount) + newlyCorrect.size;
       }
-      let comboBonus = 0;
-      let comboLabel = null;
-      if (bestStreak >= 10) { comboBonus = 20; comboLabel = `🔥 ${bestStreak} 连对！额外 +${comboBonus} 金币`; }
-      else if (bestStreak >= 5) { comboBonus = 10; comboLabel = `⚡ ${bestStreak} 连对！额外 +${comboBonus} 金币`; }
-      else if (bestStreak >= 3) { comboBonus = 5; comboLabel = `✨ ${bestStreak} 连对！额外 +${comboBonus} 金币`; }
-      // 全对额外奖励
-      let perfectBonus = 0;
-      if (correctCount === questions.length && questions.length >= 3) {
-        perfectBonus = 15;
+
+      // 分母恒为作业题目总数（原先重做时取 answers.length，可只提交 1 道题刷满分）
+      const totalQuestionCount = questions.length;
+      if (totalQuestionCount === 0) {
+        return res.status(400).json({ error: '该作业没有题目，无法提交' });
       }
-      const goldReward = baseGoldReward + comboBonus + perfectBonus;
+      const totalScore = Math.round((correctCount / totalQuestionCount) * 100);
+
+      // 改用与「教师改答案重算」共用的统一公式，保证两处口径一致
+      const reward = calcGoldReward(totalScore, totalQuestionCount, results, assignment.max_exp);
+      const baseGoldReward = reward.base;
+      const comboBonus = reward.combo;
+      const perfectBonus = reward.perfect;
+      const bestStreak = reward.bestStreak;
+      const goldReward = reward.gold;
+      const comboLabel = comboBonus > 0
+        ? (bestStreak >= 10 ? `🔥 ${bestStreak} 连对！额外 +${comboBonus} 金币`
+          : bestStreak >= 5 ? `⚡ ${bestStreak} 连对！额外 +${comboBonus} 金币`
+            : `✨ ${bestStreak} 连对！额外 +${comboBonus} 金币`)
+        : null;
       const hasWrongQuestions = wrongQuestions.length > 0;
 
       if (!submissionId) {
@@ -1178,9 +1261,12 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
           insertQA.run(submissionId, r.question_id, (existingSubmission?.attempt_count || 0) + 1, r.user_answer, r.is_correct ? 1 : 0, r.score, 100 / totalQuestionCount);
         }
 
-        // 只增加金币差额
+        // 金币差额双向结算（原先只补发不收回，成绩下滑也能白拿金币）
         if (goldRewardDiff > 0) {
           db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(goldRewardDiff, goldRewardDiff, req.user.userId);
+        } else if (goldRewardDiff < 0) {
+          const loss = -goldRewardDiff;
+          db.prepare('UPDATE users SET gold = MAX(0, gold - ?), total_gold_earned = MAX(0, total_gold_earned - ?) WHERE id = ?').run(loss, loss, req.user.userId);
         }
       }
 
@@ -1440,8 +1526,17 @@ async function reviewSubjectiveAssignment(submissionId, assignmentId, userId) {
     console.log(`主观题评阅完成: submission=${submissionId}, score=${avgScore}, gold=${goldReward}`);
   } catch (error) {
     console.error('主观题评阅错误:', error);
+    // 兜底给 60 分并补发对应金币（原先只写 submissions.gold_reward，忘了 UPDATE users，
+    // 导致评阅异常时学生一分钱都拿不到）
+    const fallbackGold = Math.floor(0.6 * (db.prepare('SELECT max_exp FROM assignments WHERE id = ?').get(assignmentId)?.max_exp || 30));
     db.prepare("UPDATE submissions SET review_status = 'completed', total_score = 60, gold_reward = ? WHERE id = ?")
-      .run(Math.floor(0.6 * (db.prepare('SELECT max_exp FROM assignments WHERE id = ?').get(assignmentId)?.max_exp || 30)), submissionId);
+      .run(fallbackGold, submissionId);
+    if (fallbackGold > 0) {
+      try {
+        db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?')
+          .run(fallbackGold, fallbackGold, userId);
+      } catch (goldErr) { console.error('兜底金币发放失败:', goldErr); }
+    }
   }
 }
 
@@ -1486,7 +1581,14 @@ router.get('/:id/statistics', authenticateToken, authorizeRole('teacher', 'admin
     if (!assignment) return res.status(404).json({ error: '作业不存在' });
 
     const totalStudents = db.prepare('SELECT COUNT(*) as cnt FROM users WHERE class_id = ? AND role = \'student\'').get(assignment.class_id)?.cnt || 0;
-    const submittedCount = db.prepare('SELECT COUNT(*) as cnt FROM submissions WHERE assignment_id = ?').get(req.params.id)?.cnt || 0;
+    // 按学生去重：重做会产生多条 submission，直接 COUNT 会让提交人数与完成率超过 100%
+    const submittedCount = db.prepare(
+      'SELECT COUNT(DISTINCT user_id) as cnt FROM submissions WHERE assignment_id = ?'
+    ).get(req.params.id)?.cnt || 0;
+
+    // 本作业的全部提交 ID，用于把题目统计限定在本作业范围内
+    const submissionIds = db.prepare('SELECT id FROM submissions WHERE assignment_id = ?')
+      .all(req.params.id).map(s => s.id);
 
     const scoreStats = db.prepare(`
       SELECT AVG(total_score) as avg_score, MAX(total_score) as max_score, MIN(total_score) as min_score
@@ -1501,28 +1603,61 @@ router.get('/:id/statistics', authenticateToken, authorizeRole('teacher', 'admin
       ORDER BY aq.sort_order
     `).all(req.params.id);
 
+    // 题目统计：只统计本作业内的作答，且每题只取该提交内最近一次（重做会留下多轮记录）。
+    // 原先按 question_bank_id 统计全库作答，重做记录和其他作业的数据都会混进来。
     const questionStats = questions.map(q => {
-      const totalAns = db.prepare('SELECT COUNT(*) as cnt FROM question_answers WHERE question_bank_id = ?').get(q.question_bank_id)?.cnt || 0;
-      const correctAns = db.prepare('SELECT COUNT(*) as cnt FROM question_answers WHERE question_bank_id = ? AND is_correct = 1').get(q.question_bank_id)?.cnt || 0;
-      return {
+      const base = {
         question_id: q.question_bank_id,
-        content: q.content.substring(0, 50),
+        content: String(q.content || '').substring(0, 50),
         type: q.type,
         answer: q.answer,
+        total_answers: 0,
+        correct_count: 0,
+        correct_rate: 0,
+        avg_score: 0
+      };
+      if (submissionIds.length === 0) return base;
+
+      const placeholders = submissionIds.map(() => '?').join(',');
+      const rows = db.prepare(`
+        SELECT submission_id, attempt_number, is_correct, score
+        FROM question_answers
+        WHERE question_bank_id = ? AND submission_id IN (${placeholders})
+      `).all(q.question_bank_id, ...submissionIds);
+
+      const latest = new Map();
+      for (const r of rows) {
+        const prev = latest.get(r.submission_id);
+        if (!prev || r.attempt_number > prev.attempt_number) latest.set(r.submission_id, r);
+      }
+      const counted = [...latest.values()];
+      const totalAns = counted.length;
+      if (totalAns === 0) return base;
+
+      const correctAns = counted.filter(r => r.is_correct === 1).length;
+      const avgScore = counted.reduce((sum, r) => sum + (r.score || 0), 0) / totalAns;
+
+      return {
+        ...base,
         total_answers: totalAns,
         correct_count: correctAns,
-        correct_rate: totalAns > 0 ? Math.round((correctAns / totalAns) * 100) : 0,
-        avg_score: db.prepare('SELECT AVG(score) as avg FROM question_answers WHERE question_bank_id = ? AND score IS NOT NULL').get(q.question_bank_id)?.avg || 0
+        correct_rate: Math.round((correctAns / totalAns) * 100),
+        avg_score: Math.round(avgScore * 100) / 100
       };
     });
 
-    const studentResults = db.prepare(`
+    // 学生成绩：每个学生只保留最新一次提交（按 id 递增取最后一条）
+    const allSubmissions = db.prepare(`
       SELECT s.id as submission_id, u.id as user_id, u.username, u.real_name, s.total_score, s.gold_reward, s.submitted_at, s.review_status
       FROM submissions s
       JOIN users u ON s.user_id = u.id
       WHERE s.assignment_id = ?
-      ORDER BY s.total_score DESC, s.submitted_at ASC
+      ORDER BY s.id ASC
     `).all(req.params.id);
+    const latestByUser = new Map();
+    for (const row of allSubmissions) latestByUser.set(row.user_id, row);
+    const studentResults = [...latestByUser.values()]
+      .sort((a, b) => (b.total_score || 0) - (a.total_score || 0));
 
     res.json({
       assignment_id: parseInt(req.params.id),
