@@ -104,7 +104,18 @@ router.get('/', authenticateToken, (req, res) => {
   }
 });
 
-// 更新任务进度（内部函数，供其他API调用）
+/**
+ * 更新任务进度（内部函数，供其他 API 调用）
+ *
+ * 重要约定：progress 传的是「当前累计值」而不是「本次增量」——
+ * 除 correct_rate（自动取历史最大值）外，本函数都会直接把 task_progress 设为
+ * min(progress, task_target)，不会累加。
+ *
+ * 因此调用方务必自己先读出旧进度再加上增量，例如：
+ *   const log = SELECT task_progress ... ;
+ *   updateTaskProgress(userId, 'review_weak_point', (log.task_progress || 0) + 1);
+ * 直接传 1 会让目标值大于 1 的任务（如 review_weak_point 目标 3）永远无法完成。
+ */
 function updateTaskProgress(userId, taskType, progress) {
   try {
     const today = getChinaDate();

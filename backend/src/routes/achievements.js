@@ -4,6 +4,19 @@ const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const conditionTypes = require('../config/achievementConditions');
 
+// type → 该类型对应的阈值字段（见 config/achievementConditions.js 的 thresholdKey）
+const TYPE_META = new Map(conditionTypes.map((c) => [c.type, c]));
+
+// 按配置表显式取阈值字段；取不到时回退到「第一个非 type 的键」
+function resolveThreshold(cond, achievementType) {
+  const meta = TYPE_META.get(achievementType);
+  if (meta && meta.thresholdKey && cond[meta.thresholdKey] !== undefined) {
+    return cond[meta.thresholdKey];
+  }
+  const fallbackKey = Object.keys(cond).find((k) => k !== 'type');
+  return fallbackKey ? cond[fallbackKey] : undefined;
+}
+
 const requireAdmin = (req, res, next) => {
   if (req.user.role !== 'admin') {
     return res.status(403).json({ error: '需要管理员权限' });
@@ -23,10 +36,10 @@ function checkAndAwardAchievement(userId, achievementType, currentValue) {
   const newAchievements = [];
   for (const ach of allAchievements) {
     const cond = JSON.parse(ach.condition);
-    const thresholdKey = Object.keys(cond).find(k => k !== 'type');
-    const threshold = cond[thresholdKey];
+    // 原先取「第一个非 type 的键」，若条件写成 {score, count} 的顺序就会取错阈值字段
+    const threshold = resolveThreshold(cond, achievementType);
 
-    if (currentValue >= threshold) {
+    if (typeof threshold === 'number' && currentValue >= threshold) {
       const existing = db.prepare(
         'SELECT id FROM user_achievements WHERE user_id = ? AND achievement_id = ?'
       ).get(userId, ach.id);
@@ -132,8 +145,9 @@ router.get('/status', authenticateToken, (req, res) => {
       let progress = 0;
       try {
         const cond = JSON.parse(a.condition);
-        const thresholdKey = Object.keys(cond).find(k => k !== 'type');
-        const threshold = cond[thresholdKey] || 1;
+        // 与 checkAndAwardAchievement 用同一套阈值解析，避免「进度条满了但成就不解锁」
+        const rawThreshold = resolveThreshold(cond, cond.type);
+        const threshold = typeof rawThreshold === 'number' && rawThreshold > 0 ? rawThreshold : 1;
         let currentValue = 0;
         switch (cond.type) {
           case 'submit_assignment':
@@ -197,13 +211,18 @@ router.get('/status', authenticateToken, (req, res) => {
             currentValue = db.prepare("SELECT COUNT(*) as c FROM chat_messages WHERE user_id = ?").get(req.user.userId)?.c || 0;
             break;
           case 'post_count':
-          case 'forum_post':
+            // 班级动态
             currentValue = db.prepare("SELECT COUNT(*) as c FROM posts WHERE user_id = ?").get(req.user.userId)?.c || 0;
+            break;
+          case 'forum_post':
+            // 论坛发帖/回帖：原先错用了 posts（班级动态）表，进度永远算不对
+            currentValue = db.prepare("SELECT COUNT(*) as c FROM forum_posts WHERE user_id = ? AND status = 'active'").get(req.user.userId)?.c || 0;
             break;
           default:
             break;
         }
-        progress = Math.min(Math.round((currentValue / threshold) * 100), completed ? 100 : 100);
+        // 原先写成 Math.min(x, completed ? 100 : 100)，三元两侧都是 100，毫无意义
+        progress = Math.max(0, Math.min(100, Math.round((currentValue / threshold) * 100)));
       } catch (e) { /* ignore */ }
       return {
         ...a,
