@@ -3,6 +3,8 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { checkAndAwardAchievement } = require('./achievements');
+const { checkLevelUp } = require('./pets');
+const { isAnswerCorrect } = require('../utils/answerCheck');
 
 const BOSS_ICONS = ['👹', '👑', '🐉', '👿', '🦹', '💀', '🧌', '👹', '🔥', '⚡'];
 const BOSS_NAMES_PREFIX = ['暗影', '烈焰', '寒冰', '雷霆', '混沌', '深渊', '虚空', '毁灭', '末日', '永恒'];
@@ -654,8 +656,9 @@ router.post('/:bossId/terminate', authenticateToken, authorizeRole('teacher', 'a
       db.prepare(`
         UPDATE boss_battles SET status = 'expired', completed_at = CURRENT_TIMESTAMP WHERE id = ?
       `).run(boss.id);
-      // 即使未击败，也按伤害比例分发部分奖励
-      distributeRewards(boss.id, boss.class_id);
+      // 未击败：按已造成的伤害比例折算奖池（原先注释说按比例，代码却发了全额）
+      const damageRatio = boss.boss_max_hp > 0 ? totalDamage / boss.boss_max_hp : 0;
+      distributeRewards(boss.id, boss.class_id, damageRatio);
     }
 
     res.json({ message: 'BOSS战已终止' });
@@ -752,6 +755,11 @@ router.get('/:bossId/question', authenticateToken, (req, res) => {
       return `AND id NOT IN (${excludeIds.map(() => '?').join(',')})`;
     };
 
+    // 排除「AI 生成但从未被任何作业采用」的题目：
+    // 教师预览 AI 出题时题目就已落库，若未发布即被 BOSS 战随机抽中，
+    // 学生会遇到未经审核的题目。已发布（被 assignment_questions 引用）的仍可正常使用。
+    const VETTED_COND = `AND (source IS NULL OR source <> 'ai' OR id IN (SELECT question_bank_id FROM assignment_questions))`;
+
     const tryGetQuestion = (whereExtra, params) => {
       const excludeClause = buildExcludeClause(answeredIds);
       const allParams = [...params, ...answeredIds];
@@ -764,6 +772,7 @@ router.get('/:bossId/question', authenticateToken, (req, res) => {
           FROM question_bank
           WHERE id IN (${inClause})
             AND type IN ('choice_single', 'choice_multi', 'judgment', 'fill_blank')
+            ${VETTED_COND}
             ${whereExtra}
             ${excludeClause}
           ORDER BY RANDOM()
@@ -772,22 +781,26 @@ router.get('/:bossId/question', authenticateToken, (req, res) => {
       }
 
       if (boss.knowledge_point) {
+        // 原先用 knowledge_point 的值去匹配 topic 字段，几乎永远匹配不到，
+        // 导致选题退化成全库随机。这里两个字段都匹配，兼容历史数据里存的是主题的情况。
         return db.prepare(`
           SELECT id, subject, topic, difficulty, type, content, options, hint, knowledge_point
           FROM question_bank
-          WHERE topic = ?
+          WHERE (knowledge_point = ? OR topic = ?)
             AND type IN ('choice_single', 'choice_multi', 'judgment', 'fill_blank')
+            ${VETTED_COND}
             ${whereExtra}
             ${excludeClause}
           ORDER BY RANDOM()
           LIMIT 1
-        `).get(boss.knowledge_point, ...allParams);
+        `).get(boss.knowledge_point, boss.knowledge_point, ...allParams);
       }
 
       return db.prepare(`
         SELECT id, subject, topic, difficulty, type, content, options, hint, knowledge_point
         FROM question_bank
         WHERE type IN ('choice_single', 'choice_multi', 'judgment', 'fill_blank')
+          ${VETTED_COND}
           ${whereExtra}
           ${excludeClause}
         ORDER BY RANDOM()
@@ -890,28 +903,9 @@ router.post('/:bossId/attack', authenticateToken, (req, res) => {
       return res.status(404).json({ error: '题目不存在' });
     }
 
-    let isCorrect = false;
+    // 与作业提交共用同一套判分口径（原先此处与 assignments.js 不一致）
     const correctAnswer = question.answer;
-    const studentAnswer = String(answer).trim();
-
-    if (question.type === 'choice_single') {
-      isCorrect = studentAnswer.toUpperCase() === String(correctAnswer).toUpperCase();
-    } else if (question.type === 'judgment') {
-      // 规范化判断题答案：true/yes/A/正确/对 vs false/no/B/错误/错
-      const normalizeJudgment = (ans) => {
-        const s = String(ans).toLowerCase().trim();
-        if (['true', 'yes', 'a', '正确', '对', '1'].includes(s)) return 'true';
-        if (['false', 'no', 'b', '错误', '错', '0'].includes(s)) return 'false';
-        return s;
-      };
-      isCorrect = normalizeJudgment(studentAnswer) === normalizeJudgment(String(correctAnswer));
-    } else if (question.type === 'choice_multi') {
-      const correctSet = new Set(String(correctAnswer).toUpperCase().split('').sort());
-      const answerSet = new Set(String(studentAnswer).toUpperCase().split('').sort());
-      isCorrect = correctSet.size === answerSet.size && [...correctSet].every(a => answerSet.has(a));
-    } else if (question.type === 'fill_blank') {
-      isCorrect = studentAnswer === String(correctAnswer).trim();
-    }
+    const isCorrect = isAnswerCorrect(question.type, answer, correctAnswer);
 
     const difficultyMultiplier = { easy: 0.5, medium: 1.0, hard: 1.5 };
     const baseDamage = pet.level * 10;
@@ -1024,6 +1018,7 @@ router.post('/:bossId/claim-reward', authenticateToken, (req, res) => {
     let totalGold = 0;
     let totalExp = 0;
     let equipmentGiven = null;
+    let expGranted = false;
 
     for (const reward of unclaimed) {
       if (reward.reward_type === 'gold') {
@@ -1032,6 +1027,7 @@ router.post('/:bossId/claim-reward', authenticateToken, (req, res) => {
       } else if (reward.reward_type === 'exp') {
         db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ? WHERE user_id = ?').run(reward.reward_value, reward.reward_value, req.user.userId);
         totalExp += reward.reward_value;
+        expGranted = true;
       } else if (reward.reward_type === 'equipment') {
         const equip = db.prepare('SELECT * FROM equipment WHERE id = ?').get(reward.reward_value);
         if (equip) {
@@ -1042,14 +1038,25 @@ router.post('/:bossId/claim-reward', authenticateToken, (req, res) => {
       db.prepare('UPDATE boss_battle_rewards SET claimed = 1 WHERE id = ?').run(reward.id);
     }
 
+    // 发放经验后必须触发升级检查（原先缺失：经验涨了但宠物不升级，要等下次投喂才补上）
+    let levelUp = { leveledUp: false };
+    if (expGranted) {
+      try {
+        const pet = db.prepare('SELECT id, user_id FROM pets WHERE user_id = ?').get(req.user.userId);
+        if (pet) levelUp = checkLevelUp(pet);
+      } catch (e) { console.error('BOSS领奖升级检查失败:', e); }
+    }
+
     const parts = [];
     if (totalGold > 0) parts.push(`${totalGold} 金币`);
     if (totalExp > 0) parts.push(`${totalExp} 经验`);
     if (equipmentGiven) parts.push(`装备: ${equipmentGiven.name}`);
+    if (levelUp.leveledUp) parts.push(`升到 Lv.${levelUp.newLevel}`);
 
     res.json({
       message: `领取成功: ${parts.join(', ')}`,
-      rewards: { gold: totalGold, exp: totalExp, equipment: equipmentGiven }
+      rewards: { gold: totalGold, exp: totalExp, equipment: equipmentGiven },
+      levelUp
     });
   } catch (error) {
     console.error('领取奖励失败:', error);
@@ -1057,13 +1064,21 @@ router.post('/:bossId/claim-reward', authenticateToken, (req, res) => {
   }
 });
 
-function distributeRewards(bossId, classId) {
+/**
+ * 分发 BOSS 战奖励
+ * @param {number} bossId
+ * @param {number} classId
+ * @param {number} scale 奖池缩放系数：BOSS 被击败时为 1，中途终止时按已造成伤害比例折算
+ */
+function distributeRewards(bossId, classId, scale = 1) {
   const participants = db.prepare(`
     SELECT user_id, damage_dealt FROM boss_battle_participants
     WHERE boss_battle_id = ?
   `).all(bossId);
 
   if (participants.length === 0) return;
+
+  const poolScale = Math.max(0, Math.min(1, Number.isFinite(scale) ? scale : 1));
 
   const totalDamage = participants.reduce((sum, p) => sum + p.damage_dealt, 0);
   const boss = db.prepare('SELECT * FROM boss_battles WHERE id = ?').get(bossId);
@@ -1089,18 +1104,19 @@ function distributeRewards(bossId, classId) {
 
   for (const participant of participants) {
     const damageRatio = totalDamage > 0 ? participant.damage_dealt / totalDamage : 1 / participants.length;
-    const goldReward = Math.round(goldPool * damageRatio);
-    const expReward = Math.round(expPool * damageRatio);
+    // 先按 BOSS 完成度缩放奖池，再按个人伤害占比分配
+    const goldReward = Math.round(goldPool * poolScale * damageRatio);
+    const expReward = Math.round(expPool * poolScale * damageRatio);
 
     db.prepare(`
       INSERT OR IGNORE INTO boss_battle_rewards (boss_battle_id, user_id, reward_type, reward_value)
       VALUES (?, ?, 'gold', ?)
-    `).run(bossId, participant.user_id, Math.max(10, goldReward));
+    `).run(bossId, participant.user_id, Math.max(0, goldReward));
 
     db.prepare(`
       INSERT OR IGNORE INTO boss_battle_rewards (boss_battle_id, user_id, reward_type, reward_value)
       VALUES (?, ?, 'exp', ?)
-    `).run(bossId, participant.user_id, Math.max(5, expReward));
+    `).run(bossId, participant.user_id, Math.max(0, expReward));
 
     if (equipmentIds.length > 0) {
       const randomEquipId = equipmentIds[Math.floor(Math.random() * equipmentIds.length)];
