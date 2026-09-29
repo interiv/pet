@@ -3,6 +3,7 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { checkLevelUp } = require('./pets');
+const { grantReward } = require('../services/rewards');
 const { updateTaskProgress } = require('./daily-tasks');
 const { checkAndAwardAchievement } = require('./achievements');
 const { getChinaDate } = require('../config/timezone');
@@ -601,13 +602,14 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
         db.prepare('UPDATE submissions SET total_score = ?, gold_reward = ? WHERE id = ?')
           .run(totalScore, newGoldReward, qa.submission_id);
 
-        if (goldDiff > 0) {
-          db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?')
-            .run(goldDiff, goldDiff, qa.user_id);
-        } else if (goldDiff < 0) {
-          const loss = -goldDiff;
-          db.prepare('UPDATE users SET gold = MAX(0, gold - ?), total_gold_earned = MAX(0, total_gold_earned - ?) WHERE id = ?')
-            .run(loss, loss, qa.user_id);
+        // 走统一管道：正向发放与负向扣回都经它处理
+        // （total_gold_earned 是生涯累计，管道内只累加不因扣减回退）
+        if (goldDiff !== 0) {
+          grantReward(qa.user_id, {
+            gold: goldDiff,
+            source: 'assignment_regrade',
+            reason: `作业答案更正，金币调整 ${goldDiff > 0 ? '+' : ''}${goldDiff}`,
+          });
         }
 
         // 通知受影响的学生
@@ -634,10 +636,16 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
 
 router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
   try {
-    const { title, description, subject, question_type, max_exp, due_date, class_id, question_ids, ai_config } = req.body;
+    const { title, description, subject, question_type, max_exp, due_date, class_id, question_ids, ai_config, max_attempts } = req.body;
 
     if (!title || !subject || !question_type || !due_date) {
       return res.status(400).json({ error: '请填写必要信息' });
+    }
+
+    // 重做次数上限：允许 1-10 次，缺省沿用表默认值 3
+    let attempts = Number(max_attempts);
+    if (!Number.isInteger(attempts) || attempts < 1 || attempts > 10) {
+      attempts = 3;
     }
 
     let targetClassId = class_id;
@@ -662,9 +670,9 @@ router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res
     }
 
     const result = db.prepare(`
-      INSERT INTO assignments (teacher_id, title, description, subject, question_type, max_exp, due_date, ai_config, class_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(req.user.userId, title, description, subject, question_type, max_exp, new Date(due_date).toISOString(), JSON.stringify(ai_config || {}), targetClassId);
+      INSERT INTO assignments (teacher_id, title, description, subject, question_type, max_exp, due_date, ai_config, class_id, max_attempts)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(req.user.userId, title, description, subject, question_type, max_exp, new Date(due_date).toISOString(), JSON.stringify(ai_config || {}), targetClassId, attempts);
 
     const assignmentId = result.lastInsertRowid;
 
@@ -693,6 +701,7 @@ router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res
         max_exp,
         due_date,
         class_id: targetClassId,
+        max_attempts: attempts,
         question_count: question_ids ? question_ids.length : 0
       }
     });
@@ -946,6 +955,17 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
     const existingSubmission = db.prepare('SELECT id, status, attempt_count FROM submissions WHERE assignment_id = ? AND user_id = ?').get(req.params.id, req.user.userId);
     if (existingSubmission && existingSubmission.status !== 'retry_available') {
       return res.status(400).json({ error: '已经提交过作业' });
+    }
+
+    // 重做次数上限：原先 retry_available 只要还有错题就能无限重做，
+    // 每次分数提高还会补发金币差额，等于可以一直刷到满分。
+    const maxAttempts = Number(assignment.max_attempts) > 0 ? Number(assignment.max_attempts) : 3;
+    if (existingSubmission && existingSubmission.attempt_count >= maxAttempts) {
+      return res.status(400).json({
+        error: `重做次数已用完（上限 ${maxAttempts} 次）`,
+        attempt_count: existingSubmission.attempt_count,
+        max_attempts: maxAttempts,
+      });
     }
 
     const questions = db.prepare(`
@@ -1215,9 +1235,13 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
           VALUES (?, ?, ?, ?, ?, 100, ?, 1, ?)
         `).run(req.params.id, req.user.userId, JSON.stringify(answers), finalStatus, totalScore, goldReward, finalStatus);
 
-        // 发放金币
+        // 发放金币（走统一管道：累计金币成就与流水一并处理）
         if (goldReward > 0) {
-          db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(goldReward, goldReward, req.user.userId);
+          grantReward(req.user.userId, {
+            gold: goldReward,
+            source: 'assignment',
+            reason: `作业提交: ${assignment.title}`,
+          });
         }
 
         const newSubId = result.lastInsertRowid;
@@ -1262,11 +1286,12 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
         }
 
         // 金币差额双向结算（原先只补发不收回，成绩下滑也能白拿金币）
-        if (goldRewardDiff > 0) {
-          db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(goldRewardDiff, goldRewardDiff, req.user.userId);
-        } else if (goldRewardDiff < 0) {
-          const loss = -goldRewardDiff;
-          db.prepare('UPDATE users SET gold = MAX(0, gold - ?), total_gold_earned = MAX(0, total_gold_earned - ?) WHERE id = ?').run(loss, loss, req.user.userId);
+        if (goldRewardDiff !== 0) {
+          grantReward(req.user.userId, {
+            gold: goldRewardDiff,
+            source: 'assignment_retry',
+            reason: `作业重做，金币调整 ${goldRewardDiff > 0 ? '+' : ''}${goldRewardDiff}`,
+          });
         }
       }
 
@@ -1511,7 +1536,11 @@ async function reviewSubjectiveAssignment(submissionId, assignmentId, userId) {
       UPDATE submissions SET total_score = ?, gold_reward = ?, review_status = 'completed', graded_at = CURRENT_TIMESTAMP WHERE id = ?
     `).run(avgScore, goldReward, submissionId);
 
-    db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(goldReward, goldReward, userId);
+    grantReward(userId, {
+      gold: goldReward,
+      source: 'assignment_subjective',
+      reason: `主观题作业评阅: ${submission.assignment_id}`,
+    });
 
     for (const qa of questionAnswers) {
       const qaRecord = db.prepare('SELECT is_correct, score FROM question_answers WHERE id = ?').get(qa.id);
@@ -1533,8 +1562,11 @@ async function reviewSubjectiveAssignment(submissionId, assignmentId, userId) {
       .run(fallbackGold, submissionId);
     if (fallbackGold > 0) {
       try {
-        db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?')
-          .run(fallbackGold, fallbackGold, userId);
+        grantReward(userId, {
+          gold: fallbackGold,
+          source: 'assignment_subjective',
+          reason: '主观题评阅异常兜底发放',
+        });
       } catch (goldErr) { console.error('兜底金币发放失败:', goldErr); }
     }
   }
@@ -1752,11 +1784,11 @@ router.post('/:id/paper-submit', authenticateToken, authorizeRole('teacher', 'ad
       const submissionId = result.lastInsertRowid;
 
       if (goldReward > 0) {
-        db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?')
-          .run(goldReward, goldReward, student_id);
-        db.prepare(`INSERT INTO gold_transactions (user_id, gold_change, reason, source)
-          VALUES (?, ?, ?, 'paper_assignment')`)
-          .run(student_id, goldReward, `纸质作业: ${assignment.title}`);
+        grantReward(student_id, {
+          gold: goldReward,
+          source: 'paper_assignment',
+          reason: `纸质作业: ${assignment.title}`,
+        });
       }
 
       const insertQA = db.prepare(`
@@ -1961,14 +1993,8 @@ router.post('/wrong/:id/review', authenticateToken, (req, res) => {
     }
     // 累加今日复习错题任务进度
     try {
-      const today = getChinaDate();
-      const taskLog = db.prepare(`
-        SELECT task_progress, task_target FROM daily_task_logs
-        WHERE user_id = ? AND date = ? AND task_type = 'review_weak_point'
-      `).get(req.user.userId, today);
-      if (taskLog) {
-        updateTaskProgress(req.user.userId, 'review_weak_point', (taskLog.task_progress || 0) + 1);
-      }
+      // updateTaskProgress 已在内部累加，这里只传本次增量 1（原先传「旧进度+1」会双倍累加）
+      updateTaskProgress(req.user.userId, 'review_weak_point', 1);
     } catch (e) { /* ignore */ }
 
     // 成就检查
