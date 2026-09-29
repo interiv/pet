@@ -22,6 +22,14 @@ export default defineConfig({
       }
     }
   },
+  test: {
+    // 前端冒烟测试（jest-dom 断言 + jsdom 环境）
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    css: false,
+  },
   build: {
     chunkSizeWarningLimit: 800,
     rollupOptions: {
