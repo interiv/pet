@@ -3,7 +3,8 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { checkAndAwardAchievement } = require('./achievements');
-const { checkLevelUp } = require('./pets');
+const { grantReward } = require('../services/rewards');
+const { elementMultiplier } = require('../utils/elements');
 const { getChinaDate } = require('../config/timezone');
 
 // 好友对战每日上限（不消耗体力，必须限次，否则可无限刷经验与金币）
@@ -297,7 +298,17 @@ router.post('/friend-battle', authenticateToken, (req, res) => {
 
     const myPower = myPet.attack + myPet.defense + myPet.speed;
     const friendPower = friendPet.attack + friendPet.defense + friendPet.speed;
-    const myWinChance = Math.max(0.1, Math.min(0.9, 0.5 + (myPower - friendPower) * 0.001));
+
+    // 属性克制同样影响好友对战的胜率评估（火→草→水→火，光↔暗）
+    const myElement = db
+      .prepare('SELECT ps.element_type AS e FROM pets p JOIN pet_species ps ON p.species_id = ps.id WHERE p.id = ?')
+      .get(myPet.id)?.e || null;
+    const friendElement = db
+      .prepare('SELECT ps.element_type AS e FROM pets p JOIN pet_species ps ON p.species_id = ps.id WHERE p.id = ?')
+      .get(friendPet.id)?.e || null;
+    const elemBonus = (elementMultiplier(myElement, friendElement).multiplier - 1) * 0.25;
+
+    const myWinChance = Math.max(0.1, Math.min(0.9, 0.5 + (myPower - friendPower) * 0.001 + elemBonus));
     const winner = Math.random() < myWinChance ? myPet.id : friendPet.id;
 
     const expReward = 50;
@@ -306,25 +317,33 @@ router.post('/friend-battle', authenticateToken, (req, res) => {
 
     // 双方战绩都要记账：原先失败分支既不更新 win_count 也不更新 total_battles，
     // 且好友方宠物完全不更新，导致胜率统计失真
+    let battleReward = null;
     if (myWin) {
-      db.prepare('UPDATE pets SET exp = exp + ?, win_count = win_count + 1, total_battles = total_battles + 1 WHERE id = ?').run(expReward * 2, myPet.id);
+      db.prepare('UPDATE pets SET win_count = win_count + 1, total_battles = total_battles + 1 WHERE id = ?').run(myPet.id);
       db.prepare('UPDATE pets SET total_battles = total_battles + 1 WHERE id = ?').run(friendPet.id);
-      db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(goldReward, goldReward, req.user.userId);
+      // 经验与金币走统一管道（内部负责升级判定、累计金币成就与流水）
+      battleReward = grantReward(req.user.userId, {
+        gold: goldReward,
+        exp: expReward * 2,
+        source: 'friend_battle',
+        reason: '好友对战胜利',
+      });
     } else {
-      db.prepare('UPDATE pets SET exp = exp + ?, total_battles = total_battles + 1 WHERE id = ?').run(expReward, myPet.id);
+      db.prepare('UPDATE pets SET total_battles = total_battles + 1 WHERE id = ?').run(myPet.id);
       db.prepare('UPDATE pets SET win_count = win_count + 1, total_battles = total_battles + 1 WHERE id = ?').run(friendPet.id);
+      battleReward = grantReward(req.user.userId, {
+        exp: expReward,
+        source: 'friend_battle',
+        reason: '好友对战参与奖励',
+      });
     }
 
     // 记录对战流水，供每日上限统计
     db.prepare("INSERT INTO user_activities (user_id, activity_type, metadata) VALUES (?, 'friend_battle', ?)")
       .run(req.user.userId, JSON.stringify({ friend_id, win: myWin }));
 
-    // 经验变化后必须触发升级检查（原先缺失，经验涨了但宠物不升级）
-    let levelUp = { leveledUp: false };
-    try {
-      const updatedMyPet = db.prepare('SELECT * FROM pets WHERE id = ?').get(myPet.id);
-      if (updatedMyPet) levelUp = checkLevelUp(updatedMyPet);
-    } catch (e) { console.error('好友对战升级检查失败:', e); }
+    // 升级检查已由 grantReward 内部完成（原先缺失：经验涨了但宠物不升级）
+    const levelUp = (battleReward && battleReward.levelUp) || { leveledUp: false };
 
     db.prepare('UPDATE friends SET friendship_level = friendship_level + 1, last_interaction = CURRENT_TIMESTAMP WHERE user_id = ? AND friend_id = ?').run(req.user.userId, friend_id);
 

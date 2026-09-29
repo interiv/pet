@@ -6,7 +6,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { getChinaDate } = require('../config/timezone');
 const { getAIConfig, isAIConfigured } = require('../config/ai');
 const { getPrompt, fillTemplate } = require('../config/prompts');
-const { checkLevelUp } = require('./pets');
+const { grantReward } = require('../services/rewards');
 
 function generateCardCode(length = 12) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -247,12 +247,11 @@ router.post('/redeem', authenticateToken, (req, res) => {
     const redeemTransaction = db.transaction(() => {
       switch (card.reward_type) {
         case 'gold': {
-          db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?')
-            .run(rewardValue, rewardValue, req.user.userId);
-
-          db.prepare(`INSERT INTO gold_transactions (user_id, gold_change, reason, source)
-            VALUES (?, ?, ?, 'card')`)
-            .run(req.user.userId, rewardValue, `兑换卡 ${cleanCode}: 获得 ${rewardValue} 金币`);
+          grantReward(req.user.userId, {
+            gold: rewardValue,
+            source: 'card',
+            reason: `兑换卡 ${cleanCode}: 获得 ${rewardValue} 金币`,
+          });
           break;
         }
 
@@ -290,16 +289,12 @@ router.post('/redeem', authenticateToken, (req, res) => {
         }
 
         case 'exp': {
-          // 原先限定 status='normal'，宠物昏迷时经验会静默消失；改为按 user_id 直接取
-          const pet = db.prepare('SELECT * FROM pets WHERE user_id = ? ORDER BY id DESC LIMIT 1')
-            .get(req.user.userId);
-
-          if (pet) {
-            db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-              .run(rewardValue, rewardValue, pet.id);
-            // 经验变化后触发升级检查（原先缺失，经验卡加了经验却不升级）
-            try { checkLevelUp(pet); } catch (e) { console.error('经验卡升级检查失败:', e); }
-          }
+          // 统一管道内部不筛 status（宠物昏迷时经验也应入账），并负责升级判定
+          grantReward(req.user.userId, {
+            exp: rewardValue,
+            source: 'card',
+            reason: `兑换卡 ${cleanCode}: 获得 ${rewardValue} 经验`,
+          });
           break;
         }
 
@@ -307,21 +302,18 @@ router.post('/redeem', authenticateToken, (req, res) => {
           const roll = Math.random();
           if (roll < 0.4) {
             const goldAmount = Math.floor(Math.random() * 200) + 50;
-            db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?')
-              .run(goldAmount, goldAmount, req.user.userId);
-            db.prepare(`INSERT INTO gold_transactions (user_id, gold_change, reason, source)
-              VALUES (?, ?, ?, 'card')`)
-              .run(req.user.userId, goldAmount, `神秘卡 ${cleanCode}: 获得 ${goldAmount} 金币`);
+            grantReward(req.user.userId, {
+              gold: goldAmount,
+              source: 'card',
+              reason: `神秘卡 ${cleanCode}: 获得 ${goldAmount} 金币`,
+            });
           } else if (roll < 0.7) {
             const expAmount = Math.floor(Math.random() * 100) + 30;
-            // 同 exp 分支：不再限定 status='normal'，并补上升级检查
-            const pet = db.prepare('SELECT * FROM pets WHERE user_id = ? ORDER BY id DESC LIMIT 1')
-              .get(req.user.userId);
-            if (pet) {
-              db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-                .run(expAmount, expAmount, pet.id);
-              try { checkLevelUp(pet); } catch (e) { console.error('神秘卡升级检查失败:', e); }
-            }
+            grantReward(req.user.userId, {
+              exp: expAmount,
+              source: 'card',
+              reason: `神秘卡 ${cleanCode}: 获得 ${expAmount} 经验`,
+            });
           } else {
             const itemIds = db.prepare('SELECT id FROM items ORDER BY RANDOM() LIMIT 1').all();
             if (itemIds.length > 0) {
@@ -921,12 +913,11 @@ router.post('/classroom-quiz/:quizId/reward', authenticateToken, (req, res) => {
       for (const sid of targetIds) {
         switch (reward_type) {
           case 'gold': {
-            db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?')
-              .run(value, value, sid);
-
-            db.prepare(`INSERT INTO gold_transactions (user_id, gold_change, reason, source)
-              VALUES (?, ?, ?, 'classroom_quiz')`)
-              .run(sid, value, `课堂奖励: ${quiz.title} - ${reason || reward_name || ''}`);
+            grantReward(sid, {
+              gold: value,
+              source: 'classroom_quiz',
+              reason: `课堂奖励: ${quiz.title} - ${reason || reward_name || ''}`,
+            });
             break;
           }
 
@@ -953,20 +944,13 @@ router.post('/classroom-quiz/:quizId/reward', authenticateToken, (req, res) => {
           }
 
           case 'exp': {
-            if (pet_id && targetIds.length === 1) {
-              // 校验宠物归属，避免把经验加到别人的宠物上
-              const petRow = db.prepare('SELECT id FROM pets WHERE id = ? AND user_id = ?').get(pet_id, sid);
-              if (!petRow) break;
-              db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-                .run(value, value, pet_id);
-            } else {
-              const pet = db.prepare('SELECT * FROM pets WHERE user_id = ? AND status = ? ORDER BY id DESC LIMIT 1')
-                .get(sid, 'normal');
-              if (pet) {
-                db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-                  .run(value, value, pet.id);
-              }
-            }
+            // 单人发放且显式指定了宠物时，走指定宠物（管道内部会校验归属）
+            grantReward(sid, {
+              exp: value,
+              petId: pet_id && targetIds.length === 1 ? pet_id : null,
+              source: 'classroom_quiz',
+              reason: `课堂奖励: ${quiz.title} - ${reason || reward_name || ''}`,
+            });
             break;
           }
         }

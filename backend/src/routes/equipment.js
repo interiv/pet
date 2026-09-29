@@ -137,6 +137,8 @@ router.post('/sell', authenticateToken, (req, res) => {
     const sellPrice = Math.floor(equip.price * 0.4 * levelMultiplier);
 
     const sellTransaction = db.transaction(() => {
+      // 出售装备属于「退款/变现」，不是奖励，因此不走 grantReward：
+      // 不应计入 total_gold_earned（生涯累计只统计奖励获得的金币），也不产生金币流水奖励记录
       db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(sellPrice, req.user.userId);
       db.prepare('DELETE FROM user_equipment WHERE id = ?').run(user_equip_id);
     });

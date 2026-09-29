@@ -3,7 +3,7 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { checkAndAwardAchievement } = require('./achievements');
-const { checkLevelUp } = require('./pets');
+const { grantReward } = require('../services/rewards');
 const { isAnswerCorrect } = require('../utils/answerCheck');
 
 const BOSS_ICONS = ['👹', '👑', '🐉', '👿', '🦹', '💀', '🧌', '👹', '🔥', '⚡'];
@@ -1018,16 +1018,23 @@ router.post('/:bossId/claim-reward', authenticateToken, (req, res) => {
     let totalGold = 0;
     let totalExp = 0;
     let equipmentGiven = null;
-    let expGranted = false;
+    let expResult = null;
 
     for (const reward of unclaimed) {
       if (reward.reward_type === 'gold') {
-        db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(reward.reward_value, reward.reward_value, req.user.userId);
+        grantReward(req.user.userId, {
+          gold: reward.reward_value,
+          source: 'boss_battle',
+          reason: `BOSS 战奖励: ${boss.boss_name}`,
+        });
         totalGold += reward.reward_value;
       } else if (reward.reward_type === 'exp') {
-        db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ? WHERE user_id = ?').run(reward.reward_value, reward.reward_value, req.user.userId);
+        expResult = grantReward(req.user.userId, {
+          exp: reward.reward_value,
+          source: 'boss_battle',
+          reason: `BOSS 战奖励: ${boss.boss_name}`,
+        });
         totalExp += reward.reward_value;
-        expGranted = true;
       } else if (reward.reward_type === 'equipment') {
         const equip = db.prepare('SELECT * FROM equipment WHERE id = ?').get(reward.reward_value);
         if (equip) {
@@ -1038,14 +1045,9 @@ router.post('/:bossId/claim-reward', authenticateToken, (req, res) => {
       db.prepare('UPDATE boss_battle_rewards SET claimed = 1 WHERE id = ?').run(reward.id);
     }
 
-    // 发放经验后必须触发升级检查（原先缺失：经验涨了但宠物不升级，要等下次投喂才补上）
-    let levelUp = { leveledUp: false };
-    if (expGranted) {
-      try {
-        const pet = db.prepare('SELECT id, user_id FROM pets WHERE user_id = ?').get(req.user.userId);
-        if (pet) levelUp = checkLevelUp(pet);
-      } catch (e) { console.error('BOSS领奖升级检查失败:', e); }
-    }
+    // 升级检查已由 grantReward 内部完成（原先缺失：经验涨了但宠物不升级，
+    // 要等下次投喂才补上）。这里直接取回结果用于提示文案。
+    const levelUp = (expResult && expResult.levelUp) || { leveledUp: false };
 
     const parts = [];
     if (totalGold > 0) parts.push(`${totalGold} 金币`);

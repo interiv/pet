@@ -3,6 +3,10 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const conditionTypes = require('../config/achievementConditions');
+// 本模块与 services/rewards.js 互相依赖（发成就奖励要用到 grantReward，
+// grantReward 发放金币后又要检查累计金币成就）。rewards.js 是在函数内部延迟 require
+// 本模块的，因此这里顶层 require 不会形成加载期死锁。
+const { grantReward } = require('../services/rewards');
 
 // type → 该类型对应的阈值字段（见 config/achievementConditions.js 的 thresholdKey）
 const TYPE_META = new Map(conditionTypes.map((c) => [c.type, c]));
@@ -56,12 +60,19 @@ function checkAndAwardAchievement(userId, achievementType, currentValue) {
       } catch (notifErr) { console.error('成就通知创建失败:', notifErr); }
 
       if (ach.reward_type === 'gold') {
-        db.prepare('UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?').run(ach.reward_value, ach.reward_value, userId);
+        // 注意：这里不再递归检查 total_gold 成就，避免「金币成就又发金币」的无限递归
+        grantReward(userId, {
+          gold: ach.reward_value,
+          source: 'achievement',
+          reason: `成就奖励: ${ach.name}`,
+          skipAchievementCheck: true,
+        });
       } else if (ach.reward_type === 'exp') {
-        const pet = db.prepare('SELECT id FROM pets WHERE user_id = ?').get(userId);
-        if (pet) {
-          db.prepare('UPDATE pets SET exp = exp + ?, total_exp_earned = total_exp_earned + ? WHERE id = ?').run(ach.reward_value, ach.reward_value, pet.id);
-        }
+        grantReward(userId, {
+          exp: ach.reward_value,
+          source: 'achievement',
+          reason: `成就奖励: ${ach.name}`,
+        });
       } else if (ach.reward_type === 'item') {
         const existingItem = db.prepare(
           'SELECT id FROM user_items WHERE user_id = ? AND item_id = ?'
