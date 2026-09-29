@@ -33,7 +33,9 @@ module.exports = [
   { type: 'total_gold', label: '累计金币', category: 'collection', thresholdKey: 'gold', thresholdLabel: '金币数', description: '累计获得金币总数' },
 
   // --- 签到/综合 ---
-  { type: 'login', label: '登录', category: 'special', thresholdKey: 'count', thresholdLabel: '次数', description: '登录次数' },
+  // 注意：系统没有记录登录次数的字段，实际统计的是「有活跃记录的去重天数」，
+  // 因此这里按天数命名，避免与「连续登录」混淆、也避免玩家看到进度与预期不符
+  { type: 'login', label: '登录天数', category: 'special', thresholdKey: 'count', thresholdLabel: '天数', description: '累计登录天数' },
   { type: 'continuous_login', label: '连续登录', category: 'special', thresholdKey: 'days', thresholdLabel: '天数', description: '连续登录天数' },
   { type: 'complete_daily_task', label: '完成每日任务', category: 'special', thresholdKey: 'count', thresholdLabel: '次数', description: '完成每日任务次数' },
 ];

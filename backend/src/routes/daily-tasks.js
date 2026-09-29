@@ -3,6 +3,7 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { checkAndAwardAchievement } = require('./achievements');
+const { grantReward } = require('../services/rewards');
 const { getChinaDate, getChinaYesterday } = require('../config/timezone');
 
 // 获取今日任务
@@ -107,14 +108,12 @@ router.get('/', authenticateToken, (req, res) => {
 /**
  * 更新任务进度（内部函数，供其他 API 调用）
  *
- * 重要约定：progress 传的是「当前累计值」而不是「本次增量」——
- * 除 correct_rate（自动取历史最大值）外，本函数都会直接把 task_progress 设为
- * min(progress, task_target)，不会累加。
+ * 约定：progress 传「本次增量」，函数内部负责累加（除 correct_rate 取历史最大值）。
  *
- * 因此调用方务必自己先读出旧进度再加上增量，例如：
- *   const log = SELECT task_progress ... ;
- *   updateTaskProgress(userId, 'review_weak_point', (log.task_progress || 0) + 1);
- * 直接传 1 会让目标值大于 1 的任务（如 review_weak_point 目标 3）永远无法完成。
+ * 历史坑：原实现是「直接赋值为 min(progress, target)」而非累加，
+ * 于是调用方被迫自己先读旧值再加增量传进来——一旦某个调用方忘了这层约定直接传 1，
+ * 目标值大于 1 的任务（如 review_weak_point 目标 3）就永远无法完成。
+ * 改为内部累加后，调用方统一传增量即可，不会再踩这个坑。
  */
 function updateTaskProgress(userId, taskType, progress) {
   try {
@@ -165,12 +164,13 @@ function updateTaskProgress(userId, taskType, progress) {
 
     if (!taskLog) return;
 
-    // 对于正确率类任务，只取更高值（防止覆盖降低）
+    // 正确率类任务取历史最高值；其余类型按增量累加（原先是直接赋值，见函数头注释）
+    const delta = Number(progress) || 0;
     let newProgress;
     if (taskType === 'correct_rate') {
-      newProgress = Math.max(taskLog.task_progress, Math.min(progress, taskLog.task_target));
+      newProgress = Math.max(taskLog.task_progress, Math.min(delta, taskLog.task_target));
     } else {
-      newProgress = Math.min(progress, taskLog.task_target);
+      newProgress = Math.min(taskLog.task_progress + delta, taskLog.task_target);
     }
     const isCompleted = newProgress >= taskLog.task_target ? 1 : 0;
 
@@ -252,16 +252,12 @@ router.post('/claim', authenticateToken, (req, res) => {
         rewardMessage = '任务奖励';
     }
 
-    // 发放金币
-    db.prepare(`
-      UPDATE users SET gold = gold + ?, total_gold_earned = total_gold_earned + ? WHERE id = ?
-    `).run(rewardGold, rewardGold, userId);
-
-    // 累计金币成就检查
-    try {
-      const totalGold = db.prepare('SELECT total_gold_earned FROM users WHERE id = ?').get(userId)?.total_gold_earned || 0;
-      checkAndAwardAchievement(userId, 'total_gold', totalGold);
-    } catch (e) { console.error('成就检查失败:', e); }
+    // 发放金币（累计金币成就与流水由统一管道处理）
+    grantReward(userId, {
+      gold: rewardGold,
+      source: 'daily_task',
+      reason: `${rewardMessage}: ${task_type}`,
+    });
 
     // 标记奖励已领取
     db.prepare(`

@@ -3,10 +3,24 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 
-// 获取物品列表
+/**
+ * 有实际消费入口的道具类型。
+ * 其余类型（shield / buff_* / luck / double_exp / rename）目前没有任何地方会扣减它们，
+ * 学生买了只能砸在手里（最贵的 1000 金币），因此商店不再出售。
+ * 已购买的存量不受影响，等对应玩法实装后再放开。
+ */
+const SELLABLE_EFFECT_TYPES = [
+  'hunger', 'mood', 'health', 'stamina', 'exp',
+  'attack', 'defense', 'speed', 'reincarnate',
+];
+
+// 获取物品列表（商店货架）
 router.get('/', authenticateToken, (req, res) => {
   try {
-    const items = db.prepare('SELECT * FROM items ORDER BY price').all();
+    const placeholders = SELLABLE_EFFECT_TYPES.map(() => '?').join(',');
+    const items = db
+      .prepare(`SELECT * FROM items WHERE effect_type IN (${placeholders}) ORDER BY price`)
+      .all(...SELLABLE_EFFECT_TYPES);
     res.json({ items });
   } catch (error) {
     console.error('获取物品列表错误:', error);
@@ -26,6 +40,11 @@ router.post('/buy', authenticateToken, (req, res) => {
     const item = db.prepare('SELECT * FROM items WHERE id = ?').get(item_id);
     if (!item) {
       return res.status(404).json({ error: '物品不存在' });
+    }
+
+    // 与货架保持一致：没有消费入口的道具不允许购买（绕过列表直接 POST 也不行）
+    if (!SELLABLE_EFFECT_TYPES.includes(item.effect_type)) {
+      return res.status(400).json({ error: '该道具暂未开放' });
     }
 
     const totalCost = item.price * quantity;
