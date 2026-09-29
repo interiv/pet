@@ -49,6 +49,7 @@ backend/uploads/
 # 临时文件
 *.tmp
 *.temp
+tmp_*
 
 # IDE/Agent 目录
 .codebuddy/
