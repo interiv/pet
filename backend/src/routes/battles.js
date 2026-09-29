@@ -4,6 +4,19 @@ const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { checkLevelUp } = require('./pets');
 const { checkAndAwardAchievement } = require('./achievements');
+const { elementMultiplier } = require('../utils/elements');
+
+// 取宠物的属性（element_type 存在 pet_species 上，pets 表里没有）
+function getPetElement(petId) {
+  const row = db
+    .prepare(
+      `SELECT ps.element_type AS element_type
+       FROM pets p JOIN pet_species ps ON p.species_id = ps.id
+       WHERE p.id = ?`
+    )
+    .get(petId);
+  return row ? row.element_type : null;
+}
 
 // 防御减伤：伤害按 100/(100+防御) 折算，让 defense 真正参与战斗
 // （原先只有 attack 参与伤害计算，堆防御完全没用）
@@ -16,6 +29,12 @@ function mitigateDamage(damage, defense) {
 function generateBattleLog(myPet, opponentPet, myWinChance, moodCriticalBonus = 0) {
   const log = [];
   const maxRounds = 3;
+
+  // 属性克制倍率：火→草→水→火，光↔暗
+  const myElement = myPet.element_type || null;
+  const opponentElement = opponentPet.element_type || null;
+  const myElemVsOpponent = elementMultiplier(myElement, opponentElement);
+  const opponentElemVsMe = elementMultiplier(opponentElement, myElement);
 
   let myHp = 100;
   let opponentHp = 100;
@@ -33,8 +52,15 @@ function generateBattleLog(myPet, opponentPet, myWinChance, moodCriticalBonus = 
     const isOpponentCritical = Math.random() < 0.1;
     const finalOpponentDamage = isOpponentCritical ? Math.floor(rawOpponentDamage * 1.5) : rawOpponentDamage;
 
-    const myDamage = mitigateDamage(finalMyDamage, opponentPet.defense);
-    const opponentDamage = mitigateDamage(finalOpponentDamage, myPet.defense);
+    // 伤害 = 攻击 → 暴击加成 → 属性克制 → 目标防御减伤
+    const myDamage = mitigateDamage(
+      Math.round(finalMyDamage * myElemVsOpponent.multiplier),
+      opponentPet.defense
+    );
+    const opponentDamage = mitigateDamage(
+      Math.round(finalOpponentDamage * opponentElemVsMe.multiplier),
+      myPet.defense
+    );
 
     opponentHp = Math.max(0, opponentHp - myDamage);
     myHp = Math.max(0, myHp - opponentDamage);
@@ -58,6 +84,13 @@ function generateBattleLog(myPet, opponentPet, myWinChance, moodCriticalBonus = 
   return {
     winner,
     myWinChance: Math.round(myWinChance * 100),
+    elements: {
+      mine: myElement,
+      opponent: opponentElement,
+      myRelation: myElemVsOpponent.relation,
+      myMultiplier: myElemVsOpponent.multiplier,
+      opponentMultiplier: opponentElemVsMe.multiplier,
+    },
     rounds: log
   };
 }
@@ -98,6 +131,10 @@ router.post('/start', authenticateToken, (req, res) => {
       VALUES (?, ?, '1v1')
     `).run(myPet.id, opponentPet.id);
 
+    // 带上属性，供伤害倍率与战力评估使用
+    myPet.element_type = getPetElement(myPet.id);
+    opponentPet.element_type = getPetElement(opponentPet.id);
+
     const myPower = myPet.attack + myPet.defense + myPet.speed;
     const opponentPower = opponentPet.attack + opponentPet.defense + opponentPet.speed;
 
@@ -105,8 +142,12 @@ router.post('/start', authenticateToken, (req, res) => {
     const moodBonus = (myPet.mood - 50) * 0.001;
     const moodCriticalBonus = myPet.mood > 80 ? 0.05 : 0;
 
+    // 属性克制纳入战力评估（仅影响展示用的胜率，实际胜负由模拟决定）
+    const myElem = elementMultiplier(myPet.element_type, opponentPet.element_type);
+    const elementBonus = (myElem.multiplier - 1) * 0.25;
+
     const powerDiff = myPower - opponentPower;
-    const myWinChance = Math.max(0.1, Math.min(0.9, 0.5 + powerDiff * 0.001 + moodBonus));
+    const myWinChance = Math.max(0.1, Math.min(0.9, 0.5 + powerDiff * 0.001 + moodBonus + elementBonus));
 
     // 先跑模拟，由模拟结果决定胜负（myWinChance 仅作为战力评估展示给前端）
     const battleLog = generateBattleLog(myPet, opponentPet, myWinChance, moodCriticalBonus);
@@ -208,6 +249,7 @@ router.post('/start', authenticateToken, (req, res) => {
       rewardGold: 0,
       moodChange,
       myWinChance: Math.round(myWinChance * 100),
+      elements: battleLog.elements,
       levelUp: myLevelUp,
       battleLog
     });
