@@ -78,9 +78,16 @@ const Achievements: React.FC = () => {
     const completed = !!achievement.completed;
     const category = achievement.category || 'special';
 
+    const tooltipTitle = completed && achievement.completed_at
+      ? `完成时间: ${new Date(achievement.completed_at).toLocaleString('zh-CN')}`
+      : '';
+
     return (
-      <Tooltip title={completed && achievement.completed_at ? `完成时间: ${new Date(achievement.completed_at).toLocaleString('zh-CN')}` : ''}>
-        <Badge.Ribbon
+      // Tooltip 的子节点需要能接收 ref，Badge.Ribbon 不支持，
+      // 直接嵌套会触发 antd 内部的 findDOMNode 弃用告警，故包一层 div。
+      <Tooltip title={tooltipTitle}>
+        <div>
+          <Badge.Ribbon
           text={completed ? <><CheckCircleOutlined /> 已解锁</> : <><LockOutlined /> 未解锁</>}
           color={completed ? 'green' : 'default'}
           style={{ display: completed ? 'block' : 'none' }}
@@ -155,7 +162,8 @@ const Achievements: React.FC = () => {
               </div>
             </div>
           </Card>
-        </Badge.Ribbon>
+          </Badge.Ribbon>
+        </div>
       </Tooltip>
     );
   };

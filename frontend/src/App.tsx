@@ -81,7 +81,7 @@ const App: React.FC = () => {
 
   return (
     <ConfigProvider locale={zhCN}>
-      <Router>
+      <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Suspense fallback={
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
             <Spin size="large"><span style={{ paddingLeft: 16 }}>加载中...</span></Spin>

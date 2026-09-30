@@ -24,7 +24,7 @@ export const MasteryRing: React.FC<{ percent: number; label?: string; height?: n
       <Progress
         type="dashboard"
         percent={safePercent}
-        width={height - 30}
+        size={height - 30}
         strokeColor={color}
         format={(p) => <span style={{ color, fontWeight: 'bold' }}>{p}%</span>}
       />

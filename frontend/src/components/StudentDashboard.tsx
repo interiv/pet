@@ -120,7 +120,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }) => {
                   color: '#fff',
                   overflow: 'hidden',
                 }}
-                bodyStyle={isMobile ? { padding: 16 } : undefined}
+                styles={isMobile ? { body: { padding: 16 } } : undefined}
               >
                 <Row gutter={[16, 16]} align="middle">
                   <Col xs={24} sm={10} style={{ textAlign: 'center' }}>
@@ -200,7 +200,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }) => {
                 <div style={{ marginTop: 16 }}>
                   <Row gutter={8}>
                     <Col span={8}>
-                      <Statistic title="经验" value={pet.exp} suffix={`/ ${pet.level * 100}`} valueStyle={{ fontSize: isMobile ? 14 : 16, color: '#52c41a' }} />
+                      <Statistic title="经验" value={pet.exp} suffix={`/ ${Math.floor(100 * Math.pow(pet.level, 1.5))}`} valueStyle={{ fontSize: isMobile ? 14 : 16, color: '#52c41a' }} />
                     </Col>
                     <Col span={8}>
                       <Statistic title="金币" value={user?.gold || 0} valueStyle={{ fontSize: isMobile ? 14 : 16, color: '#faad14' }} />

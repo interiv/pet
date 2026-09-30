@@ -619,7 +619,7 @@ const ClassroomQuiz: React.FC = () => {
                   </Col>
                   <Col span={5}>
                     <Form.Item name="ai_count" label="数量" initialValue={5} preserve={false}>
-                      <InputNumber min={1} max={20} style={{ width: '100%' }} addonAfter="道" />
+                      <InputNumber min={1} max={20} style={{ width: '100%' }} suffix="道" />
                     </Form.Item>
                   </Col>
                 </Row>
@@ -643,7 +643,7 @@ const ClassroomQuiz: React.FC = () => {
                     </Col>
                     <Col span={7}>
                       <Form.Item name="ai_count" label="数量" initialValue={5} preserve={false}>
-                        <InputNumber min={1} max={20} style={{ width: '100%' }} addonAfter="道" />
+                        <InputNumber min={1} max={20} style={{ width: '100%' }} suffix="道" />
                       </Form.Item>
                     </Col>
                   </Row>

@@ -52,7 +52,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
       const classes = statsRes.data.statistics?.classes?.list || [];
       setMyClasses(classes);
 
-      if (classes.length > 0) {
+      if (classes.length > 0 && classes[0].id) {
         const firstClassId = classes[0].id;
         setSelectedClassId(firstClassId);
 
@@ -73,6 +73,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
 
   const handleClassChange = async (classId: number) => {
     setSelectedClassId(classId);
+    if (!classId) return;
     try {
       const [lbRes, overviewRes] = await Promise.all([
         leaderboardAPI.getLevelLeaderboard({ class_id: classId, limit: 5 }),

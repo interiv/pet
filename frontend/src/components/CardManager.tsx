@@ -95,6 +95,10 @@ const CardManager: React.FC = () => {
         payload.reward_type = 'mystery';
         payload.reward_value = 1;
         payload.reward_name = '随机奖励';
+      } else {
+        // 后端按 reward_type 发奖，非神秘卡的奖励类型与卡类型一致，
+        // 缺少该字段会导致 POST /api/cards/batches 报 400「缺少必要参数」。
+        payload.reward_type = payload.type;
       }
       const res = await cardAPI.createBatch(payload);
       message.success(res.data.message);

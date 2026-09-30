@@ -364,7 +364,7 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                           onChange={(v) => setMark(q.id, false, v ?? 0)}
                           size="small"
                           style={{ width: 90 }}
-                          addonAfter="%"
+                          suffix="%"
                         />
                         <span>例如给 60 表示该题得 60% 的分</span>
                       </div>

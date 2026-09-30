@@ -39,6 +39,7 @@ interface Conversation {
   unread_count?: number;
   target_user_id?: number;
   class_id?: number;
+  room_id?: number;
 }
 
 const ChatRoom: React.FC = () => {
@@ -94,18 +95,21 @@ const ChatRoom: React.FC = () => {
       // 重连后重新加入房间
       const chat = activeChatRef.current;
       if (chat) {
-        if (chat.type === 'class' && chat.class_id) {
-          socket.emit('join-class-chat', { class_id: chat.class_id });
+        const roomId = chat.room_id ?? chat.class_id;
+        if (chat.type === 'class' && roomId) {
+          socket.emit('join-class-chat', roomId);
         } else if (chat.type === 'private' && chat.target_user_id) {
           socket.emit('join-private-chat', { target_user_id: chat.target_user_id });
         }
       }
     });
 
+    // 服务端用 io.to(房间) 广播，发送者也会收到自己的消息，需按 id 去重，
+    // 否则同一条消息会出现两次（并触发 React 重复 key 告警）
     socket.on('new-class-message', (msg: Message) => {
       const chat = activeChatRef.current;
       if (chat && chat.type === 'class') {
-        setMessages(prev => [...prev, msg]);
+        setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
         scrollToBottom();
       }
     });
@@ -113,7 +117,7 @@ const ChatRoom: React.FC = () => {
     socket.on('new-private-message', (msg: Message) => {
       const chat = activeChatRef.current;
       if (chat && chat.type === 'private') {
-        setMessages(prev => [...prev, msg]);
+        setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
         scrollToBottom();
       }
     });
@@ -153,8 +157,10 @@ const ChatRoom: React.FC = () => {
     try {
       const params: any = { room_type: conv.type };
       if (conv.type === 'class') {
-        params.room_id = conv.class_id;
-        socketRef.current?.emit('join-class-chat', conv.class_id);
+        // 会话列表返回的是 room_id，取 class_id 会得到 undefined，
+        // 导致 GET /api/chat/messages 鉴权失败（403 无权访问该班级群聊）
+        params.room_id = conv.room_id ?? conv.class_id;
+        socketRef.current?.emit('join-class-chat', params.room_id);
       } else if (conv.type === 'private') {
         const targetId = (conv as any).target_user_id || (conv as any).user_id;
         if (targetId) {
@@ -187,7 +193,7 @@ const ChatRoom: React.FC = () => {
       const data: any = { content, room_type: activeChat.type };
 
       if (activeChat.type === 'class') {
-        data.room_id = activeChat.class_id;
+        data.room_id = activeChat.room_id ?? activeChat.class_id;
       } else if (activeChat.type === 'private') {
         const targetId = (activeChat as any).target_user_id || (activeChat as any).user_id;
         if (targetId) data.target_user_id = targetId;
@@ -196,14 +202,15 @@ const ChatRoom: React.FC = () => {
       const res = await chatAPI.sendMessage(data);
 
       if (activeChat.type === 'class') {
-        socketRef.current?.emit('send-class-message', { classId: activeChat.class_id, message: res.data.message });
+        socketRef.current?.emit('send-class-message', { classId: activeChat.room_id ?? activeChat.class_id, message: res.data.message });
       } else {
         const targetId = (activeChat as any).target_user_id || (activeChat as any).user_id;
         socketRef.current?.emit('send-private-message', { targetUserId: targetId, message: res.data.message });
       }
 
       setInputValue('');
-      setMessages(prev => [...prev, res.data.message]);
+      const sent = res.data.message;
+      setMessages(prev => prev.some(m => m.id === sent.id) ? prev : [...prev, sent]);
       scrollToBottom();
       loadConversations();
     } catch (e: any) {

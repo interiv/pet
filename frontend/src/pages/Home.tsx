@@ -133,7 +133,7 @@ const Home: React.FC = () => {
         loadPetData();
         loadMyClassPets();
       } else {
-        loadPetData();
+        // 教师/管理员没有宠物，调用 /pets/my-pet 必然 404，会在控制台留下红色错误
         loadAllPets();
       }
     } else {

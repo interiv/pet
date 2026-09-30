@@ -142,14 +142,19 @@ router.get('/statistics', authenticateToken, (req, res) => {
         recent_registrations: recentRegistrations
       };
     } else if (userRole === 'teacher') {
-      const myClasses = db.prepare(`
-        SELECT COUNT(*) as count FROM class_teachers WHERE teacher_id = ?
-      `).get(userId).count;
-      
-      const myClassIds = db.prepare(`
-        SELECT class_id FROM class_teachers WHERE teacher_id = ?
-      `).all(userId).map(row => row.class_id);
-      
+      // 任教班级明细：教师工作台首页依赖 classes.list 来拉取班级排行与学情概览，
+      // 缺失时前端会以 undefined 调接口（/knowledge-points/class/undefined/... -> 404）
+      const myClassRows = db.prepare(`
+        SELECT c.id, c.name, c.grade, c.school_id, c.student_count, c.slug, ct.role as class_role
+        FROM class_teachers ct
+        JOIN classes c ON c.id = ct.class_id
+        WHERE ct.teacher_id = ?
+        ORDER BY c.id
+      `).all(userId);
+
+      const myClassIds = myClassRows.map(row => row.id);
+      const myClasses = myClassIds.length;
+
       let studentCount = 0;
       if (myClassIds.length > 0) {
         const placeholders = myClassIds.map(() => '?').join(',');
@@ -157,10 +162,10 @@ router.get('/statistics', authenticateToken, (req, res) => {
           SELECT COUNT(*) as count FROM users WHERE role = 'student' AND class_id IN (${placeholders})
         `).get(...myClassIds).count;
       }
-      
+
       statistics = {
         ...statistics,
-        classes: { total: myClasses },
+        classes: { total: myClasses, list: myClassRows },
         users: { students: studentCount }
       };
     }

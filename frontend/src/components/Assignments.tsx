@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space, Radio, Checkbox, Progress, Card, Alert, Upload, Image, Divider, Empty, Statistic, Row, Col, Tabs, Badge, Popconfirm } from 'antd';
 import { assignmentAPI, adminAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
@@ -94,8 +94,12 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [paperRegister, setPaperRegister] = useState<{ id: number; title: string } | null>(null);
   
   const [form] = Form.useForm();
-  const [submitForm] = Form.useForm();
   const [generateForm] = Form.useForm();
+  // 「发布设置」表单只在切到第3步时才挂载，生成后的默认值先存 ref，等表单挂载再写入。
+  // 直接调用 form.setFieldsValue() 会因表单未连接而触发 antd 告警。
+  const pendingPublishDefaults = useRef<any>(null);
+  // 题目编辑弹窗的初始值（弹窗挂载后再写入，避免 antd 告警）
+  const pendingEditValues = useRef<any>(null);
   
   const [generating, setGenerating] = useState(false);
   const [genMode, setGenMode] = useState<'topic' | 'requirements' | 'paste'>('topic');
@@ -171,6 +175,14 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     if (user) loadAssignments();
   }, [selectedClass, filterSubject, filterDateRange]);
 
+  // 切到「3. 发布设置」时表单才挂载，此时再把生成时算好的默认值写进去
+  useEffect(() => {
+    if (createModalTab === 'publish' && generatedData && pendingPublishDefaults.current) {
+      form.setFieldsValue(pendingPublishDefaults.current);
+      pendingPublishDefaults.current = null;
+    }
+  }, [createModalTab, generatedData, form]);
+
   const loadClasses = async () => {
     try {
       const res = await adminAPI.getClasses();
@@ -234,14 +246,14 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       setGeneratedData(res.data as GeneratedResult);
       const nextDayMidnight = dayjs().add(1, 'day').startOf('day');
       const allClassIds = classes.map(c => c.id);
-      form.setFieldsValue({
+      pendingPublishDefaults.current = {
         title: res.data.title,
         description: res.data.description,
         question_type: res.data.question_type,
         subject: res.data.subject,
         class_ids: allClassIds,
         due_date: nextDayMidnight
-      });
+      };
       setShowVariantQuestions({});
       setCreateModalTab('preview');
       message.success(`成功生成 ${res.data.question_count} 道题目（共${res.data.total_generated}道含变体）`);
@@ -301,9 +313,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         return;
       }
       setIsCreateModalVisible(false);
-      form.resetFields();
+      pendingPublishDefaults.current = null;
       setGeneratedData(null);
-      generateForm.resetFields();
       loadAssignments();
     } catch (e: any) {
       message.error(e.response?.data?.error || '发布失败');
@@ -405,7 +416,6 @@ ${items}
         setStudentAnswers({});
       }
       setUploadedImages({});
-      submitForm.resetFields();
       setProgressMilestones(new Set());
       setIsDoModalVisible(true);
     } catch (e: any) {
@@ -508,6 +518,8 @@ ${items}
   };
   
   // 打开题目编辑
+  // 编辑表单在弹窗挂载后才存在，这里只暂存初始值，等 afterOpenChange 时再写入，
+  // 避免 antd 的「useForm 未连接」告警。
   const handleEditQuestion = (question: Question, index: number, variantParentIndex?: number, variantIndex?: number) => {
     setEditingQuestion(question);
     setEditingQuestionIndex(index);
@@ -517,7 +529,7 @@ ${items}
     if (question.type === 'choice_multi' && typeof answerValue === 'string') {
       answerValue = answerValue.split(',').map(a => a.trim()).filter(Boolean);
     }
-    editForm.setFieldsValue({
+    pendingEditValues.current = {
       content: question.content,
       options: question.options ? question.options.join('\n') : '',
       difficulty: 'medium',
@@ -525,7 +537,7 @@ ${items}
       answer: answerValue,
       explanation: question.explanation || '',
       analysis: ''
-    });
+    };
     setEditModalVisible(true);
   };
   
@@ -726,7 +738,6 @@ ${items}
       });
       setStudentAnswers({});
       setUploadedImages({});
-      submitForm.resetFields();
       setProgressMilestones(new Set());
       setIsDoModalVisible(true);
       message.info(`请重新作答 ${retryQuestions.length} 道错题`);
@@ -890,16 +901,15 @@ ${items}
               setEditingQuestionIndex(-1);
               setEditingVariantParentIndex(-1);
               setEditingVariantIndex(-1);
-              let answerVal: any = q.answer || '';
-              editForm.setFieldsValue({
+              pendingEditValues.current = {
                 content: q.content,
                 options: q.options ? q.options.join('\n') : '',
                 difficulty: q.difficulty || 'medium',
                 knowledge_point: q.knowledge_point || '',
-                answer: answerVal,
+                answer: q.answer || '',
                 explanation: q.explanation || '',
                 analysis: q.analysis || ''
-              });
+              };
               setEditModalVisible(true);
             }} style={{ marginTop: 4 }}>编辑</Button>
           </div>
@@ -917,7 +927,7 @@ ${items}
               if (q.type === 'choice_multi' && typeof answerVal === 'string') {
                 answerVal = answerVal.split(',').map((a: string) => a.trim()).filter(Boolean);
               }
-              editForm.setFieldsValue({
+              pendingEditValues.current = {
                 content: q.content,
                 options: q.options ? q.options.join('\n') : '',
                 difficulty: q.difficulty || 'medium',
@@ -925,7 +935,7 @@ ${items}
                 answer: answerVal,
                 explanation: q.explanation || '',
                 analysis: q.analysis || ''
-              });
+              };
               setEditModalVisible(true);
             }}>编辑</Button>
           </div>
@@ -956,7 +966,7 @@ ${items}
                     if (v.type === 'choice_multi' && typeof answerVal === 'string') {
                       answerVal = answerVal.split(',').map((a: string) => a.trim()).filter(Boolean);
                     }
-                    editForm.setFieldsValue({
+                    pendingEditValues.current = {
                       content: v.content,
                       options: v.options ? v.options.join('\n') : '',
                       difficulty: v.difficulty || 'medium',
@@ -964,7 +974,7 @@ ${items}
                       answer: answerVal,
                       explanation: v.explanation || '',
                       analysis: v.analysis || ''
-                    });
+                    };
                     setEditModalVisible(true);
                   }}>编辑</Button>
                 </div>
@@ -1034,7 +1044,25 @@ ${items}
     return { text: '别灰心！查看错题本，弄懂每道题！📚', color: '#ff4d4f' };
   };
 
-  const isOverdue = (date: string) => dayjs(date).isBefore(dayjs());
+  // 截止日期允许为空（历史/演示作业），为空表示不限时间，避免显示 Invalid Date
+  const isOverdue = (date?: string) => {
+    if (!date) return false;
+    const d = dayjs(date);
+    return d.isValid() && d.isBefore(dayjs());
+  };
+
+  const formatDueDate = (date?: string) => {
+    if (!date) return '不限时间';
+    const d = dayjs(date);
+    return d.isValid() ? d.format('YYYY-MM-DD HH:mm') : '不限时间';
+  };
+
+  // 分数保留 1 位小数，避免出现 175.27151082299451 这类浮点尾数
+  const formatScore = (score: any) => {
+    const n = Number(score);
+    if (!Number.isFinite(n)) return 0;
+    return Math.round(n * 10) / 10;
+  };
 
   const getStatusTag = (record: any) => {
     if (record.status === 'cancelled') return <Tag color="default" icon={<StopOutlined />}>已取消</Tag>;
@@ -1043,7 +1071,7 @@ ${items}
       return <Tag color="processing">待完成</Tag>;
     }
     if (record.my_submission_status === 'retry_available') return <Tag color="warning" icon={<ReloadOutlined />}>可重做</Tag>;
-    const score = record.my_score;
+    const score = formatScore(record.my_score);
     if (score >= 90) return <Tag color="success" icon={<CheckCircleOutlined />}>优秀 {score}分</Tag>;
     if (score >= 60) return <Tag color="blue">及格 {score}分</Tag>;
     return <Tag color="error">需努力 {score}分</Tag>;
@@ -1055,7 +1083,7 @@ ${items}
         <a style={{ fontWeight: 500 }}>{text}</a>
         {r.my_submission_id && (
           <div style={{ fontSize: 12, color: '#999' }}>
-            最高得分：<span style={{ color: '#52c41a', fontWeight: 'bold' }}>{r.my_score || 0}</span> 分
+            最高得分：<span style={{ color: '#52c41a', fontWeight: 'bold' }}>{formatScore(r.my_score)}</span> 分
             {r.my_gold_reward > 0 && <span style={{ color: '#faad14', marginLeft: 8 }}>+{r.my_gold_reward}💰</span>}
           </div>
         )}
@@ -1086,10 +1114,9 @@ ${items}
     { 
       title: '截止日期', dataIndex: 'due_date', key: 'due_date', responsive: ['sm'] as any,
       render: (date: string) => {
-        const d = dayjs(date);
-        const overdue = d.isBefore(dayjs());
+        const overdue = isOverdue(date);
         return <span style={{ color: overdue ? '#ff4d4f' : undefined, fontWeight: overdue ? 'bold' : undefined }}>
-          {d.format('YYYY-MM-DD HH:mm')}
+          {formatDueDate(date)}
           {overdue && <span style={{ marginLeft: 4 }}>(已过期)</span>}
         </span>;
       }
@@ -1199,7 +1226,7 @@ ${items}
             }}>错题本</Button>
           )}
           {isTeacher && (
-            <Button type="primary" icon={<RobotOutlined />} onClick={() => { setIsCreateModalVisible(true); setGeneratedData(null); generateForm.resetFields(); form.resetFields(); setCreateModalTab('generate'); setShowVariantQuestions({}); loadGenLimit(); }}>
+            <Button type="primary" icon={<RobotOutlined />} onClick={() => { setIsCreateModalVisible(true); setGeneratedData(null); pendingPublishDefaults.current = null; setCreateModalTab('generate'); setShowVariantQuestions({}); loadGenLimit(); }}>
               发布新作业
             </Button>
           )}
@@ -1223,7 +1250,7 @@ ${items}
                 <span style={{ color: '#faad14', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}>+{record.max_exp}💰</span>
               </div>
               <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
-                {record.question_count}道题 · 截止 {dayjs(record.due_date).format('MM-DD HH:mm')}
+                {record.question_count}道题 · 截止 {formatDueDate(record.due_date)}
                 {isOverdue(record.due_date) && <span style={{ color: '#ff4d4f', marginLeft: 4 }}>已过期</span>}
               </div>
               {isTeacher && record.class_student_count !== undefined && (
@@ -1236,7 +1263,7 @@ ${items}
               )}
               {record.my_submission_id && (
                 <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
-                  最高得分：<span style={{ color: '#52c41a', fontWeight: 'bold' }}>{record.my_score || 0}</span> 分
+                  最高得分：<span style={{ color: '#52c41a', fontWeight: 'bold' }}>{formatScore(record.my_score)}</span> 分
                   {record.my_gold_reward > 0 && <span style={{ color: '#faad14', marginLeft: 8 }}>+{record.my_gold_reward}💰</span>}
                 </div>
               )}
@@ -1329,6 +1356,7 @@ ${items}
         title="🤖 发布新作业（AI智能生成）"
         open={isCreateModalVisible}
         onCancel={() => { setIsCreateModalVisible(false); setGeneratedData(null); }}
+        afterOpenChange={(open) => { if (open) generateForm.resetFields(); }}
         width={isMobile ? '95vw' : 780}
         destroyOnHidden
         footer={null}
@@ -1386,7 +1414,7 @@ ${items}
                   {genMode !== 'paste' ? (
                     <Col xs={12} sm={8}>
                       <Form.Item name="count" label="题目数量" initialValue={10}>
-                        <InputNumber min={3} max={20} style={{ width: '100%' }} addonAfter="道" />
+                        <InputNumber min={3} max={20} style={{ width: '100%' }} suffix="道" />
                       </Form.Item>
                     </Col>
                   ) : (
@@ -1575,7 +1603,7 @@ ${items}
                 <Row gutter={16}>
                   <Col xs={24} sm={12}>
                     <Form.Item name="max_exp" label="金币奖励" rules={[{ required: true }]} initialValue={30}>
-                      <InputNumber min={1} max={100} style={{ width: '100%' }} addonAfter="金币" />
+                      <InputNumber min={1} max={100} style={{ width: '100%' }} suffix="金币" />
                     </Form.Item>
                   </Col>
                   <Col xs={24} sm={12}>
@@ -1623,7 +1651,12 @@ ${items}
             )}
             <Button onClick={() => setIsDoModalVisible(false)}>{isTeacher ? '关闭' : '取消'}</Button>
             {!isTeacher && (
-              <Button type="primary" loading={submitting} onClick={handleSubmitAnswers}>
+              <Button
+                type="primary"
+                loading={submitting}
+                disabled={!currentAssignment?.questions?.length}
+                onClick={handleSubmitAnswers}
+              >
                 {submitting ? "提交中..." : "提交答案"}
               </Button>
             )}
@@ -1645,6 +1678,10 @@ ${items}
               style={{ marginBottom: 16 }} 
             />
             
+            {(!currentAssignment.questions || currentAssignment.questions.length === 0) && !isTeacher && (
+              <Empty description="该作业暂未添加题目，请联系老师补充题目后再作答" style={{ padding: '24px 0' }} />
+            )}
+
             {currentAssignment.questions?.map((_: Question, _si: number) => {
               const i = shuffledQuestionOrder.length > 0 ? shuffledQuestionOrder[_si] : _si;
               return renderQuestionForStudent(currentAssignment.questions[i], _si);
@@ -1854,6 +1891,12 @@ ${items}
           setEditingQuestionIndex(-1);
         }}
         onOk={() => editForm.submit()}
+        afterOpenChange={(open) => {
+          if (open && pendingEditValues.current) {
+            editForm.setFieldsValue(pendingEditValues.current);
+            pendingEditValues.current = null;
+          }
+        }}
         width={isMobile ? '95vw' : 600}
         zIndex={2000}
         okText="保存"
