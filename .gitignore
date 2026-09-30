@@ -57,6 +57,11 @@ tmp_*
 .trae/
 .claude/
 
+# e2e 回归产物（截图与日志，可随时重跑生成）
+scripts/e2e/shots/
+scripts/e2e/*-out.txt
+scripts/e2e/_tmp-*.sqlite
+
 # 模板材料和备用图片
 创AI模板材料/
 备用图片/
