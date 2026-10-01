@@ -257,6 +257,8 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
       'perm_battle_records', 'perm_homework_records', 'perm_purchase_records',
       'max_tokens_per_generation', 'daily_teacher_gen_limit',
       'daily_global_token_limit', 'max_questions_per_generation',
+      // AI 出题的最大轮次：题量偏多时会自动分多轮续写补齐
+      'ai_gen_max_rounds',
     ];
     const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {

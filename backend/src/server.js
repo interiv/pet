@@ -242,6 +242,13 @@ const PORT = process.env.PORT || 3000;
 // 启动前自动执行数据库迁移：
 // 传文件 + 重启即可完成建表/补列/老数据回填；迁移失败只记日志，不阻断服务启动（管理后台会给出提示）
 runMigrations().finally(() => {
+  // 迁移完成后兜底清理：教师生成了题目却没发布就关掉页面的情况，
+  // 前端来不及上报撤销，这里统一退还额度并删掉无人引用的孤儿题目
+  try {
+    require('./services/aiUsage').sweepOrphanGenerations();
+  } catch (e) {
+    console.error('清理未发布生成失败:', e.message);
+  }
   server.listen(PORT, () => {
     console.log(`服务器运行在端口 ${PORT}`);
     console.log(`环境：${process.env.NODE_ENV}`);

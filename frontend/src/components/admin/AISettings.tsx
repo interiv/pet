@@ -28,9 +28,10 @@ const AISettings: React.FC = () => {
         ai_report_interval_days: data.ai_report_interval_days || '3',
         ai_timeout: data.ai_timeout || '300',
         max_tokens_per_generation: data.max_tokens_per_generation || '18000',
-        daily_teacher_gen_limit: data.daily_teacher_gen_limit || '5',
+        daily_teacher_gen_limit: data.daily_teacher_gen_limit || '20',
         daily_global_token_limit: data.daily_global_token_limit || '2000000',
         max_questions_per_generation: data.max_questions_per_generation || '20',
+        ai_gen_max_rounds: data.ai_gen_max_rounds || '3',
       });
     } catch (error) {
       message.error('加载设置失败');
@@ -131,8 +132,11 @@ const AISettings: React.FC = () => {
         <Form.Item name="max_tokens_per_generation" label="单次生成最大Tokens" rules={[{ required: true, message: '请输入最大tokens' }]} extra="每次AI生成作业时，返回的最大tokens数量。默认18000。">
           <Input type="number" min={1000} max={100000} placeholder="18000" />
         </Form.Item>
-        <Form.Item name="daily_teacher_gen_limit" label="每位教师每日生成次数上限" rules={[{ required: true, message: '请输入次数' }]} extra="每个教师账号每天最多生成作业的次数，次日0点重置。默认5次。">
-          <Input type="number" min={1} max={100} placeholder="5" />
+        <Form.Item name="daily_teacher_gen_limit" label="每位教师每日生成次数上限" rules={[{ required: true, message: '请输入次数' }]} extra="每个教师账号每天最多生成作业的次数，次日0点重置。默认20次。AI 出题失败（返回格式错误、超时、未能生成有效题目）不计入次数。">
+          <Input type="number" min={1} max={100} placeholder="20" />
+        </Form.Item>
+        <Form.Item name="ai_gen_max_rounds" label="AI 出题最大轮次" rules={[{ required: true, message: '请输入轮次' }]} extra="单次出题内部最多向大模型请求几轮。题量偏多导致输出被截断时会分多轮续写补齐，解析失败会自动重试。默认3轮。">
+          <Input type="number" min={1} max={5} placeholder="3" />
         </Form.Item>
         <Form.Item name="daily_global_token_limit" label="全站每日Token消耗上限" rules={[{ required: true, message: '请输入上限' }]} extra="整个网站每天最多消耗的生成tokens数量（仅计算completion tokens），超限后禁止生成。默认2,000,000。">
           <Input type="number" min={10000} max={100000000} placeholder="2000000" />

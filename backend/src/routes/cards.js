@@ -7,6 +7,8 @@ const { getChinaDate } = require('../config/timezone');
 const { getAIConfig, isAIConfigured } = require('../config/ai');
 const { getPrompt, fillTemplate } = require('../config/prompts');
 const { grantReward } = require('../services/rewards');
+const { collectQuestions, normalizeQuestion } = require('../services/aiQuestion');
+const { beginUsage, settleUsage, countBilledUsage } = require('../services/aiUsage');
 
 function generateCardCode(length = 12) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -408,6 +410,9 @@ router.get('/redemption-logs', authenticateToken, (req, res) => {
 
 // 课堂做题：AI 快速出题（返回题目供教师选择，不入题库、不计入作业）
 router.post('/classroom-quiz/ai-generate', authenticateToken, async (req, res) => {
+  // 额度记录句柄提升到函数作用域：流程失败时要在 catch 里把它退还
+  let usageId = 0;
+  let usageStartedAt = 0;
   try {
     if (req.user.role === 'student') {
       return res.status(403).json({ error: '无权操作' });
@@ -433,10 +438,10 @@ router.post('/classroom-quiz/ai-generate', authenticateToken, async (req, res) =
 
     // 每日生成次数与全站Token额度校验（与发布作业共用额度）
     const hasUsageTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'`).get();
+    const today = getChinaDate();
     if (hasUsageTable) {
-      const today = getChinaDate();
-      const dailyTeacherLimit = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'daily_teacher_gen_limit'`).get()?.value || '5');
-      const todayCount = db.prepare(`SELECT COUNT(*) as count FROM token_usage WHERE user_id = ? AND date = ?`).get(req.user.userId, today)?.count || 0;
+      const dailyTeacherLimit = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'daily_teacher_gen_limit'`).get()?.value || '20');
+      const todayCount = countBilledUsage(req.user.userId, today);
       if (todayCount >= dailyTeacherLimit) {
         return res.status(429).json({ error: `今日生成次数已达上限（${dailyTeacherLimit}次），请明日0点后再试` });
       }
@@ -459,66 +464,92 @@ router.post('/classroom-quiz/ai-generate', authenticateToken, async (req, res) =
       : 'gen_classroom_paste';
     const effectiveTopic = topic || String(requirements || '').trim().slice(0, 30) || '粘贴题目';
 
-    const prompt = fillTemplate(getPrompt(promptKey), {
-      grade_level, topic, subject, typeLabel, difficulty, count: n,
-      requirements, raw_text
-    });
+    const buildPrompt = (ask, note) => {
+      const base = fillTemplate(getPrompt(promptKey), {
+        grade_level, topic, subject, typeLabel, difficulty,
+        count: ask || n, requirements, raw_text
+      });
+      return note ? `${base}\n\n${note}` : base;
+    };
 
-    const axios = require('axios');
+    usageStartedAt = Date.now();
+    usageId = beginUsage(req.user.userId, today, {
+      model: config.ai_model, subject, topic: effectiveTopic, question_type, count: n
+    });
+    const usageTokens = { prompt: 0, completion: 0, total: 0 };
+
     const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
-    const startTime = Date.now();
-    const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
-      model: config.ai_model,
-      messages: [{ role: 'user', content: prompt }]
-    }, {
-      headers: {
-        'Authorization': `Bearer ${config.ai_api_key}`,
-        'Content-Type': 'application/json'
+    const maxTokensPerGen = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'max_tokens_per_generation'`).get()?.value || '18000');
+
+    const genResult = await collectQuestions({
+      config,
+      timeoutMs,
+      maxTokens: maxTokensPerGen,
+      type: question_type,
+      // 课堂做题是学生口头/书面作答、AI 判分，只要题干能用就收，
+      // 答案格式不合规时保留原文而不是直接丢题。
+      normalize: (raw, type) => {
+        const content = String(raw?.content ?? '').trim();
+        if (content.length < 2) return { ok: false, reason: '题干为空' };
+        const strict = normalizeQuestion(raw, type);
+        return {
+          ok: true,
+          question: {
+            content,
+            answer: strict.ok ? strict.question.answer : String(raw?.answer ?? '').trim(),
+            options: strict.ok ? strict.question.options : null,
+            explanation: String(raw?.explanation ?? '').trim(),
+            analysis: String(raw?.analysis ?? '').trim(),
+            knowledge_point: String(raw?.knowledge_point ?? '').trim(),
+          }
+        };
       },
-      timeout: timeoutMs
+      // paste 模式题量由素材决定
+      target: genMode === 'paste' ? 0 : n,
+      variants: 1,
+      maxRounds: 3,
+      buildPrompt,
+      onTokens: (u) => {
+        usageTokens.prompt += u.prompt_tokens || 0;
+        usageTokens.completion += u.completion_tokens || 0;
+        usageTokens.total += u.total_tokens || 0;
+      },
+      logger: (m) => console.log(m)
     });
 
-    // 记录 token 用量（与生成作业共用统计，失败不影响结果）
-    try {
-      const usage = response.data?.usage || {};
-      const hasTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'`).get();
-      if (hasTable) {
-        db.prepare(`
-          INSERT INTO token_usage (user_id, date, prompt_tokens, completion_tokens, total_tokens, model, subject, topic, question_type, question_count, duration_ms)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(req.user.userId, getChinaDate(), usage.prompt_tokens || 0, usage.completion_tokens || 0, usage.total_tokens || 0, config.ai_model, subject, effectiveTopic, question_type, n, Date.now() - startTime);
-      }
-    } catch (e) {
-      // 统计写入失败不影响出题
-    }
-
-    const content = response.data.choices[0].message.content;
-    let parsed;
-    try {
-      parsed = JSON.parse(content);
-    } catch (e) {
-      const m = content.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
-      if (!m) return res.status(500).json({ error: 'AI返回格式错误，请重试' });
-      parsed = JSON.parse(m[0]);
-    }
-
-    const questions = (parsed.questions || []).map(q => ({
-      content: q.content || '',
-      answer: q.answer !== undefined && q.answer !== null ? String(q.answer) : '',
-      explanation: q.explanation || ''
-    })).filter(q => q.content);
-
+    const questions = genResult.questions;
     if (questions.length === 0) {
-      return res.status(500).json({ error: 'AI未能生成有效题目，请调整后重试' });
+      settleUsage(usageId, 'failed', { ...usageTokens, duration: Date.now() - usageStartedAt });
+      const detail = genResult.lastError ? `：${genResult.lastError}` : '';
+      return res.status(500).json({
+        error: `AI 未能生成有效题目${detail}，本次未消耗生成次数，请稍后重试`,
+        quota_refunded: true
+      });
     }
 
-    res.json({ questions });
+    settleUsage(usageId, 'ok', {
+      ...usageTokens,
+      question_count: questions.length,
+      duration: Date.now() - usageStartedAt
+    });
+
+    res.json({
+      questions: questions.map((q) => ({
+        content: q.content,
+        answer: q.answer,
+        explanation: q.explanation
+      }))
+    });
   } catch (error) {
     console.error('课堂AI出题失败:', error.message);
+    settleUsage(usageId, 'failed', { duration: usageStartedAt ? Date.now() - usageStartedAt : 0 });
     if (error.code === 'ECONNABORTED') {
-      return res.status(500).json({ error: 'AI请求超时，请稍后重试' });
+      return res.status(500).json({ error: 'AI请求超时，请稍后重试（本次未消耗生成次数）', quota_refunded: true });
     }
-    res.status(500).json({ error: '课堂AI出题失败: ' + (error.message || '未知错误') });
+    res.status(500).json({
+      error: ('课堂AI出题失败: ' + (error.message || '未知错误')) + '（本次未消耗生成次数）',
+      quota_refunded: true
+    });
   }
 });
 

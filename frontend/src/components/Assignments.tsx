@@ -43,15 +43,35 @@ interface GeneratedResult {
   subject: string;
   question_type: string;
   question_count: number;
+  requested_count?: number;
+  shortfall?: number;
+  rejected_count?: number;
+  usage_id?: number;
   total_generated: number;
   questions: Question[];
   allQuestionIds: number[];
 }
 
+/**
+ * 放弃未发布的 AI 生成结果：向后端撤销一次生成，删除未被使用的题目并退还额度。
+ * 已经发布出去的生成后端会拒绝撤销，这里静默忽略即可。
+ */
+const discardGeneration = async (usageId?: number, notify = false) => {
+  if (!usageId) return false;
+  try {
+    await assignmentAPI.abandonGeneration(usageId);
+    if (notify) message.info('已取消本次生成，未发布的内容不计入生成次数');
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const typeOptions = [
   { value: 'choice_single', label: '单选题' },
   { value: 'choice_multi', label: '多选题' },
   { value: 'judgment', label: '判断题' },
+  { value: 'fill_blank', label: '填空题' },
   { value: 'essay', label: '简答题/作文' }
 ];
 
@@ -227,6 +247,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const handleGenerateQuestions = async (values: any) => {
     setGenerating(true);
     try {
+      // 上一次生成还没发布就又点「生成」：先撤销上一次，别让它白占次数
+      if (await discardGeneration(generatedData?.usage_id)) {
+        loadGenLimit();
+      }
       const payload: any = {
         subject: values.subject,
         difficulty: values.difficulty,
@@ -256,7 +280,11 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       };
       setShowVariantQuestions({});
       setCreateModalTab('preview');
-      message.success(`成功生成 ${res.data.question_count} 道题目（共${res.data.total_generated}道含变体）`);
+      if (res.data.shortfall > 0) {
+        message.warning(`AI 本次只生成了 ${res.data.question_count} 道（目标 ${res.data.requested_count} 道），可再次点击生成补齐剩余题目`);
+      } else {
+        message.success(`成功生成 ${res.data.question_count} 道题目（共${res.data.total_generated}道含变体）`);
+      }
       loadGenLimit();
     } catch (e: any) {
       if (e.code === 'ECONNABORTED') {
@@ -546,7 +574,7 @@ ${items}
     if (!editingQuestion) return;
     
     const newOptions = values.options ? values.options.split('\n').filter((opt: string) => opt.trim()) : null;
-    const isObjective = ['choice_single', 'choice_multi', 'judgment'].includes(editingQuestion.type);
+    const isObjective = ['choice_single', 'choice_multi', 'judgment', 'fill_blank'].includes(editingQuestion.type);
     const updatedQuestion: Question = {
       ...editingQuestion,
       content: values.content,
@@ -765,6 +793,7 @@ ${items}
     const isChoiceSingle = q.type === 'choice_single';
     const isChoiceMulti = q.type === 'choice_multi';
     const isJudgment = q.type === 'judgment';
+    const isFillBlank = q.type === 'fill_blank';
     const optShuffle = shuffledOptionMap[q.id!] || (q.options ? q.options.map((_: any, i: number) => i) : []);
 
     const mapDisplayToOriginal = (displayLetter: string): string => {
@@ -847,6 +876,20 @@ ${items}
             <Radio value="true" style={{ marginRight: 24, color: isTeacher && q.answer === 'true' ? '#52c41a' : undefined, fontWeight: isTeacher && q.answer === 'true' ? 600 : undefined }}>正确{isTeacher && q.answer === 'true' ? ' ✓' : ''}</Radio>
             <Radio value="false" style={{ color: isTeacher && q.answer === 'false' ? '#52c41a' : undefined, fontWeight: isTeacher && q.answer === 'false' ? 600 : undefined }}>错误{isTeacher && q.answer === 'false' ? ' ✓' : ''}</Radio>
           </Radio.Group>
+        )}
+
+        {isFillBlank && !isTeacher && (
+          <div style={{ marginLeft: 8 }}>
+            <Input
+              placeholder="在此填写答案..."
+              value={studentAnswers[q.id!] || ''}
+              onChange={(e) => setStudentAnswers(prev => ({ ...prev, [q.id!]: e.target.value }))}
+              style={{ maxWidth: 480 }}
+            />
+            <div style={{ marginTop: 4, color: '#8c8c8c', fontSize: 12 }}>
+              如果题目有多个空，答案之间用英文逗号分隔
+            </div>
+          </div>
         )}
 
         {isEssay && !isTeacher && (
@@ -1226,7 +1269,7 @@ ${items}
             }}>错题本</Button>
           )}
           {isTeacher && (
-            <Button type="primary" icon={<RobotOutlined />} onClick={() => { setIsCreateModalVisible(true); setGeneratedData(null); pendingPublishDefaults.current = null; setCreateModalTab('generate'); setShowVariantQuestions({}); loadGenLimit(); }}>
+            <Button type="primary" icon={<RobotOutlined />} onClick={() => { discardGeneration(generatedData?.usage_id); setIsCreateModalVisible(true); setGeneratedData(null); pendingPublishDefaults.current = null; setCreateModalTab('generate'); setShowVariantQuestions({}); loadGenLimit(); }}>
               发布新作业
             </Button>
           )}
@@ -1355,7 +1398,13 @@ ${items}
       <Modal
         title="🤖 发布新作业（AI智能生成）"
         open={isCreateModalVisible}
-        onCancel={() => { setIsCreateModalVisible(false); setGeneratedData(null); }}
+        onCancel={() => {
+          const pendingUsageId = generatedData?.usage_id;
+          setIsCreateModalVisible(false);
+          setGeneratedData(null);
+          // 生成了但没发布就关闭：撤销本次生成并退还额度
+          discardGeneration(pendingUsageId, true).then((ok) => { if (ok) loadGenLimit(); });
+        }}
         afterOpenChange={(open) => { if (open) generateForm.resetFields(); }}
         width={isMobile ? '95vw' : 780}
         destroyOnHidden
@@ -1443,6 +1492,7 @@ ${items}
                         ? `今日剩余生成次数：${genLimit.daily_remaining} / ${genLimit.daily_limit}（次日0点重置）`
                         : `今日生成次数已用完（${genLimit.daily_limit}次），请明日0点后再试`
                     }
+                    description="生成失败（格式有误、超时、没出有效题目）或生成后未发布就关闭，都不会消耗次数"
                   />
                 )}
                 {genLimit && genLimit.global_tokens_remaining < 100000 && (
@@ -1944,6 +1994,17 @@ ${items}
                 <Radio value="true">正确 ✓</Radio>
                 <Radio value="false">错误 ✗</Radio>
               </Radio.Group>
+            </Form.Item>
+          )}
+
+          {editingQuestion && editingQuestion.type === 'fill_blank' && (
+            <Form.Item
+              name="answer"
+              label="正确答案"
+              extra="多个空位时，答案之间用英文逗号分隔，顺序要与空位一致"
+              rules={[{ required: true, message: '请输入正确答案' }]}
+            >
+              <Input placeholder="例如：北京 或 牛顿,第一定律" />
             </Form.Item>
           )}
 

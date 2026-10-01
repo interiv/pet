@@ -102,7 +102,11 @@ export const assignmentAPI = {
   
   generateQuestions: (data: { subject: string; topic?: string; difficulty?: string; question_type: string; count?: number; grade_level?: string; mode?: 'topic' | 'requirements' | 'paste'; requirements?: string; raw_text?: string }, timeout?: number) =>
     api.post('/assignments/generate', data, { timeout: (timeout || 300) * 1000 }),
-  
+
+  // 放弃一次「生成了但没发布」的出题：删除未使用的题目并退还本次额度
+  abandonGeneration: (usageId: number) =>
+    api.post(`/assignments/generate/abandon/${usageId}`),
+
   createAssignment: (data: any) => 
     api.post('/assignments', data),
   

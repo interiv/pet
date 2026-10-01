@@ -17,9 +17,12 @@ const { Option } = Select;
 const typeMap: Record<string, { label: string; color: string }> = {
   choice_single: { label: '单选', color: 'blue' },
   choice_multi: { label: '多选', color: 'geekblue' },
-  fill_blank: { label: '填空', color: 'cyan' },
+  judgment: { label: '判断', color: 'purple' },
+  // 后端题型代码是 judgment，这里保留 true_false 只是兼容历史脏数据
   true_false: { label: '判断', color: 'purple' },
+  fill_blank: { label: '填空', color: 'cyan' },
   essay: { label: '主观', color: 'orange' },
+  composition: { label: '作文', color: 'magenta' },
 };
 
 const difficultyMap: Record<string, { label: string; color: string }> = {

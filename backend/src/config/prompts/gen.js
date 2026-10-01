@@ -90,6 +90,27 @@ module.exports = {
 6. 只返回JSON，不要任何其他内容`
   },
 
+  gen_fill_blank: {
+    group: '生成作业',
+    label: '填空题生成模板',
+    description: '按知识点/详细要求出填空题。可用变量：{taskDesc} {actualCount} {count}',
+    default: `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
+
+{taskDesc}
+要求生成{actualCount}道填空题（用______表示需要填写的空位），同时生成详细解析。
+
+请严格按照以下JSON格式返回：
+{"questions": [{"content": "题目描述，需要填写的部分写成______", "answer": "应填入的内容", "explanation": "详细解析", "analysis": "解题步骤", "knowledge_point": "细粒度知识点"}]}
+
+要求：
+1. 每3道题为同一知识点的变体（共{count}组）；同一组变体的knowledge_point必须相同
+2. 不同组之间必须考查明显不同的知识点方向！严禁不同组考查相同或高度相似的知识点
+3. answer是填入空位的内容本身，不要用字母序号，不要出现选项
+4. 若一道题有多个空位，answer中用英文逗号分隔多个答案，顺序与空位一致
+5. knowledge_point必须是8-20字的具体知识点，不要只写科目或大类
+6. 只返回JSON，不要任何其他内容`
+  },
+
   gen_essay: {
     group: '生成作业',
     label: '简答题/作文生成模板',
@@ -189,6 +210,34 @@ module.exports = {
 4. 为每道题生成详细解析、解题分析过程和细粒度知识点标签（8-20字，具体细致，不要只写科目或大类）
 5. topic字段为整理后的统一主题，title和description为建议的作业标题与描述
 6. 只返回JSON，不要任何其他内容`
+  },
+
+  gen_paste_fill_blank: {
+    group: '粘贴题目整理',
+    label: '粘贴整理·填空题模板',
+    description: '老师粘贴原文后整理填空题。可用变量：{subject} {typeLabel} {question_type} {raw_text} {formatSample} {typeRules}',
+    default: `你是一个JSON生成器。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
+
+任务：老师粘贴了一段原始题目文本，文本格式可能不规范（可能包含题号、多余空行、答案与题目混排等）。请逐题解析、清洗并整理为标准JSON格式，不要遗漏原文中的任何一道题，也不要自行新增题目。
+
+所有题目均为{subject}{typeLabel}（题型代码：{question_type}）。
+
+老师粘贴的原始文本如下：
+"""
+{raw_text}
+"""
+
+请严格按照以下JSON格式返回：
+{formatSample}
+
+要求：
+1. 保持每道题的原意，只做格式清理、错别字修正和表述规范化，不得改变题目考查内容
+2. 题干中需要学生填写的部分统一用______表示
+3. {typeRules}
+4. 如原文答案缺失或无法确定，请根据题目自行推导出正确答案
+5. 为每道题生成详细解析、解题分析过程和细粒度知识点标签（8-20字，具体细致，不要只写科目或大类）
+6. topic字段为整理后的统一主题，title和description为建议的作业标题与描述
+7. 只返回JSON，不要任何其他内容`
   },
 
   gen_paste_essay: {

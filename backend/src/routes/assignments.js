@@ -9,6 +9,8 @@ const { checkAndAwardAchievement } = require('./achievements');
 const { getChinaDate } = require('../config/timezone');
 const { getPrompt, fillTemplate } = require('../config/prompts');
 const { isAnswerCorrect } = require('../utils/answerCheck');
+const { collectQuestions } = require('../services/aiQuestion');
+const { beginUsage, settleUsage, countBilledUsage, markFailed, countReferencedQuestions, deleteUnusedQuestions } = require('../services/aiUsage');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
@@ -112,6 +114,32 @@ function getSystemSetting(key, defaultVal) {
   }
 }
 
+// 每位教师每日 AI 生成次数的兜底值。真实值取自 settings.daily_teacher_gen_limit，
+// 管理员可在「管理后台 → AI 设置」中随时调整，无需改代码。
+const DEFAULT_DAILY_GEN_LIMIT = 20;
+
+// 题型 → 提示词模板。原先 fill_blank / composition 没有模板，
+// 走完 if/else 后 prompt 仍是空字符串，却照样发起 LLM 调用并记一次用量，
+// 结果是「必定失败，还扣次数」。这里一次性补齐映射。
+const GEN_PROMPT_KEYS = {
+  choice_single: 'gen_choice_single',
+  choice_multi: 'gen_choice_multi',
+  judgment: 'gen_judgment',
+  fill_blank: 'gen_fill_blank',
+  essay: 'gen_essay',
+  composition: 'gen_essay',
+};
+
+// 粘贴整理模式对应的模板
+const PASTE_PROMPT_KEYS = {
+  choice_single: 'gen_paste_choice_single',
+  choice_multi: 'gen_paste_choice_multi',
+  judgment: 'gen_paste_judgment',
+  fill_blank: 'gen_paste_fill_blank',
+  essay: 'gen_paste_essay',
+  composition: 'gen_paste_essay',
+};
+
 /**
  * 金币奖励统一算法：基础分 + 连对 Combo + 全对奖励。
  *
@@ -151,6 +179,9 @@ function calcGoldReward(totalScore, questionCount, results, maxExp) {
 }
 
 router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), async (req, res) => {
+  // 额度记录句柄提升到函数作用域：流程失败时要在 catch 里把它退还
+  let usageId = 0;
+  let usageStartedAt = 0;
   try {
     // token_usage 表由 004 号迁移创建，不再在请求时动态建表
     const { subject, topic, difficulty = 'medium', question_type, count = 10, grade_level = '', mode = 'topic', requirements = '', raw_text = '' } = req.body;
@@ -184,11 +215,16 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       return res.status(400).json({ error: `单次最多生成 ${maxQuestionsPerGen} 道题目` });
     }
 
+    // 提前挡掉没有对应提示词模板的题型，避免带着空 prompt 去打 LLM 还白扣一次额度
+    if (!GEN_PROMPT_KEYS[question_type]) {
+      return res.status(400).json({ error: `暂不支持生成该题型（${question_type}）` });
+    }
+
     const { getChinaDate } = require('../config/timezone');
     const today = getChinaDate();
 
-    const dailyTeacherLimit = getSystemSetting('daily_teacher_gen_limit', 5);
-    const todayTeacherCount = db.prepare(`SELECT COUNT(*) as count FROM token_usage WHERE user_id = ? AND date = ?`).get(req.user.userId, today)?.count || 0;
+    const dailyTeacherLimit = getSystemSetting('daily_teacher_gen_limit', DEFAULT_DAILY_GEN_LIMIT);
+    const todayTeacherCount = countBilledUsage(req.user.userId, today);
     if (todayTeacherCount >= dailyTeacherLimit) {
       return res.status(429).json({ error: `今日生成次数已达上限（${dailyTeacherLimit}次），请明日0点后再试` });
     }
@@ -224,7 +260,13 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       { grade_level, effectiveTopic, subject, typeLabel, difficulty, requirements }
     );
 
-    let prompt = '';
+    // 每组变体数：客观题 3 道一组（学生做错时给相似新题），主观题/粘贴整理不做变体
+    const VARIANT_STEP = noVariants ? 1 : 3;
+    // 目标题量（含变体）。粘贴整理模式由素材决定，传 0 表示不限制。
+    const targetCount = isPasteMode ? 0 : count * VARIANT_STEP;
+
+    let pasteVars = null;
+    let pasteKey = '';
     if (isPasteMode) {
       let formatSample = '';
       let typeRules = '';
@@ -237,113 +279,111 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       } else if (question_type === 'judgment') {
         formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"判断题陈述内容","answer":true,"explanation":"为什么对或错的解析","analysis":"判断依据","knowledge_point":"细粒度知识点"}]}`;
         typeRules = 'answer必须是布尔值true或false，判断题不需要options字段';
+      } else if (question_type === 'fill_blank') {
+        formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"含空位的题目（用______表示要填的部分）","answer":"应填入的内容","explanation":"详细解析","analysis":"解题步骤","knowledge_point":"细粒度知识点"}]}`;
+        typeRules = 'answer是填入空位的内容字符串（多个空用英文逗号分隔），填空题不需要options字段';
       } else {
         formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"题目要求","answer":"参考答案要点","explanation":"评分标准和解析","analysis":"答题思路指导","knowledge_point":"细粒度知识点"}]}`;
         typeRules = 'answer为参考答案要点，主观题不需要options字段';
       }
-      const pasteVars = { subject, typeLabel, question_type, raw_text, formatSample, typeRules };
-      const pasteKey = question_type === 'choice_single' ? 'gen_paste_choice_single'
-        : question_type === 'choice_multi' ? 'gen_paste_choice_multi'
-        : question_type === 'judgment' ? 'gen_paste_judgment'
-        : 'gen_paste_essay';
-      prompt = fillTemplate(getPrompt(pasteKey), pasteVars);
-    } else if (question_type === 'choice_single') {
-      prompt = fillTemplate(getPrompt('gen_choice_single'), { taskDesc, actualCount, count });
-    } else if (question_type === 'choice_multi') {
-      prompt = fillTemplate(getPrompt('gen_choice_multi'), { taskDesc, actualCount, count });
-    } else if (question_type === 'judgment') {
-      prompt = fillTemplate(getPrompt('gen_judgment'), { taskDesc, actualCount, count });
-    } else if (question_type === 'essay') {
-      prompt = fillTemplate(getPrompt('gen_essay'), { taskDesc, count });
+      pasteVars = { subject, typeLabel, question_type, raw_text, formatSample, typeRules };
+      pasteKey = PASTE_PROMPT_KEYS[question_type] || 'gen_paste_essay';
     }
+
+    /**
+     * 按本轮实际要生成的题量拼提示词。
+     * 「一次性要 30 道题」是判断题/多选题失败的主因——输出量过大会被模型
+     * 自身的长度上限截断。现在改成多轮：先要满量，拿不全就自动接着补齐。
+     */
+    const buildPrompt = (ask, note) => {
+      let base;
+      if (isPasteMode) {
+        base = fillTemplate(getPrompt(pasteKey), pasteVars);
+      } else {
+        const key = GEN_PROMPT_KEYS[question_type];
+        const want = ask || targetCount || actualCount;
+        base = fillTemplate(getPrompt(key), {
+          taskDesc,
+          actualCount: want,
+          count: Math.max(1, Math.round(want / VARIANT_STEP)),
+        });
+      }
+      return note ? `${base}\n\n${note}` : base;
+    };
 
     console.log('\n📤 发送请求到 LLM 服务器...');
     console.log('🎯 目标地址:', `${config.ai_base_url}/chat/completions`);
     console.log('🤖 使用模型:', config.ai_model);
-    console.log('📝 Prompt 长度:', prompt.length, '字符');
+    console.log('📝 首轮 Prompt 长度:', buildPrompt(targetCount || 0, '').length, '字符');
     console.log('⏱️ 超时设置:', timeoutMs / 1000, '秒');
     
     const maxTokensPerGen = getSystemSetting('max_tokens_per_generation', 18000);
 
-    const startTime = Date.now();
-    const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
+    usageStartedAt = Date.now();
+
+    // 先领取一次额度。后续只要没走到 res.json()，就一定会在 settle 时把它退还，
+    // 因此「AI 失败/解析失败/返回空题」都不会再占用每日生成次数。
+    usageId = beginUsage(req.user.userId, today, {
       model: config.ai_model,
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: maxTokensPerGen
-    }, {
-      headers: {
-        'Authorization': `Bearer ${config.ai_api_key}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: timeoutMs
+      subject,
+      topic: effectiveTopic,
+      question_type,
+      count,
     });
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+    const usageTokens = { prompt: 0, completion: 0, total: 0 };
 
-    const usageData = response.data.usage || {};
-    const promptTokens = usageData.prompt_tokens || 0;
-    const completionTokens = usageData.completion_tokens || 0;
-    const totalTokens = usageData.total_tokens || 0;
+    const maxRounds = Math.max(1, getSystemSetting('ai_gen_max_rounds', 3));
 
-    try {
-      db.prepare(`
-        INSERT INTO token_usage (user_id, date, prompt_tokens, completion_tokens, total_tokens, model, subject, topic, question_type, question_count, duration_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(req.user.userId, today, promptTokens, completionTokens, totalTokens, config.ai_model, subject, effectiveTopic, question_type, count, Date.now() - startTime);
-    } catch (logErr) {
-      console.error('⚠️ Token使用记录写入失败:', logErr.message);
-    }
+    const genResult = await collectQuestions({
+      config,
+      timeoutMs,
+      maxTokens: maxTokensPerGen,
+      type: question_type,
+      target: targetCount,
+      variants: VARIANT_STEP,
+      maxRounds,
+      buildPrompt,
+      onTokens: (u) => {
+        usageTokens.prompt += u.prompt_tokens || 0;
+        usageTokens.completion += u.completion_tokens || 0;
+        usageTokens.total += u.total_tokens || 0;
+      },
+      logger: (m) => console.log(m),
+    });
 
-    if (completionTokens > 0) {
+    const elapsed = ((Date.now() - usageStartedAt) / 1000).toFixed(2);
+    console.log('\n⏱️ 总耗时:', elapsed, '秒 | 请求轮次:', genResult.rounds.length);
+    console.log('📊 Token 使用: prompt=' + usageTokens.prompt + ', completion=' + usageTokens.completion + ', total=' + usageTokens.total);
+
+    if (usageTokens.completion > 0) {
       const updatedGlobalTokens = db.prepare(`SELECT COALESCE(SUM(completion_tokens), 0) as total FROM token_usage WHERE date = ?`).get(today)?.total || 0;
       if (updatedGlobalTokens > dailyGlobalTokenLimit) {
         console.log('⚠️ 生成完成后，全局Token已超限，本次结果仍返回，但后续生成将被阻止');
       }
     }
 
-    console.log('\n✅ LLM 服务器响应成功');
-    console.log('⏱️ 耗时:', elapsed, '秒');
-    console.log('📊 HTTP 状态码:', response.status);
-    console.log('📦 响应数据大小:', JSON.stringify(response.data).length, '字节');
-    console.log('📊 Token 使用: prompt=' + promptTokens + ', completion=' + completionTokens + ', total=' + totalTokens);
+    const questions = genResult.questions;
+    const parsed = genResult.lastPack || {};
 
-    const aiContent = response.data.choices[0].message.content;
-    console.log('\n📄 AI 返回内容预览 (前500字符):');
-    console.log(aiContent.slice(0, 500));
-    console.log('📄 AI 返回内容总长度:', aiContent.length, '字符');
-    let parsed;
-    try {
-      // 尝试直接解析
-      parsed = JSON.parse(aiContent);
-      console.log('✅ JSON 解析成功（直接解析）');
-    } catch (e) {
-      // 尝试提取JSON对象（支持嵌套大括号）
-      console.log('⚠️ 直接解析失败，尝试提取JSON对象...');
-      const jsonMatch = aiContent.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
-      if (jsonMatch) {
-        try {
-          parsed = JSON.parse(jsonMatch[0]);
-          console.log('✅ JSON 解析成功（从文本中提取）');
-        } catch (e2) {
-          console.log('❌ JSON 解析失败');
-          throw new Error('AI返回的JSON格式无效');
-        }
-      } else {
-        console.log('❌ 未找到有效的JSON');
-        throw new Error('AI返回格式错误，未找到有效的JSON');
-      }
-    }
-
-    const questions = parsed.questions || [];
-    console.log('\n📊 解析结果:');
-    console.log('  - 题目数量:', questions.length);
+    console.log('\n📊 最终结果:');
+    console.log('  - 有效题目数量:', questions.length, '/ 目标', targetCount || '由素材决定');
     if (questions.length > 0) {
       console.log('  - 第一题预览:', questions[0].content?.slice(0, 50) + '...');
-      console.log('  - 知识点分布:', [...new Set(questions.map(q => q.knowledge_point))].slice(0, 5).join(', '));
+      console.log('  - 知识点分布:', [...new Set(questions.map(q => q.knowledge_point).filter(Boolean))].slice(0, 5).join(', '));
     }
-    
+    if (genResult.invalid.length > 0) {
+      console.log(`  - 已剔除不合格题目 ${genResult.invalid.length} 道:`);
+      genResult.invalid.slice(0, 5).forEach((x) => console.log(`      · ${x.content} → ${x.reason}`));
+    }
+
     if (questions.length === 0) {
-      console.log('❌ AI未能生成有效题目');
-      return res.status(500).json({ error: 'AI未能生成有效题目，请调整提示词后重试' });
+      console.log('❌ AI未能生成有效题目，本次额度已退还');
+      settleUsage(usageId, 'failed', { ...usageTokens, duration: Date.now() - usageStartedAt });
+      const detail = genResult.lastError ? `：${genResult.lastError}` : '';
+      return res.status(500).json({
+        error: `AI 生成失败${detail}，本次未消耗生成次数，请稍后重试`,
+        quota_refunded: true,
+      });
     }
 
     const maxGroupId = db.prepare('SELECT MAX(variant_group_id) as max_id FROM question_bank').get();
@@ -351,17 +391,9 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     const processedQuestions = [];
 
     for (let i = 0; i < questions.length; i++) {
+      // 题目已在上游完成校验与答案归一化：answer 一定是与题型匹配的字符串
       const q = questions[i];
-      const qIndex = noVariants ? i : Math.floor(i / 3);
-      
-      let answerStr;
-      if (Array.isArray(q.answer)) {
-        answerStr = q.answer.join(',');
-      } else if (typeof q.answer === 'boolean') {
-        answerStr = q.answer ? 'true' : 'false';
-      } else {
-        answerStr = String(q.answer);
-      }
+      const answerStr = String(q.answer ?? '');
 
       processedQuestions.push({
         subject,
@@ -376,12 +408,12 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
         hint: q.hint || '',
         knowledge_point: (q.knowledge_point && String(q.knowledge_point).trim()) || effectiveTopic,
         variant_group_id: noVariants ? null : variantGroupId,
-        variant_index: noVariants ? 0 : (i % 3),
+        variant_index: noVariants ? 0 : (i % VARIANT_STEP),
         source: 'ai',
         created_by: req.user.userId
       });
 
-      if (!noVariants && (i + 1) % 3 === 0) {
+      if (!noVariants && (i + 1) % VARIANT_STEP === 0) {
         variantGroupId++;
       }
     }
@@ -409,56 +441,66 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     const insertedIds = transaction(processedQuestions);
     console.log('✅ 数据库写入成功，共', insertedIds.length, '条记录');
 
-    const displayQuestions = noVariants
-      ? insertedIds.map((id, idx) => ({
-          tempId: id,
-          content: questions[idx].content,
-          options: questions[idx].options ? (typeof questions[idx].options === 'string' ? JSON.parse(questions[idx].options) : questions[idx].options) : null,
-          answer: questions[idx].answer !== undefined ? (Array.isArray(questions[idx].answer) ? questions[idx].answer.join(',') : String(questions[idx].answer)) : '',
-          explanation: questions[idx].explanation || '',
-          type: question_type,
-          knowledge_point: processedQuestions[idx]?.knowledge_point || effectiveTopic,
-          hasVariants: false
-        }))
-      : [];
+    // 题目归属到这一次生成，便于教师放弃未发布内容时精确撤销、并退还额度
+    try {
+      const link = db.prepare('UPDATE question_bank SET generation_usage_id = ? WHERE id = ?');
+      db.transaction(() => { insertedIds.forEach((id) => link.run(usageId, id)); })();
+    } catch (linkErr) {
+      console.warn('⚠️ 题目关联生成记录失败:', linkErr.message);
+    }
 
-    if (!noVariants) {
-      for (let g = 0; g < count; g++) {
-        const baseIdx = g * 3;
-        const variants = [];
-        for (let v = 1; v <= 2; v++) {
-          const vIdx = baseIdx + v;
-          if (vIdx < questions.length) {
-            variants.push({
-              tempId: insertedIds[vIdx],
-              content: questions[vIdx].content,
-              options: questions[vIdx].options ? (typeof questions[vIdx].options === 'string' ? JSON.parse(questions[vIdx].options) : questions[vIdx].options) : null,
-              answer: questions[vIdx].answer !== undefined ? (Array.isArray(questions[vIdx].answer) ? questions[vIdx].answer.join(',') : String(questions[vIdx].answer)) : '',
-              explanation: questions[vIdx].explanation || '',
-              type: question_type,
-              knowledge_point: processedQuestions[vIdx]?.knowledge_point || effectiveTopic
-            });
-          }
-        }
-        displayQuestions.push({
-          tempId: insertedIds[baseIdx],
-          variantIds: [insertedIds[baseIdx], insertedIds[baseIdx + 1], insertedIds[baseIdx + 2]],
-          content: questions[baseIdx].content,
-          options: questions[baseIdx].options ? (typeof questions[baseIdx].options === 'string' ? JSON.parse(questions[baseIdx].options) : questions[baseIdx].options) : null,
-          answer: questions[baseIdx].answer !== undefined ? (Array.isArray(questions[baseIdx].answer) ? questions[baseIdx].answer.join(',') : String(questions[baseIdx].answer)) : '',
-          explanation: questions[baseIdx].explanation || '',
-          type: question_type,
-          knowledge_point: processedQuestions[baseIdx]?.knowledge_point || effectiveTopic,
-          hasVariants: true,
-          variants
+    const toDisplay = (idx) => ({
+      tempId: insertedIds[idx],
+      content: questions[idx].content,
+      options: questions[idx].options ? (typeof questions[idx].options === 'string' ? JSON.parse(questions[idx].options) : questions[idx].options) : null,
+      answer: questions[idx].answer !== undefined ? (Array.isArray(questions[idx].answer) ? questions[idx].answer.join(',') : String(questions[idx].answer)) : '',
+      explanation: questions[idx].explanation || '',
+      type: question_type,
+      knowledge_point: processedQuestions[idx]?.knowledge_point || effectiveTopic
+    });
+
+    const displayQuestions = [];
+
+    if (noVariants) {
+      insertedIds.forEach((_id, idx) => {
+        displayQuestions.push({ ...toDisplay(idx), hasVariants: false });
+      });
+    } else {
+      // 多轮补齐后实际题量可能少于目标数量，这里按真实生成的组数组织变体，避免下标越界
+      const availableGroups = Math.min(count, Math.floor(insertedIds.length / VARIANT_STEP));
+      if (availableGroups === 0) {
+        // 连一组变体都没凑齐，退化成普通列表展示，别把已经生成的题白白丢掉
+        insertedIds.forEach((_id, idx) => {
+          displayQuestions.push({ ...toDisplay(idx), hasVariants: false });
         });
+      }
+      for (let g = 0; g < availableGroups; g++) {
+        const baseIdx = g * VARIANT_STEP;
+        const groupIds = [];
+        const variants = [];
+        for (let v = 0; v < VARIANT_STEP; v++) {
+          const vIdx = baseIdx + v;
+          if (vIdx >= insertedIds.length) break;
+          groupIds.push(insertedIds[vIdx]);
+          if (v > 0) variants.push(toDisplay(vIdx));
+        }
+        displayQuestions.push({ ...toDisplay(baseIdx), variantIds: groupIds, hasVariants: true, variants });
       }
     }
 
     console.log('\n📤 返回结果给客户端...');
     console.log('========================================\n');
-    
-    const resultCount = isPasteMode ? questions.length : count;
+
+    settleUsage(usageId, 'ok', {
+      ...usageTokens,
+      question_count: insertedIds.length,
+      duration: Date.now() - usageStartedAt
+    });
+
+    const resultCount = noVariants ? questions.length : displayQuestions.length;
+    // 多轮补齐后仍没凑够目标题量时告知前端，界面可以提示「本次只生成了 N 道，可再点一次继续补齐」
+    const shortfall = noVariants ? 0 : Math.max(0, count - displayQuestions.length);
+
     res.json({
       message: '生成成功',
       title: parsed.title || `${effectiveTopic} - ${typeLabel}练习`,
@@ -466,7 +508,12 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       subject,
       question_type,
       question_count: resultCount,
+      requested_count: noVariants ? questions.length : count,
+      shortfall,
+      rejected_count: genResult.invalid.length,
       total_generated: insertedIds.length,
+      // 教师未发布而退出时，前端凭这个 id 撤销本次生成并退还额度
+      usage_id: usageId,
       questions: displayQuestions,
       allQuestionIds: insertedIds
     });
@@ -476,15 +523,53 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     if (error.response) {
       console.error('📡 LLM 服务器响应状态:', error.response.status);
       console.error('📡 LLM 服务器响应数据:', JSON.stringify(error.response.data, null, 2));
-    } else if (error.code === 'ECONNABORTED') {
-      console.error('⏱️ 请求超时');
-      return res.status(500).json({ error: 'AI请求超时，请稍后重试' });
-    } else if (error.code === 'ECONNREFUSED') {
-      console.error('🚫 无法连接到 LLM 服务器');
-      return res.status(500).json({ error: '无法连接到 AI 服务器，请检查配置' });
     }
     console.error('========================================\n');
-    res.status(500).json({ error: 'AI 生成作业失败: ' + (error.message || '未知错误') });
+
+    // 走到这里说明本次生成没有产出可用题目，把额度退还给用户
+    settleUsage(usageId, 'failed', { duration: usageStartedAt ? Date.now() - usageStartedAt : 0 });
+
+    if (error.code === 'ECONNABORTED') {
+      return res.status(500).json({ error: 'AI请求超时，请稍后重试（本次未消耗生成次数）', quota_refunded: true });
+    }
+    if (error.code === 'ECONNREFUSED') {
+      return res.status(500).json({ error: '无法连接到 AI 服务器，请检查配置（本次未消耗生成次数）', quota_refunded: true });
+    }
+    res.status(500).json({
+      error: ('AI 生成作业失败: ' + (error.message || '未知错误')) + '（本次未消耗生成次数）',
+      quota_refunded: true
+    });
+  }
+});
+
+// 撤销一次「生成了但没有发布」的 AI 出题：删除未被使用的题目并把额度退还
+router.post('/generate/abandon/:usageId', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  try {
+    const usageId = parseInt(req.params.usageId, 10);
+    if (!usageId) return res.status(400).json({ error: '参数错误' });
+
+    const row = db.prepare('SELECT id, user_id, date, status FROM token_usage WHERE id = ?').get(usageId);
+    if (!row) return res.status(404).json({ error: '未找到该次生成记录' });
+    if (row.user_id !== req.user.userId && req.user.role !== 'admin') {
+      return res.status(403).json({ error: '只能撤销自己的生成记录' });
+    }
+    if (row.status === 'failed') {
+      return res.json({ message: '该次生成已经退还过了', refunded: 0, deleted: 0 });
+    }
+
+    // 已经拿这些题目去发布过作业，就不能再退
+    if (countReferencedQuestions(usageId) > 0) {
+      return res.status(400).json({ error: '本次生成的题目已被作业引用，不能撤销' });
+    }
+
+    const deleted = deleteUnusedQuestions(usageId);
+    markFailed(usageId);
+
+    console.log(`↩️ 教师 ${req.user.userId} 撤销生成 ${usageId}：删除 ${deleted} 道未使用题目，退还 1 次额度`);
+    res.json({ message: '已撤销本次生成，未发布的内容不计入次数', refunded: 1, deleted });
+  } catch (error) {
+    console.error('撤销 AI 生成失败:', error.message);
+    res.status(500).json({ error: '撤销失败: ' + (error.message || '未知错误') });
   }
 });
 

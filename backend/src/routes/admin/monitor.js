@@ -6,6 +6,7 @@ const { authenticateToken } = require('../../middleware/auth');
 const { getChinaDate } = require('../../config/timezone');
 const { getAIConfig, isAIConfigured, getAITimeoutMs } = require('../../config/ai');
 const { PROMPTS, SETTING_PREFIX, getPrompt, fillTemplate } = require('../../config/prompts');
+const { countBilledUsage, countFailedUsage } = require('../../services/aiUsage');
 const {
   USERNAME_MAX_LEN,
   AI_USERNAME_BATCH_SIZE,
@@ -244,8 +245,10 @@ router.get('/token-usage/my-limit', authenticateToken, (req, res) => {
     const { getChinaDate } = require('../../config/timezone');
     const today = getChinaDate();
 
-    const dailyLimit = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'daily_teacher_gen_limit'`).get()?.value || '5');
-    const todayCount = db.prepare(`SELECT COUNT(*) as count FROM token_usage WHERE user_id = ? AND date = ?`).get(req.user.userId, today)?.count || 0;
+    const dailyLimit = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'daily_teacher_gen_limit'`).get()?.value || '20');
+    // 失败的记录已经退还，不计入已用次数（与 generate 接口的限流口径保持一致）
+    const todayCount = countBilledUsage(req.user.userId, today);
+    const todayFailed = countFailedUsage(req.user.userId, today);
 
     const globalTokenLimit = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'daily_global_token_limit'`).get()?.value || '2000000');
     const todayGlobalTokens = db.prepare(`SELECT COALESCE(SUM(completion_tokens), 0) as total FROM token_usage WHERE date = ?`).get(today)?.total || 0;
@@ -254,6 +257,7 @@ router.get('/token-usage/my-limit', authenticateToken, (req, res) => {
       daily_limit: dailyLimit,
       daily_used: todayCount,
       daily_remaining: Math.max(0, dailyLimit - todayCount),
+      daily_failed_refunded: todayFailed,
       global_token_limit: globalTokenLimit,
       global_tokens_used: todayGlobalTokens,
       global_tokens_remaining: Math.max(0, globalTokenLimit - todayGlobalTokens),

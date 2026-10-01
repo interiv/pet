@@ -91,6 +91,7 @@ const WrongQuestions: React.FC = () => {
     choice_single: { label: '单选', color: 'green' },
     choice_multi: { label: '多选', color: 'orange' },
     judgment: { label: '判断', color: 'purple' },
+    fill_blank: { label: '填空', color: 'cyan' },
     essay: { label: '主观', color: 'red' }
   };
 

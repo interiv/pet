@@ -322,9 +322,12 @@ function ensureSettingsTable() {
       ['perm_homework_records', 'subject_teacher'],
       ['perm_purchase_records', 'head_teacher'],
       ['max_tokens_per_generation', '18000'],
-      ['daily_teacher_gen_limit', '5'],
+      // 每位教师每日 AI 生成次数。管理员可在「AI 设置」里随时调整。
+      ['daily_teacher_gen_limit', '20'],
       ['daily_global_token_limit', '2000000'],
       ['max_questions_per_generation', '20'],
+      // AI 出题单笔请求的最大重试/续写轮次：题量偏多时会自动分轮补齐
+      ['ai_gen_max_rounds', '3'],
     ];
     const stmt = db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {
@@ -333,9 +336,10 @@ function ensureSettingsTable() {
   } else {
     const newKeys = [
       ['max_tokens_per_generation', '18000'],
-      ['daily_teacher_gen_limit', '5'],
+      ['daily_teacher_gen_limit', '20'],
       ['daily_global_token_limit', '2000000'],
       ['max_questions_per_generation', '20'],
+      ['ai_gen_max_rounds', '3'],
     ];
     const stmt = db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {
