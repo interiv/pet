@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tabs } from 'antd';
-import { BookOutlined, ExclamationCircleOutlined, FireOutlined, BarChartOutlined, EyeOutlined, CrownOutlined, TrophyOutlined } from '@ant-design/icons';
+import { BookOutlined, ExclamationCircleOutlined, FireOutlined, BarChartOutlined, EyeOutlined, CrownOutlined, TrophyOutlined, DatabaseOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import Assignments from './Assignments';
 import WrongQuestions from './WrongQuestions';
@@ -13,6 +13,8 @@ import BossBattleManager from './BossBattleManager';
 import Achievements from './Achievements';
 import LearningDashboard from './LearningDashboard';
 import QuestionBank from './QuestionBank';
+import PersonalQuestionBank from './PersonalQuestionBank';
+import LearningReports from './LearningReports';
 import { useAuthStore } from '../store/authStore';
 
 interface StudyCenterProps {
@@ -39,6 +41,12 @@ const StudyCenter: React.FC<StudyCenterProps> = ({ onNavigate }) => {
       label: '作业',
       icon: <BookOutlined />,
       children: <Assignments onNavigate={onNavigate} />,
+    },
+    {
+      key: 'personal-bank',
+      label: '个人题库',
+      icon: <DatabaseOutlined />,
+      children: <PersonalQuestionBank />,
     },
     {
       key: 'wrong',
@@ -92,6 +100,12 @@ const StudyCenter: React.FC<StudyCenterProps> = ({ onNavigate }) => {
       label: '题库',
       icon: <BookOutlined />,
       children: <QuestionBank />,
+    },
+    {
+      key: 'reports',
+      label: '学情报告',
+      icon: <FileTextOutlined />,
+      children: <LearningReports />,
     },
     {
       key: 'dashboard',

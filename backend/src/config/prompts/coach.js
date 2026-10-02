@@ -79,5 +79,120 @@ module.exports = {
 4. 只返回JSON`
   },
 
+  // ===== 教师端学情报告 =====
+  // 注意：新增模板必须在此注册，否则后台保存提示词时会被 settings.js 静默丢弃
+
+  coach_class_report: {
+    group: '教师学情报告',
+    label: '班级学情分析报告',
+    description: '教师按学科/时间范围生成班级学情分析时使用。可用变量：{class_name} {grade} {range} {subject_scope} {kpi} {type_summary} {weak_points} {mastered_points} {struggling_students} {inactive_students} {homework_insights}',
+    default: `你是一位有多年经验的年级教学主任，正在为班主任撰写一份班级学情分析报告。只返回纯JSON，不要任何额外文字或markdown。
+
+【班级信息】
+- 班级：{class_name}{grade}
+- 统计区间：{range}
+- 分析学科范围：{subject_scope}
+
+【整体数据】
+{kpi}
+
+【预习 / 作业 / 复习 三类完成情况】
+{type_summary}
+
+【班级薄弱知识点】（正确率低的知识点，按薄弱程度排序）
+{weak_points}
+
+【班级已掌握知识点】
+{mastered_points}
+
+【需要关注的学生】（正确率低或长期未作答）
+{struggling_students}
+
+【学情洞察】
+{homework_insights}
+
+请严格按照以下JSON格式返回：
+{
+  "overall_score": 72,
+  "level": "良好",
+  "summary": "用60-100字概括本班该学科整体学情，指出最突出的问题",
+  "strengths": ["班级优势1", "班级优势2"],
+  "weaknesses": ["问题1", "问题2", "问题3"],
+  "root_cause_analysis": "用80-150字分析班级薄弱点的成因，区分「知识没掌握」「审题/习惯问题」「练习量不足」等不同类型",
+  "focus_students": [
+    {"name": "学生姓名", "reason": "该生的问题表现（20字内）", "suggestion": "给该生的具体建议（30字内）"}
+  ],
+  "teaching_suggestions": [
+    {"priority": "高", "action": "集体教学层面的一条具体建议", "expected_effect": "预期效果"}
+  ],
+  "next_focus_points": ["下一阶段重点1", "重点2", "重点3"],
+  "parent_communication": "用40-60字写一段可直接发给家长的说明（不使用游戏化表述，语气务实）"
+}
+
+要求：
+1. overall_score 0-100整数，level从"待提升/一般/良好/优秀/卓越"中选
+2. weaknesses 2-4条；teaching_suggestions 3-5条，按优先级排序
+3. focus_students 只列 data 中真实存在的学生，最多5人；没有需关注学生时给空数组
+4. 建议必须具体可执行（如"下节课前10分钟集中讲评二次函数顶点式"），禁止空话套话
+5. 如果练习量明显不足（total_attempts 偏小），要在 root_cause_analysis 中明确指出是"题量不足"而非"掌握不佳"
+6. parent_communication 面向家长，不要出现金币、宠物、段位等游戏化词汇
+7. 只返回JSON`
+  },
+
+  coach_student_report: {
+    group: '教师学情报告',
+    label: '学生个体报告（教师视角）',
+    description: '教师查看单个学生画像时生成。可用变量：{student_name} {range} {subject_scope} {overall} {subject_summary} {weak_points} {mastered_points} {wrong_summary} {score_trend} {attendance_summary}',
+    default: `你是一位资深教师，正在为一位学生撰写 individualized 学情分析（面向教师本人，用于制定辅导计划）。只返回纯JSON。
+
+【学生信息】
+- 姓名：{student_name}
+- 统计区间：{range}
+- 学科范围：{subject_scope}
+
+【总体表现】
+{overall}
+
+【各学科表现】
+{subject_summary}
+
+【薄弱知识点】
+{weak_points}
+
+【已掌握知识点】
+{mastered_points}
+
+【错题与订正情况】
+{wrong_summary}
+
+【作业得分趋势】
+{score_trend}
+
+【作业完成情况】
+{attendance_summary}
+
+请严格按照以下JSON格式返回：
+{
+  "level": "待提升/一般/良好/优秀/卓越",
+  "summary": "用50-80字概括该生该学科的学习状态",
+  "strengths": ["优势1", "优势2"],
+  "weaknesses": ["具体问题1", "问题2"],
+  "knowledge_gaps": [
+    {"knowledge_point": "知识点名称", "evidence": "该知识点上的表现证据（20字内）", "action": "补救措施（30字内）"}
+  ],
+  "study_habits": "用40-60字评价该生的学习习惯（练习量、订正及时性、正确率稳定性）",
+  "tutoring_plan": [
+    {"step": 1, "action": "第一步辅导动作", "resource": "配套练习建议"}
+  ],
+  "communicate_with_parent": "用40-60字写给家长的建议（务实、不使用游戏化表述）"
+}
+
+要求：
+1. knowledge_gaps 最多4条，只列 data 中真实出现的知识点
+2. tutoring_plan 3-4步，按先后顺序，每步都要可落地
+3. 若 score_trend 显示下滑，要明确指出并给出原因判断
+4. 只返回JSON`
+  },
+
   // ===== 课堂答题 AI 评判 =====
 };

@@ -1,11 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space, Radio, Checkbox, Progress, Card, Alert, Upload, Image, Divider, Empty, Statistic, Row, Col, Tabs, Badge, Popconfirm } from 'antd';
-import { assignmentAPI, adminAPI } from '../utils/api';
+import { assignmentAPI, adminAPI, classroomQuizAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
 import dayjs from 'dayjs';
 import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined } from '@ant-design/icons';
 import CelebrationAnimation from './CelebrationAnimation';
 import PaperRegister from './PaperRegister';
+import PaperBatchRegister from './PaperBatchRegister';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -110,8 +112,45 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [createModalTab, setCreateModalTab] = useState('generate');
   const [showVariantQuestions, setShowVariantQuestions] = useState<Record<number, boolean>>({});
   const [filterSubject, setFilterSubject] = useState<string | undefined>(undefined);
+  const [filterAssignmentType, setFilterAssignmentType] = useState<string | undefined>(undefined);
   const [filterDateRange, setFilterDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
   const [paperRegister, setPaperRegister] = useState<{ id: number; title: string } | null>(null);
+  const [paperBatchRegister, setPaperBatchRegister] = useState<{ id: number; title: string } | null>(null);
+
+  // 打印纸质作业纸相关
+  const [printTarget, setPrintTarget] = useState<{ id: number; title: string } | null>(null);
+  const [printAssignment, setPrintAssignment] = useState<any>(null);
+  const [printQuestions, setPrintQuestions] = useState<any[]>([]);
+  const [printClassStudents, setPrintClassStudents] = useState<any[]>([]);
+  const [printStudentIds, setPrintStudentIds] = useState<number[]>([]);
+  const [printSubmittedIds, setPrintSubmittedIds] = useState<number[]>([]);
+  const [printMode, setPrintMode] = useState<'blank' | 'named'>('named');
+  const [printShowAnswer, setPrintShowAnswer] = useState(false);
+  const [printLoading, setPrintLoading] = useState(false);
+  const [typeSummary, setTypeSummary] = useState<any[]>([]);
+
+  // ===== 逐题作答计时 =====
+  // 记录每题「首次进入视野」的时刻，提交时算出耗时。
+  // 用途：识别长时间无响应只蒙答案的情况（全库此前没有任何答题耗时数据）。
+  const qStartRef = useRef<Record<number, number>>({});
+  const questionViewRef = useRef<number | null>(null);
+
+  const markQuestionViewed = (qid: number) => {
+    if (questionViewRef.current === qid) return;
+    questionViewRef.current = qid;
+    if (!qStartRef.current[qid]) qStartRef.current[qid] = Date.now();
+  };
+
+  const getQuestionDuration = (qid: number): number | undefined => {
+    const start = qStartRef.current[qid];
+    if (!start) return undefined;
+    return Date.now() - start;
+  };
+
+  const resetQuestionTimers = () => {
+    qStartRef.current = {};
+    questionViewRef.current = null;
+  };
   
   const [form] = Form.useForm();
   const [generateForm] = Form.useForm();
@@ -193,7 +232,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
   useEffect(() => {
     if (user) loadAssignments();
-  }, [selectedClass, filterSubject, filterDateRange]);
+  }, [selectedClass, filterSubject, filterDateRange, filterAssignmentType]);
 
   // 切到「3. 发布设置」时表单才挂载，此时再把生成时算好的默认值写进去
   useEffect(() => {
@@ -232,10 +271,26 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       const params: any = {};
       if (selectedClass) params.class_id = selectedClass;
       if (filterSubject) params.subject = filterSubject;
+      if (filterAssignmentType) params.assignment_type = filterAssignmentType;
       if (filterDateRange && filterDateRange[0]) params.date_from = filterDateRange[0].format('YYYY-MM-DD');
       if (filterDateRange && filterDateRange[1]) params.date_to = filterDateRange[1].format('YYYY-MM-DD');
       const res = await assignmentAPI.getAssignments(params);
       setAssignments(res.data.assignments || []);
+
+      // 教师端额外拉取「预习/作业/复习」分组学情
+      if (user.role === 'teacher' || user.role === 'admin') {
+        try {
+          const sum = await assignmentAPI.getAssignmentTypeSummary({
+            class_id: selectedClass ?? undefined,
+            subject: filterSubject,
+            date_from: filterDateRange?.[0]?.format('YYYY-MM-DD'),
+            date_to: filterDateRange?.[1]?.format('YYYY-MM-DD'),
+          });
+          setTypeSummary(sum.data.summary || []);
+        } catch (e) {
+          // 统计失败不影响列表
+        }
+      }
     } catch (e) {
       console.error('加载作业失败:', e);
       message.error('加载作业失败');
@@ -322,6 +377,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         max_exp: values.max_exp,
         due_date: values.due_date.toISOString(),
         question_ids: questionIds,
+        assignment_type: values.assignment_type || 'homework',
         ai_config: { auto_grade: true, question_type: values.question_type }
       };
       let successCount = 0;
@@ -349,51 +405,64 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     }
   };
 
-  const escapeHtml = (s: string) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-  // 打印纸质作业纸（住校生等无设备场景）
-  const handlePrintPaper = async (record: any) => {
+  // 打开打印设置弹窗（住校生无设备场景：打印纸质卷 → 学生笔答 → 拍照上传 AI 判分）
+  const openPrintDialog = async (record: any) => {
+    setPrintTarget({ id: record.id, title: record.title });
+    setPrintMode('named');
+    setPrintShowAnswer(false);
+    setPrintStudentIds([]);
+    setPrintLoading(true);
     try {
-      const res = await assignmentAPI.getAssignment(record.id);
-      const a = res.data.assignment;
+      const [aRes, sRes] = await Promise.all([
+        assignmentAPI.getAssignment(record.id),
+        record.class_id ? classroomQuizAPI.getClassStudents(record.class_id).catch(() => null) : Promise.resolve(null),
+      ]);
+      const a = aRes.data.assignment;
       const qs: any[] = a.questions || [];
-      const tLabel = (t: string) => ({ choice_single: '单选题', choice_multi: '多选题', judgment: '判断题', fill_blank: '填空题', essay: '简答/主观题' } as Record<string, string>)[t] || t;
-      const items = qs.map((q: any, i: number) => {
-        const opts = Array.isArray(q.options) && q.options.length > 0
-          ? `<div class="opts">${q.options.map((o: string, oi: number) => `<div class="opt">${String.fromCharCode(65 + oi)}. ${escapeHtml(o)}</div>`).join('')}</div>`
-          : '';
-        const judgment = q.type === 'judgment' ? '<div class="opt">（&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;）对　（&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;）错</div>' : '';
-        const answer = (q.type === 'essay' || q.type === 'fill_blank')
-          ? `<div class="answer-lines"></div>`
-          : '';
-        return `<div class="q"><div class="qt">${i + 1}. ${escapeHtml(q.content)}　<span class="tt">[${tLabel(q.type)}]</span></div>${opts}${judgment}${answer}</div>`;
-      }).join('');
-      const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${escapeHtml(a.title)} - 作业纸</title><style>
-@page { size: A4; margin: 14mm; }
-body { font-family: 'Microsoft YaHei', sans-serif; font-size: 12px; color: #222; }
-h2 { text-align: center; margin: 0 0 2mm; font-size: 16px; }
-.meta { margin: 0 0 4mm; font-size: 13px; }
-.desc { color: #555; margin-bottom: 3mm; }
-.q { margin-bottom: 5mm; page-break-inside: avoid; }
-.qt { font-size: 13px; font-weight: bold; margin-bottom: 1mm; }
-.tt { font-weight: normal; color: #666; font-size: 11px; }
-.opts { margin-left: 6mm; }
-.opt { margin: 1mm 0; }
-.answer-lines { height: 110px; margin-top: 2mm; background: repeating-linear-gradient(to bottom, transparent 0, transparent 30px, #bbb 30px, #bbb 31px); }
-</style></head><body>
-<h2>${escapeHtml(a.title)}</h2>
-<div class="meta">班级：${escapeHtml(a.class_name || '________')}　　姓名：____________　　学号：__________　　得分：__________</div>
-${a.description ? `<div class="desc">${escapeHtml(a.description)}</div>` : ''}
-${items}
-</body></html>`;
-      const w = window.open('', '_blank', 'width=820,height=640');
-      if (!w) { message.warning('浏览器拦截了弹出窗口，请允许弹窗后重试'); return; }
-      w.document.write(html);
-      w.document.close();
+      const list: any[] = sRes?.data?.students || [];
+      setPrintAssignment(a);
+      setPrintQuestions(qs);
+      setPrintClassStudents(list);
+      setPrintStudentIds(list.map((s: any) => s.id));
+      // 已交作业的学生不必再发纸质卷
+      try {
+        const st = await assignmentAPI.getStatistics(record.id);
+        const done = new Set<number>((st.data?.student_results || []).map((r: any) => r.user_id));
+        setPrintSubmittedIds([...done]);
+      } catch (e) {
+        setPrintSubmittedIds([]);
+      }
     } catch (e) {
       message.error('获取作业内容失败');
+      setPrintTarget(null);
+    } finally {
+      setPrintLoading(false);
     }
+  };
+
+  // 生成打印页：named 模式按勾选名单逐人出页，页眉预填姓名
+  const handlePrintPaper = () => {
+    if (!printAssignment) return;
+    const named = printMode === 'named'
+      ? printClassStudents.filter(s => printStudentIds.includes(s.id))
+      : [];
+    if (printMode === 'named' && named.length === 0) {
+      message.warning('请至少选择一名学生');
+      return;
+    }
+    const html = buildPaperHtml({
+      assignment: printAssignment,
+      questions: printQuestions,
+      namedStudents: named.map(s => ({ id: s.id, real_name: s.real_name, username: s.username })),
+      showAnswer: printShowAnswer,
+    });
+    const ok = openPaperPrintWindow(html, true);
+    if (!ok) {
+      message.warning('浏览器拦截了弹出窗口，请允许弹窗后重试');
+      return;
+    }
+    message.success(named.length > 0 ? `已生成 ${named.length} 份带姓名的作业纸，请在打印窗口确认` : '已生成空白作业纸，请在打印窗口确认');
   };
 
   const handleStartDoing = async (record: any) => {
@@ -445,6 +514,7 @@ ${items}
       }
       setUploadedImages({});
       setProgressMilestones(new Set());
+      resetQuestionTimers();
       setIsDoModalVisible(true);
     } catch (e: any) {
       message.error(e.response?.data?.error || '获取作业详情失败');
@@ -490,7 +560,9 @@ ${items}
       answers.push({
         question_id: q.id,
         answer: ans,
-        image_url: uploadedImages[q.id] || ''
+        image_url: uploadedImages[q.id] || '',
+        // 逐题作答耗时（毫秒）。后端只接受 0.5s~30min 的合理区间，异常值会被忽略。
+        duration_ms: getQuestionDuration(q.id),
       });
     }
 
@@ -724,6 +796,7 @@ ${items}
     setStudentAnswers({});
     setUploadedImages({});
     setIsResultModalVisible(false);
+    resetQuestionTimers();
     setIsDoModalVisible(true);
     setSubmitResult(null);
     message.info(`请重新作答 ${retryQuestions.length} 道错题`);
@@ -767,6 +840,7 @@ ${items}
       setStudentAnswers({});
       setUploadedImages({});
       setProgressMilestones(new Set());
+      resetQuestionTimers();
       setIsDoModalVisible(true);
       message.info(`请重新作答 ${retryQuestions.length} 道错题`);
     } catch (e: any) {
@@ -789,6 +863,9 @@ ${items}
   };
 
   const renderQuestionForStudent = (q: Question, index: number) => {
+    // 记录该题首次进入视野的时刻，用于统计作答耗时。
+    // 只写 ref、不触发渲染，因此可在渲染期直接调用（不能在此用 useEffect，那会违反 Hooks 规则）。
+    if (isDoModalVisible && !isTeacher && q.id != null) markQuestionViewed(q.id);
     const isEssay = q.type === 'essay';
     const isChoiceSingle = q.type === 'choice_single';
     const isChoiceMulti = q.type === 'choice_multi';
@@ -1107,6 +1184,13 @@ ${items}
     return Math.round(n * 10) / 10;
   };
 
+  const getTypeTag = (t?: string) => {
+    if (!t || t === 'homework') return null;
+    if (t === 'preview') return <Tag color="purple">预习</Tag>;
+    if (t === 'review') return <Tag color="orange">复习</Tag>;
+    return null;
+  };
+
   const getStatusTag = (record: any) => {
     if (record.status === 'cancelled') return <Tag color="default" icon={<StopOutlined />}>已取消</Tag>;
     if (!record.my_submission_id) {
@@ -1124,6 +1208,7 @@ ${items}
     { title: '作业标题', dataIndex: 'title', key: 'title', render: (text: string, r: any) => (
       <div>
         <a style={{ fontWeight: 500 }}>{text}</a>
+        {getTypeTag(r.assignment_type) && <span style={{ marginLeft: 6 }}>{getTypeTag(r.assignment_type)}</span>}
         {r.my_submission_id && (
           <div style={{ fontSize: 12, color: '#999' }}>
             最高得分：<span style={{ color: '#52c41a', fontWeight: 'bold' }}>{formatScore(r.my_score)}</span> 分
@@ -1194,8 +1279,9 @@ ${items}
               {record.teacher_id === user?.id && (
                 <>
                   <Button size="small" icon={<EditOutlined />} onClick={() => handleStartDoing(record)}>编辑</Button>
-                  <Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintPaper(record)}>打印</Button>
+                  <Button size="small" icon={<PrinterOutlined />} onClick={() => openPrintDialog(record)}>打印</Button>
                   <Button size="small" icon={<FileTextOutlined />} onClick={() => setPaperRegister({ id: record.id, title: record.title })}>纸质登记</Button>
+                  <Button size="small" icon={<CameraOutlined />} onClick={() => setPaperBatchRegister({ id: record.id, title: record.title })}>批量扫描</Button>
                 </>
               )}
               <Button size="small" icon={<BarChartOutlined />} onClick={() => handleViewStatistics(record)}>统计</Button>
@@ -1250,6 +1336,11 @@ ${items}
               {subjectOptions.map(s => <Option key={s} value={s}>{s}</Option>)}
             </Select>
           )}
+          <Select placeholder="作业类型" allowClear style={{ width: isMobile ? '100%' : 120 }} onChange={(v) => setFilterAssignmentType(v)} value={filterAssignmentType}>
+            <Option value="preview">预习</Option>
+            <Option value="homework">作业</Option>
+            <Option value="review">复习</Option>
+          </Select>
           {isTeacher && (
             <DatePicker.RangePicker
               style={{ width: isMobile ? '100%' : 240 }}
@@ -1276,6 +1367,41 @@ ${items}
         </Space>
       </div>
 
+      {/* 教师端：预习 / 作业 / 复习 分组学情概览 */}
+      {isTeacher && typeSummary.length > 0 && typeSummary.some(t => t.assignment_count > 0) && (
+        <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+          {typeSummary.filter(t => t.assignment_count > 0).map(t => (
+            <Col xs={24} sm={8} key={t.assignment_type}>
+              <Card size="small" style={{ borderRadius: 8 }}>
+                <Row align="middle" gutter={8}>
+                  <Col flex="auto">
+                    <div style={{ fontSize: 13, color: '#666' }}>
+                      <Tag color={t.assignment_type === 'preview' ? 'purple' : t.assignment_type === 'review' ? 'orange' : 'blue'}>
+                        {t.label}
+                      </Tag>
+                      {t.assignment_count} 份
+                    </div>
+                    <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>
+                      平均 {t.average_score} 分
+                    </div>
+                  </Col>
+                  <Col>
+                    <Progress
+                      type="circle"
+                      size={54}
+                      percent={t.completion_rate}
+                      format={(p) => `${p}%`}
+                      strokeColor={t.completion_rate >= 80 ? '#52c41a' : t.completion_rate >= 50 ? '#1890ff' : '#faad14'}
+                    />
+                  </Col>
+                </Row>
+                <div style={{ fontSize: 12, color: '#aaa', marginTop: 2 }}>完成率（{t.submitted_count} 人次提交）</div>
+              </Card>
+            </Col>
+          ))}
+        </Row>
+      )}
+
       {isMobile ? (
         <div>
           {assignments.length === 0 && !loading && <Empty description="暂无作业" />}
@@ -1285,6 +1411,7 @@ ${items}
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 500, fontSize: 15 }}>{record.title}</div>
                   <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {getTypeTag(record.assignment_type)}
                     <Tag color="blue">{record.subject}</Tag>
                     {record.class_name && <Tag color="green">{record.class_name}</Tag>}
                     {getStatusTag(record)}
@@ -1332,8 +1459,9 @@ ${items}
                 {isTeacher && record.teacher_id === user?.id && (
                   <>
                     <Button size="small" icon={<EditOutlined />} onClick={() => handleStartDoing(record)}>编辑</Button>
-                    <Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintPaper(record)}>打印</Button>
+                    <Button size="small" icon={<PrinterOutlined />} onClick={() => openPrintDialog(record)}>打印</Button>
                     <Button size="small" icon={<FileTextOutlined />} onClick={() => setPaperRegister({ id: record.id, title: record.title })}>登记</Button>
+                    <Button size="small" icon={<CameraOutlined />} onClick={() => setPaperBatchRegister({ id: record.id, title: record.title })}>批量扫描</Button>
                   </>
                 )}
                 {isTeacher && (
@@ -1393,6 +1521,96 @@ ${items}
           onSaved={loadAssignments}
         />
       )}
+
+      {/* 批量纸质登记：多张照片一次识别，AI 按卷面姓名自动分人 */}
+      {paperBatchRegister && (
+        <PaperBatchRegister
+          assignmentId={paperBatchRegister.id}
+          title={paperBatchRegister.title}
+          open={!!paperBatchRegister}
+          onClose={() => setPaperBatchRegister(null)}
+          onSaved={loadAssignments}
+        />
+      )}
+
+      {/* 打印纸质作业纸 */}
+      <Modal
+        title={`🖨️ 打印作业纸：${printTarget?.title || ''}`}
+        open={!!printTarget}
+        onCancel={() => setPrintTarget(null)}
+        onOk={handlePrintPaper}
+        okText="生成并打印"
+        cancelText="取消"
+        confirmLoading={printLoading}
+        width={isMobile ? '95vw' : 560}
+        destroyOnHidden
+      >
+        {printLoading ? (
+          <div style={{ textAlign: 'center', padding: '24px 0' }}>正在加载题目与班级名单…</div>
+        ) : (
+          <>
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="住校生无设备场景"
+              description="打印后发给学生笔答，收上来用「批量扫描」拍照，AI 识别卷面姓名并按人判分。"
+            />
+            <Form layout="vertical">
+              <Form.Item label="打印方式">
+                <Radio.Group value={printMode} onChange={(e) => setPrintMode(e.target.value)}>
+                  <Radio value="named">按名单预填姓名（每人一份）</Radio>
+                  <Radio value="blank">空白卷（姓名留空）</Radio>
+                </Radio.Group>
+              </Form.Item>
+
+              {printMode === 'named' && (
+                <Form.Item
+                  label={`选择学生（已选 ${printStudentIds.length} / ${printClassStudents.length} 人）`}
+                  extra={printSubmittedIds.length > 0 ? `灰色为已提交过的学生，默认不勾选` : undefined}
+                >
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    <Button size="small" onClick={() => setPrintStudentIds(printClassStudents.map(s => s.id))}>全选</Button>
+                    <Button size="small" onClick={() => setPrintStudentIds(printClassStudents.filter(s => !printSubmittedIds.includes(s.id)).map(s => s.id))}>仅未提交</Button>
+                    <Button size="small" onClick={() => setPrintStudentIds([])}>清空</Button>
+                  </div>
+                  <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 6, padding: 8 }}>
+                    {printClassStudents.length === 0 ? (
+                      <Empty description="该班级暂无学生" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                    ) : (
+                      <Checkbox.Group
+                        style={{ width: '100%' }}
+                        value={printStudentIds}
+                        onChange={(v) => setPrintStudentIds(v as number[])}
+                      >
+                        <Row>
+                          {printClassStudents.map(s => (
+                            <Col span={8} key={s.id}>
+                              <Checkbox
+                                value={s.id}
+                                style={{ color: printSubmittedIds.includes(s.id) ? '#bbb' : undefined }}
+                              >
+                                {s.real_name || s.username}
+                                {printSubmittedIds.includes(s.id) ? '（已交）' : ''}
+                              </Checkbox>
+                            </Col>
+                          ))}
+                        </Row>
+                      </Checkbox.Group>
+                    )}
+                  </div>
+                </Form.Item>
+              )}
+
+              <Form.Item label="参考答案">
+                <Checkbox checked={printShowAnswer} onChange={(e) => setPrintShowAnswer(e.target.checked)}>
+                  在卷末附参考答案（教师讲评用，发给学生请勿勾选）
+                </Checkbox>
+              </Form.Item>
+            </Form>
+          </>
+        )}
+      </Modal>
 
       {/* 教师发布作业弹窗 */}
       <Modal
@@ -1645,6 +1863,18 @@ ${items}
                 )}
                 <Form.Item name="title" label="作业标题" rules={[{ required: true }]} initialValue={generatedData.title}>
                   <Input />
+                </Form.Item>
+                <Form.Item
+                  name="assignment_type"
+                  label="作业类型"
+                  initialValue="homework"
+                  extra="住校生无设备时可将预习题打印成纸质卷，学生作答后拍照上传由 AI 判分"
+                >
+                  <Select>
+                    <Option value="preview">预习（课前预习题）</Option>
+                    <Option value="homework">作业（课后作业）</Option>
+                    <Option value="review">复习（单元复习题）</Option>
+                  </Select>
                 </Form.Item>
                 <Form.Item name="description" label="作业说明" initialValue={generatedData.description}>
                   <TextArea rows={2} />

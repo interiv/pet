@@ -124,14 +124,40 @@ export const assignmentAPI = {
 
   paperSubmit: (id: number, data: { student_id: number; results: { question_id: number; is_correct: boolean; score?: number; student_answer?: string }[]; note?: string }) =>
     api.post(`/assignments/${id}/paper-submit`, data),
+
+  paperSubmitBatch: (id: number, data: { submissions: { student_id: number; results: { question_id: number; is_correct: boolean; score?: number; student_answer?: string }[]; note?: string }[]; note?: string }) =>
+    api.post(`/assignments/${id}/paper-submit-batch`, data),
+
   aiPaperJudge: (id: number, data: { images: string[] }, timeout?: number) =>
     api.post(`/assignments/${id}/ai-paper-judge`, data, { timeout: (timeout || 300) * 1000 }),
-  
+
+  // 批量识别：多张照片 → AI 识别卷面姓名 + 逐题判分，按学生分组返回
+  aiPaperJudgeBatch: (id: number, data: { images: string[] }, timeout?: number) =>
+    api.post(`/assignments/${id}/ai-paper-judge-batch`, data, { timeout: (timeout || 600) * 1000 }),
+
+  getMyPersonalBank: (params?: { subject?: string; assignment_type?: string; only_wrong?: string | number; keyword?: string; page?: number; page_size?: number }) =>
+    api.get('/assignments/personal-bank/my', { params }),
+
+  getPersonalBankStats: () =>
+    api.get('/assignments/personal-bank/stats'),
+
+  removeFromPersonalBank: (id: number) =>
+    api.delete(`/assignments/personal-bank/${id}`),
+
+  getAssignmentTypeSummary: (params?: { class_id?: number; subject?: string; date_from?: string; date_to?: string }) =>
+    api.get('/assignments/stats/type-summary', { params }),
+
   getMyWrongQuestions: (params?: { subject?: string }) => 
     api.get('/assignments/wrong/my', { params }),
   
   markWrongQuestionReviewed: (id: number) => 
     api.post(`/assignments/wrong/${id}/review`),
+
+  /** 错题重做：客观题自动判，主观题传 self_marked_correct 自评 */
+  retryWrongQuestions: (items: { wrong_id: number; answer?: any; self_marked_correct?: boolean; duration_ms?: number }[]) =>
+    api.post('/assignments/wrong/retry', { items }),
+
+  getWrongMastery: () => api.get('/assignments/wrong/mastery'),
   
   uploadImage: (file: File) => {
     const formData = new FormData();
@@ -146,6 +172,32 @@ export const assignmentAPI = {
 
   getRetryQuestions: (id: number) =>
     api.get(`/assignments/${id}/retry-questions`),
+};
+
+// ===== 学情报告（教师端）=====
+export const learningReportAPI = {
+  getOverview: (params: { class_id: number; subject?: string; date_from?: string; date_to?: string }) =>
+    api.get('/learning-reports/overview', { params }),
+
+  getKnowledgeMatrix: (params: { class_id: number; subject?: string; date_from?: string; date_to?: string; limit_kp?: number }) =>
+    api.get('/learning-reports/knowledge-matrix', { params }),
+
+  getStudents: (params: { class_id: number; subject?: string; date_from?: string; date_to?: string; limit?: number }) =>
+    api.get('/learning-reports/students', { params }),
+
+  getStudentReport: (params: { class_id: number; studentId: number; subject?: string; date_from?: string; date_to?: string }) =>
+    api.get(`/learning-reports/student/${params.studentId}`, { params: { ...params, studentId: undefined } }),
+
+  generateAiReport: (data: { class_id: number; subject?: string; date_from?: string; date_to?: string }, timeout?: number) =>
+    api.post('/learning-reports/ai-report', data, { timeout: (timeout || 300) * 1000 }),
+
+  generateStudentAiReport: (data: { class_id: number; student_id: number; subject?: string; date_from?: string; date_to?: string }, timeout?: number) =>
+    api.post('/learning-reports/ai-report/student', data, { timeout: (timeout || 300) * 1000 }),
+
+  getAiReportHistory: (params: { class_id: number; report_type?: string; subject?: string; limit?: number }) =>
+    api.get('/learning-reports/ai-report/history', { params }),
+
+  getAiReport: (id: number) => api.get(`/learning-reports/ai-report/${id}`),
 };
 
 // 题库相关 API

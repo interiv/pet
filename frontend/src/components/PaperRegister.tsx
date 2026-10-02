@@ -3,6 +3,7 @@ import { Modal, Input, InputNumber, Button, Tag, Avatar, Empty, Spin, message, S
 import { SearchOutlined, CheckOutlined, CloseOutlined, PictureOutlined, RobotOutlined, DeleteOutlined } from '@ant-design/icons';
 import { pinyin } from 'pinyin-pro';
 import { assignmentAPI, classroomQuizAPI } from '../utils/api';
+import { compressImage } from '../utils/imageCompress';
 
 interface Q {
   id: number;
@@ -30,29 +31,7 @@ const answerText = (q: Q) => {
   return q.answer;
 };
 
-// 压缩图片：长边最大1600px，JPEG 85%，返回 dataURL
-const compressImage = (file: File): Promise<string> => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => {
-    const img = new window.Image();
-    img.onload = () => {
-      const maxSide = 1600;
-      let width = img.width;
-      let height = img.height;
-      if (width > height && width > maxSide) { height = Math.round((height * maxSide) / width); width = maxSide; }
-      else if (height > maxSide) { width = Math.round((width * maxSide) / height); height = maxSide; }
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      canvas.getContext('2d')?.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', 0.85));
-    };
-    img.onerror = reject;
-    img.src = String(reader.result);
-  };
-  reader.onerror = reject;
-  reader.readAsDataURL(file);
-});
+
 
 const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open, onClose, onSaved }) => {
   const [loading, setLoading] = useState(false);

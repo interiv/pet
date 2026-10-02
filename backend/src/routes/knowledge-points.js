@@ -2,13 +2,19 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { getChinaDate, getChinaDateDaysAgo, resolveDateRange } = require('../config/timezone');
+const {
+  MIN_POINT_ATTEMPTS, MIN_ATTEMPTS_FOR_JUDGE, WEAK_ACCURACY, MASTERED_ACCURACY,
+  resolveWindow, subjectExistsFilter, accuracyPct, classifyMastery, kpAggregateSql, decoratePoints, compareWindows,
+} = require('../utils/analytics');
 
 // 获取知识点统计
 router.get('/', authenticateToken, (req, res) => {
   try {
     const userId = req.user.userId;
-    const { date, days = 7 } = req.query;
-    
+    const { date, days = 7, min_attempts } = req.query;
+    const minAttempts = Math.max(1, parseInt(min_attempts) || MIN_POINT_ATTEMPTS);
+
     // 如果指定了日期，查询该日期的统计
     if (date) {
       const stats = db.prepare(`
@@ -33,27 +39,22 @@ router.get('/', authenticateToken, (req, res) => {
     }
     
     // 否则查询最近N天的统计
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    const startDateStr = startDate.toISOString().split('T')[0];
-    
-    const stats = db.prepare(`
-      SELECT 
-        knowledge_point,
-        SUM(total_attempts) as total_attempts,
-        SUM(correct_attempts) as correct_attempts,
-        ROUND(CAST(SUM(correct_attempts) AS REAL) / SUM(total_attempts) * 100, 2) as accuracy
-      FROM knowledge_point_stats
-      WHERE user_id = ? AND date >= ?
-      GROUP BY knowledge_point
-      HAVING SUM(total_attempts) >= 3
-      ORDER BY SUM(total_attempts) DESC
-    `).all(userId, startDateStr);
-    
+    const win = resolveWindow(req.query, { defaultDays: 7, alias: 'kps' });
+    const { sql, params } = kpAggregateSql({
+      userId,
+      dateClause: win.dateClause,
+      dateParams: win.params,
+      minAttempts,
+      orderBy: 'total_attempts DESC',
+    });
+
+    const stats = db.prepare(sql).all(...params);
+
     res.json({
-      days,
-      start_date: startDateStr,
-      stats,
+      days: win.days,
+      start_date: win.start,
+      end_date: win.end,
+      stats: decoratePoints(stats),
       total_points: stats.length,
       avg_accuracy: stats.length > 0 
         ? (stats.reduce((sum, s) => sum + s.accuracy, 0) / stats.length).toFixed(2)
@@ -90,10 +91,9 @@ router.get('/heatmap', authenticateToken, (req, res) => {
   try {
     const userId = req.user.userId;
     const { days = 30 } = req.query;
-    
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    const startDateStr = startDate.toISOString().split('T')[0];
+
+    const win = resolveWindow(req.query, { defaultDays: 30, alias: 'kps' });
+    const startDateStr = win.start;
     
     const heatmapData = db.prepare(`
       SELECT 
@@ -140,30 +140,27 @@ router.get('/heatmap', authenticateToken, (req, res) => {
 router.get('/weak-points', authenticateToken, (req, res) => {
   try {
     const userId = req.user.userId;
-    const { days = 7, threshold = 60 } = req.query;
-    
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    const startDateStr = startDate.toISOString().split('T')[0];
-    
-    const weakPoints = db.prepare(`
-      SELECT 
-        knowledge_point,
-        SUM(total_attempts) as total_attempts,
-        SUM(correct_attempts) as correct_attempts,
-        ROUND(CAST(SUM(correct_attempts) AS REAL) / SUM(total_attempts) * 100, 2) as accuracy
-      FROM knowledge_point_stats
-      WHERE user_id = ? AND date >= ?
-      GROUP BY knowledge_point
-      HAVING SUM(total_attempts) >= 3 AND accuracy < ?
-      ORDER BY accuracy ASC
-    `).all(userId, startDateStr, threshold);
-    
+    const { days = 7, threshold = 60, min_attempts } = req.query;
+    const minAttempts = Math.max(1, parseInt(min_attempts) || MIN_POINT_ATTEMPTS);
+
+    const win = resolveWindow(req.query, { defaultDays: 7, alias: 'kps' });
+    const { sql, params } = kpAggregateSql({
+      userId,
+      dateClause: win.dateClause,
+      dateParams: win.params,
+      minAttempts,
+      orderBy: 'accuracy ASC',
+    });
+
+    const all = db.prepare(sql).all(...params);
+    const weakPoints = all.filter((p) => p.accuracy < Number(threshold));
+
     res.json({
-      weak_points: weakPoints,
+      weak_points: decoratePoints(weakPoints),
       count: weakPoints.length,
-      days,
-      threshold
+      days: win.days,
+      start_date: win.start,
+      threshold: Number(threshold)
     });
   } catch (error) {
     console.error('获取薄弱知识点失败:', error);
@@ -271,100 +268,35 @@ router.get('/similar-questions', authenticateToken, (req, res) => {
   }
 });
 
-// 获取复习效果监测：对比前期 vs 近期正确率，计算漲幅
+// 获取复习效果监测：对比前期 vs 近期正确率，计算涨跌幅
 // 默认近期=最近7天，前期=更早的连续14天（共考察21天）
+// 已切到 analytics.compareWindows：修正了时区口径，并新增「尚未复习 / 新增关注」两类状态
 router.get('/review-effectiveness', authenticateToken, (req, res) => {
   try {
     const userId = req.user.userId;
     const recentDays = parseInt(req.query.recent_days) || 7;
     const baseDays = parseInt(req.query.base_days) || 14;
+    const subject = req.query.subject || null;
 
-    const now = new Date();
-    const recentStart = new Date(now);
-    recentStart.setDate(recentStart.getDate() - recentDays);
-    const recentStartStr = recentStart.toISOString().split('T')[0];
+    const recentStart = getChinaDateDaysAgo(recentDays);
+    const baseEnd = getChinaDateDaysAgo(recentDays + 1);
+    const baseStart = getChinaDateDaysAgo(recentDays + baseDays);
 
-    const baseEnd = new Date(recentStart);
-    baseEnd.setDate(baseEnd.getDate() - 1);
-    const baseEndStr = baseEnd.toISOString().split('T')[0];
-
-    const baseStart = new Date(recentStart);
-    baseStart.setDate(baseStart.getDate() - baseDays);
-    const baseStartStr = baseStart.toISOString().split('T')[0];
-
-    // 前期聚合
-    const baseStats = db.prepare(`
-      SELECT knowledge_point,
-             SUM(total_attempts) AS attempts,
-             SUM(correct_attempts) AS correct,
-             ROUND(CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100, 2) AS accuracy
-      FROM knowledge_point_stats
-      WHERE user_id = ? AND date >= ? AND date <= ?
-      GROUP BY knowledge_point
-    `).all(userId, baseStartStr, baseEndStr);
-
-    // 近期聚合
-    const recentStats = db.prepare(`
-      SELECT knowledge_point,
-             SUM(total_attempts) AS attempts,
-             SUM(correct_attempts) AS correct,
-             ROUND(CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100, 2) AS accuracy
-      FROM knowledge_point_stats
-      WHERE user_id = ? AND date >= ?
-      GROUP BY knowledge_point
-    `).all(userId, recentStartStr);
-
-    const recentMap = {};
-    recentStats.forEach(s => { recentMap[s.knowledge_point] = s; });
-
-    // 结果：仅关心前期存在且算偏弱或中等的知识点
-    const items = baseStats.map(b => {
-      const r = recentMap[b.knowledge_point];
-      const baseAccuracy = b.accuracy || 0;
-      const recentAccuracy = r ? (r.accuracy || 0) : null;
-      let delta = null, status = 'no_data', statusLabel = '尚未复习';
-      if (recentAccuracy !== null) {
-        delta = Math.round((recentAccuracy - baseAccuracy) * 100) / 100;
-        if (delta >= 10) { status = 'improving'; statusLabel = '明显提升'; }
-        else if (delta <= -10) { status = 'declining'; statusLabel = '出现下滑'; }
-        else if (Math.abs(delta) < 10 && recentAccuracy >= 80) { status = 'consolidated'; statusLabel = '已巩固'; }
-        else { status = 'stable'; statusLabel = '基本稳定'; }
-      }
-      return {
-        knowledge_point: b.knowledge_point,
-        base_attempts: b.attempts,
-        base_accuracy: baseAccuracy,
-        recent_attempts: r ? r.attempts : 0,
-        recent_accuracy: recentAccuracy,
-        delta,
-        status,
-        status_label: statusLabel,
-        was_weak: baseAccuracy < 60
-      };
-    }).sort((a, b) => {
-      // 优先展示原本薄弱的项
-      if (a.was_weak !== b.was_weak) return a.was_weak ? -1 : 1;
-      if (a.delta === null) return 1;
-      if (b.delta === null) return -1;
-      return (b.delta || 0) - (a.delta || 0);
+    const { points, summary } = compareWindows(db, {
+      userId,
+      subject,
+      recentStart,
+      recentEnd: null,
+      baseStart,
+      baseEnd,
     });
 
-    const improving = items.filter(x => x.status === 'improving').length;
-    const declining = items.filter(x => x.status === 'declining').length;
-    const consolidated = items.filter(x => x.status === 'consolidated').length;
-    const noReview = items.filter(x => x.status === 'no_data' && x.was_weak).length;
-
     res.json({
-      base_period: { start: baseStartStr, end: baseEndStr, days: baseDays },
-      recent_period: { start: recentStartStr, days: recentDays },
-      items,
-      summary: {
-        total_tracked: items.length,
-        improving,
-        declining,
-        consolidated,
-        weak_not_reviewed: noReview
-      }
+      base_period: { start: baseStart, end: baseEnd, days: baseDays },
+      recent_period: { start: recentStart, days: recentDays },
+      subject,
+      items: points,
+      summary,
     });
   } catch (error) {
     console.error('获取复习效果失败:', error);
@@ -420,59 +352,45 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
       });
     }
 
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    const startDateStr = startDate.toISOString().split('T')[0];
+    const win = resolveWindow(req.query, { defaultDays: days, alias: 'kps' });
+    const startDateStr = win.start;
     const placeholders = studentIds.map(() => '?').join(',');
 
-    let kpAggregate;
-    if (isHeadTeacher) {
-      kpAggregate = db.prepare(`
-        SELECT knowledge_point,
-               SUM(total_attempts) AS attempts,
-               SUM(correct_attempts) AS correct,
-               ROUND(CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100, 2) AS accuracy,
-               COUNT(DISTINCT user_id) AS covered_students
-        FROM knowledge_point_stats
-        WHERE user_id IN (${placeholders}) AND date >= ?
-        GROUP BY knowledge_point
-        HAVING SUM(total_attempts) >= 3
-        ORDER BY accuracy ASC
-      `).all(...studentIds, startDateStr);
-    } else {
-      if (teacherSubjects.length === 0) {
-        return res.json({
-          class_id: classId, days, student_count: studentCount,
-          avg_accuracy: 0, total_attempts: 0,
-          top_weak: [], top_mastered: [],
-          subject_distribution: [], student_rankings: [],
-          role: 'subject_teacher', teacher_subjects: []
-        });
-      }
-      const subjectPlaceholders = teacherSubjects.map(() => '?').join(',');
-      kpAggregate = db.prepare(`
-        SELECT kps.knowledge_point,
-               SUM(kps.total_attempts) AS attempts,
-               SUM(kps.correct_attempts) AS correct,
-               ROUND(CAST(SUM(kps.correct_attempts) AS REAL) / NULLIF(SUM(kps.total_attempts), 0) * 100, 2) AS accuracy,
-               COUNT(DISTINCT kps.user_id) AS covered_students
-        FROM knowledge_point_stats kps
-        JOIN question_bank qb ON qb.knowledge_point = kps.knowledge_point
-        WHERE kps.user_id IN (${placeholders}) AND kps.date >= ? AND qb.subject IN (${subjectPlaceholders})
-        GROUP BY kps.knowledge_point
-        HAVING SUM(kps.total_attempts) >= 3
-        ORDER BY accuracy ASC
-      `).all(...studentIds, startDateStr, ...teacherSubjects);
+    // 任课老师只看自己教过的学科；用 EXISTS 过滤，避免 JOIN 造成的行膨胀
+    const subjFilter = isHeadTeacher
+      ? { sql: '', params: [] }
+      : subjectExistsFilter(teacherSubjects, 'kps');
+    const minAttempts = Math.max(1, parseInt(req.query.min_attempts) || MIN_POINT_ATTEMPTS);
+
+    if (!isHeadTeacher && teacherSubjects.length === 0) {
+      return res.json({
+        class_id: classId, days, student_count: studentCount,
+        avg_accuracy: 0, total_attempts: 0,
+        top_weak: [], top_mastered: [],
+        subject_distribution: [], student_rankings: [],
+        role: 'subject_teacher', teacher_subjects: []
+      });
     }
+
+    const kpAggregate = db.prepare(`
+      SELECT kps.knowledge_point,
+             SUM(kps.total_attempts) AS attempts,
+             SUM(kps.correct_attempts) AS correct,
+             ROUND(CAST(SUM(kps.correct_attempts) AS REAL) / NULLIF(SUM(kps.total_attempts), 0) * 100, 2) AS accuracy,
+             COUNT(DISTINCT kps.user_id) AS covered_students
+      FROM knowledge_point_stats kps
+      WHERE kps.user_id IN (${placeholders}) AND kps.date >= ? AND kps.date <= ?${subjFilter.sql}
+      GROUP BY kps.knowledge_point
+      HAVING SUM(kps.total_attempts) >= ${minAttempts}
+      ORDER BY accuracy ASC
+    `).all(...studentIds, win.params[0], win.params[1], ...subjFilter.params);
 
     const totalAttempts = kpAggregate.reduce((s, r) => s + r.attempts, 0);
     const totalCorrect = kpAggregate.reduce((s, r) => s + r.correct, 0);
-    const avgAccuracy = totalAttempts > 0
-      ? Math.round((totalCorrect / totalAttempts) * 10000) / 100
-      : 0;
+    const avgAccuracy = accuracyPct(totalCorrect, totalAttempts);
 
-    const topWeak = kpAggregate.filter(k => k.accuracy < 60).slice(0, 8);
-    const topMastered = [...kpAggregate].filter(k => k.accuracy >= 80)
+    const topWeak = kpAggregate.filter(k => k.accuracy < WEAK_ACCURACY).slice(0, 8);
+    const topMastered = [...kpAggregate].filter(k => k.accuracy >= MASTERED_ACCURACY)
       .sort((a, b) => b.accuracy - a.accuracy).slice(0, 8);
 
     let subjectDist;
@@ -507,29 +425,31 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
       `).all(...studentIds, startDateStr, ...teacherSubjects);
     }
 
+    // 一次查出全班各生统计与薄弱知识点数，消除原先的 N+1 查询
+    const perStudent = db.prepare(`
+      SELECT kps.user_id,
+             SUM(kps.total_attempts) AS attempts,
+             SUM(kps.correct_attempts) AS correct,
+             COUNT(DISTINCT kps.knowledge_point) AS kp_count
+      FROM knowledge_point_stats kps
+      WHERE kps.user_id IN (${placeholders}) AND kps.date >= ? AND kps.date <= ?${subjFilter.sql}
+      GROUP BY kps.user_id
+    `).all(...studentIds, win.params[0], win.params[1], ...subjFilter.params);
+    const statMap = new Map(perStudent.map(r => [r.user_id, r]));
+
+    const weakMap = new Map(db.prepare(`
+      SELECT user_id, COUNT(*) AS weak_kp_count FROM (
+        SELECT kps.user_id, kps.knowledge_point
+        FROM knowledge_point_stats kps
+        WHERE kps.user_id IN (${placeholders}) AND kps.date >= ? AND kps.date <= ?${subjFilter.sql}
+        GROUP BY kps.user_id, kps.knowledge_point
+        HAVING SUM(kps.total_attempts) >= ${MIN_ATTEMPTS_FOR_JUDGE}
+           AND CAST(SUM(kps.correct_attempts) AS REAL) / SUM(kps.total_attempts) * 100 < ${WEAK_ACCURACY}
+      ) GROUP BY user_id
+    `).all(...studentIds, win.params[0], win.params[1], ...subjFilter.params).map(r => [r.user_id, r.weak_kp_count]));
+
     const studentRankings = students.map(stu => {
-      let row;
-      if (isHeadTeacher) {
-        row = db.prepare(`
-          SELECT SUM(total_attempts) AS attempts,
-                 SUM(correct_attempts) AS correct,
-                 ROUND(CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100, 2) AS accuracy,
-                 COUNT(DISTINCT knowledge_point) AS kp_count
-          FROM knowledge_point_stats
-          WHERE user_id = ? AND date >= ?
-        `).get(stu.id, startDateStr) || {};
-      } else {
-        const subjectPlaceholders = teacherSubjects.map(() => '?').join(',');
-        row = db.prepare(`
-          SELECT SUM(kps.total_attempts) AS attempts,
-                 SUM(kps.correct_attempts) AS correct,
-                 ROUND(CAST(SUM(kps.correct_attempts) AS REAL) / NULLIF(SUM(kps.total_attempts), 0) * 100, 2) AS accuracy,
-                 COUNT(DISTINCT kps.knowledge_point) AS kp_count
-          FROM knowledge_point_stats kps
-          JOIN question_bank qb ON qb.knowledge_point = kps.knowledge_point
-          WHERE kps.user_id = ? AND kps.date >= ? AND qb.subject IN (${subjectPlaceholders})
-        `).get(stu.id, startDateStr, ...teacherSubjects) || {};
-      }
+      const row = statMap.get(stu.id) || {};
       return {
         user_id: stu.id,
         username: stu.username,
@@ -537,9 +457,9 @@ router.get('/class/:classId/overview', authenticateToken, (req, res) => {
         avatar: stu.avatar,
         attempts: row.attempts || 0,
         correct: row.correct || 0,
-        accuracy: row.accuracy || 0,
+        accuracy: accuracyPct(row.correct, row.attempts),
         kp_count: row.kp_count || 0,
-        weak_kp_count: 0
+        weak_kp_count: weakMap.get(stu.id) || 0
       };
     }).sort((a, b) => b.accuracy - a.accuracy);
 
@@ -603,22 +523,21 @@ router.get('/class/:classId/student/:studentId', authenticateToken, (req, res) =
     ).get(studentId, classId);
     if (!stu) return res.status(404).json({ error: '学生不存在或不在此班级' });
 
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    const startDateStr = startDate.toISOString().split('T')[0];
+    const win = resolveWindow(req.query, { defaultDays: days, alias: 'kps' });
+    const startDateStr = win.start;
 
     let kpStats;
     if (isHeadTeacher) {
       kpStats = db.prepare(`
-        SELECT knowledge_point,
-               SUM(total_attempts) AS total_attempts,
-               SUM(correct_attempts) AS correct_attempts,
-               ROUND(CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100, 2) AS accuracy
-        FROM knowledge_point_stats
-        WHERE user_id = ? AND date >= ?
-        GROUP BY knowledge_point
+        SELECT kps.knowledge_point,
+               SUM(kps.total_attempts) AS total_attempts,
+               SUM(kps.correct_attempts) AS correct_attempts,
+               ROUND(CAST(SUM(kps.correct_attempts) AS REAL) / NULLIF(SUM(kps.total_attempts), 0) * 100, 2) AS accuracy
+        FROM knowledge_point_stats kps
+        WHERE kps.user_id = ? AND kps.date >= ? AND kps.date <= ?
+        GROUP BY kps.knowledge_point
         ORDER BY accuracy ASC
-      `).all(studentId, startDateStr);
+      `).all(studentId, win.params[0], win.params[1]);
     } else {
       if (teacherSubjects.length === 0) {
         return res.json({
@@ -628,22 +547,22 @@ router.get('/class/:classId/student/:studentId', authenticateToken, (req, res) =
           teacher_subjects: []
         });
       }
-      const subjectPlaceholders = teacherSubjects.map(() => '?').join(',');
+      // EXISTS 过滤学科，避免 JOIN 同名知识点导致的行膨胀
+      const sf = subjectExistsFilter(teacherSubjects, 'kps');
       kpStats = db.prepare(`
         SELECT kps.knowledge_point,
                SUM(kps.total_attempts) AS total_attempts,
                SUM(kps.correct_attempts) AS correct_attempts,
                ROUND(CAST(SUM(kps.correct_attempts) AS REAL) / NULLIF(SUM(kps.total_attempts), 0) * 100, 2) AS accuracy
         FROM knowledge_point_stats kps
-        JOIN question_bank qb ON qb.knowledge_point = kps.knowledge_point
-        WHERE kps.user_id = ? AND kps.date >= ? AND qb.subject IN (${subjectPlaceholders})
+        WHERE kps.user_id = ? AND kps.date >= ? AND kps.date <= ?${sf.sql}
         GROUP BY kps.knowledge_point
         ORDER BY accuracy ASC
-      `).all(studentId, startDateStr, ...teacherSubjects);
+      `).all(studentId, win.params[0], win.params[1], ...sf.params);
     }
 
-    const weakPoints = kpStats.filter(k => k.total_attempts >= 3 && k.accuracy < 60);
-    const masteredPoints = kpStats.filter(k => k.total_attempts >= 3 && k.accuracy >= 80);
+    const weakPoints = kpStats.filter(k => k.total_attempts >= MIN_ATTEMPTS_FOR_JUDGE && k.accuracy < WEAK_ACCURACY);
+    const masteredPoints = kpStats.filter(k => k.total_attempts >= MIN_ATTEMPTS_FOR_JUDGE && k.accuracy >= MASTERED_ACCURACY);
 
     let recentWrong;
     if (isHeadTeacher) {
@@ -669,16 +588,32 @@ router.get('/class/:classId/student/:studentId', authenticateToken, (req, res) =
       `).all(studentId, ...teacherSubjects);
     }
 
-    const dailyTrend = db.prepare(`
-      SELECT date,
-             SUM(total_attempts) AS attempts,
-             SUM(correct_attempts) AS correct,
-             ROUND(CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100, 2) AS accuracy
-      FROM knowledge_point_stats
-      WHERE user_id = ? AND date >= ?
-      GROUP BY date
-      ORDER BY date ASC
-    `).all(studentId, startDateStr);
+    // 任课老师此前能拿到该生「全学科」的日趋势，属于越权，这里补上学科过滤
+    const dailyTrend = (() => {
+      if (isHeadTeacher) {
+        return db.prepare(`
+          SELECT date,
+                 SUM(total_attempts) AS attempts,
+                 SUM(correct_attempts) AS correct,
+                 ROUND(CAST(SUM(correct_attempts) AS REAL) / NULLIF(SUM(total_attempts), 0) * 100, 2) AS accuracy
+          FROM knowledge_point_stats
+          WHERE user_id = ? AND date >= ? AND date <= ?
+          GROUP BY date
+          ORDER BY date ASC
+        `).all(studentId, win.params[0], win.params[1]);
+      }
+      const sf = subjectExistsFilter(teacherSubjects, 'kps');
+      return db.prepare(`
+        SELECT kps.date AS date,
+               SUM(kps.total_attempts) AS attempts,
+               SUM(kps.correct_attempts) AS correct,
+               ROUND(CAST(SUM(kps.correct_attempts) AS REAL) / NULLIF(SUM(kps.total_attempts), 0) * 100, 2) AS accuracy
+        FROM knowledge_point_stats kps
+        WHERE kps.user_id = ? AND kps.date >= ? AND kps.date <= ?${sf.sql}
+        GROUP BY kps.date
+        ORDER BY kps.date ASC
+      `).all(studentId, win.params[0], win.params[1], ...sf.params);
+    })();
 
     let subjectStats;
     if (isHeadTeacher) {
@@ -738,9 +673,8 @@ router.get('/learning-time', authenticateToken, (req, res) => {
     const userId = req.user.userId;
     const days = parseInt(req.query.days) || 14;
 
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    const startDateStr = startDate.toISOString().split('T')[0];
+    // 窗口起点用中国时区计算（原先用 UTC，早 8 点前会少算「今天」）
+    const startDateStr = getChinaDateDaysAgo(days);
 
     // 每日答题数
     const daily = db.prepare(`
@@ -812,6 +746,60 @@ router.get('/learning-time', authenticateToken, (req, res) => {
     let peakWeekday = null, peakWCount = 0;
     weekday.forEach(w => { if (w.answers > peakWCount) { peakWCount = w.answers; peakWeekday = w.weekday; } });
 
+    // ===== 作答耗时（011 迁移新增，存量数据为 NULL 需忽略）=====
+    const durationRow = db.prepare(`
+      SELECT COUNT(qa.duration_ms) AS measured,
+             AVG(qa.duration_ms) AS avg_ms,
+             SUM(qa.duration_ms) AS total_ms,
+             SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS correct_with_duration,
+             COUNT(CASE WHEN qa.is_correct = 1 THEN 1 END) AS correct_total
+      FROM question_answers qa
+      JOIN submissions s ON qa.submission_id = s.id
+      WHERE s.user_id = ? AND DATE(qa.answered_at, '+8 hours') >= ?
+        AND qa.duration_ms IS NOT NULL
+    `).get(userId, startDateStr);
+
+    const avgDurationSec = durationRow?.avg_ms ? Math.round(durationRow.avg_ms / 100) / 10 : 0;
+    const totalMinutes = durationRow?.total_ms ? Math.round(durationRow.total_ms / 60000) : 0;
+    const durationAccuracy = durationRow?.correct_total
+      ? Math.round((durationRow.correct_with_duration / durationRow.correct_total) * 10000) / 100
+      : null;
+
+    // 耗时与正确率的关系：过快(<10s)可能蒙答案，过慢(>120s)可能卡住
+    let paceBias = null;
+    if (durationRow?.measured >= 5) {
+      if (avgDurationSec > 0 && avgDurationSec < 10) paceBias = 'too_fast';
+      else if (avgDurationSec > 120) paceBias = 'too_slow';
+    }
+
+    // ===== 预习 / 作业 / 复习 三类维度 =====
+    const typeDist = db.prepare(`
+      SELECT COALESCE(a.assignment_type, 'homework') AS assignment_type,
+             COUNT(qa.id) AS answers,
+             SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+             COUNT(DISTINCT a.id) AS assignment_count
+      FROM question_answers qa
+      JOIN submissions s ON qa.submission_id = s.id
+      JOIN assignments a ON a.id = s.assignment_id
+      WHERE s.user_id = ? AND DATE(qa.answered_at, '+8 hours') >= ?
+      GROUP BY COALESCE(a.assignment_type, 'homework')
+    `).all(userId, startDateStr);
+    const typeLabel = { preview: '预习', homework: '作业', review: '复习' };
+    const byType = ['preview', 'homework', 'review']
+      .map(t => {
+        const r = typeDist.find(x => x.assignment_type === t);
+        if (!r) return { assignment_type: t, label: typeLabel[t], answers: 0, assignment_count: 0, accuracy: 0 };
+        return {
+          assignment_type: t,
+          label: typeLabel[t],
+          answers: r.answers,
+          assignment_count: r.assignment_count,
+          correct: r.correct,
+          accuracy: accuracyPct(r.correct, r.answers),
+        };
+      })
+      .filter(x => x.answers > 0);
+
     res.json({
       days,
       start_date: startDateStr,
@@ -819,12 +807,22 @@ router.get('/learning-time', authenticateToken, (req, res) => {
       weekday,
       hourly,
       subject_distribution: subjectDist,
+      by_type: byType,
+      duration: {
+        measured_questions: durationRow?.measured || 0,
+        avg_seconds: avgDurationSec,
+        total_minutes: totalMinutes,
+        accuracy: durationAccuracy,
+        pace_bias: paceBias,
+        available: (durationRow?.measured || 0) > 0,
+      },
       summary: {
         total_answers: totalAnswers,
         active_days: activeDays,
         avg_per_day: avgPerDay,
         peak_hour: peakHour,
-        peak_weekday: peakWeekday
+        peak_weekday: peakWeekday,
+        total_minutes: totalMinutes
       }
     });
   } catch (error) {

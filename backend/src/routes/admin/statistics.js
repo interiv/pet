@@ -163,10 +163,45 @@ router.get('/statistics', authenticateToken, (req, res) => {
         `).get(...myClassIds).count;
       }
 
+      // 教师分支原先没有 daily 字段，教师工作台「今日活跃 / 今日发金」恒为 0。
+      // 这里按任教班级的学生口径统计，与班级维度对齐。
+      let dailyActiveStudents = 0;
+      let dailySubmissions = 0;
+      let dailyGoldDistributed = 0;
+      if (myClassIds.length > 0) {
+        const placeholders = myClassIds.map(() => '?').join(',');
+        dailyActiveStudents = db.prepare(`
+          SELECT COUNT(DISTINCT qa.user_id) as count
+          FROM question_answers qa
+          WHERE DATE(qa.answered_at, '+8 hours') = DATE('now', '+8 hours')
+            AND qa.user_id IN (SELECT id FROM users WHERE role = 'student' AND class_id IN (${placeholders}))
+        `).get(...myClassIds).count || 0;
+
+        dailySubmissions = db.prepare(`
+          SELECT COUNT(*) as count
+          FROM question_answers qa
+          JOIN submissions s ON s.id = qa.submission_id
+          WHERE DATE(qa.answered_at, '+8 hours') = DATE('now', '+8 hours')
+            AND s.user_id IN (SELECT id FROM users WHERE role = 'student' AND class_id IN (${placeholders}))
+        `).get(...myClassIds).count || 0;
+
+        dailyGoldDistributed = db.prepare(`
+          SELECT COALESCE(SUM(gt.gold_change), 0) as total FROM gold_transactions gt
+          WHERE DATE(gt.created_at, '+8 hours') = DATE('now', '+8 hours') AND gt.gold_change > 0
+            AND gt.user_id IN (SELECT id FROM users WHERE role = 'student' AND class_id IN (${placeholders}))
+        `).get(...myClassIds).total || 0;
+      }
+
       statistics = {
         ...statistics,
         classes: { total: myClasses, list: myClassRows },
-        users: { students: studentCount }
+        users: { students: studentCount },
+        daily: {
+          active_users: dailyActiveStudents,
+          submissions: dailySubmissions,
+          gold_distributed: dailyGoldDistributed,
+          gold_consumed: 0
+        }
       };
     }
     

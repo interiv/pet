@@ -1,11 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { Table, Tag, Button, Card, Empty, Space, message, Modal, Alert, Badge, Select, Row, Col, Statistic, Progress } from 'antd';
+import React, { useEffect, useRef, useState } from 'react';
+import { Table, Tag, Button, Card, Empty, Space, message, Modal, Alert, Badge, Select, Row, Col, Statistic, Progress, Radio, Input } from 'antd';
 import { assignmentAPI, knowledgePointAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import dayjs from 'dayjs';
-import { BookOutlined, CheckCircleOutlined, EyeOutlined, AimOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { BookOutlined, CheckCircleOutlined, EyeOutlined, AimOutlined, ThunderboltOutlined, RedoOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
+const { TextArea } = Input;
 
 const subjectOptions = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治'];
 
@@ -34,6 +35,16 @@ const WrongQuestions: React.FC = () => {
   const [wqTablePage, setWqTablePage] = useState(1);
   const [wqTablePageSize, setWqTablePageSize] = useState(10);
 
+  // ===== 错题重做 =====
+  const [isRetryVisible, setIsRetryVisible] = useState(false);
+  const [retryIndex, setRetryIndex] = useState(0);
+  const [retryAnswers, setRetryAnswers] = useState<Record<number, any>>({});
+  const [retrySelfMark, setRetrySelfMark] = useState<Record<number, boolean>>({});
+  const [retryResult, setRetryResult] = useState<any>(null);
+  const [retrySubmitting, setRetrySubmitting] = useState(false);
+  const [retryStats, setRetryStats] = useState<Record<number, any>>({});
+  const retryStartRef = useRef<number>(0);
+
   useEffect(() => {
     if (user) loadWrongQuestions();
   }, [user]);
@@ -58,6 +69,95 @@ const WrongQuestions: React.FC = () => {
       loadWrongQuestions(filterSubject);
     } catch (e: any) {
       message.error(e.response?.data?.error || '操作失败');
+    }
+  };
+
+  /** 拉取每题的掌握进度（连续答对次数 / 还差几次能移出错题本） */
+  const loadMasteryStats = async () => {
+    try {
+      const res = await assignmentAPI.getWrongMastery();
+      const map: Record<number, any> = {};
+      for (const it of res.data.items || []) map[it.wrong_id] = it;
+      setRetryStats(map);
+    } catch (e) {
+      // 迁移未执行时静默降级
+    }
+  };
+
+  /** 打开重做模式，从指定下标开始（不传则从第一条待复习的开始） */
+  const openRetry = async (startId?: number) => {
+    const pending = wrongQuestions.filter((w: any) => !w.reviewed);
+    const pool = pending.length > 0 ? pending : wrongQuestions;
+    if (pool.length === 0) {
+      message.info('错题本是空的，先去完成作业吧');
+      return;
+    }
+    await loadMasteryStats();
+    const start = startId != null
+      ? Math.max(0, pool.findIndex((w: any) => w.id === startId))
+      : 0;
+    setRetryAnswers({});
+    setRetrySelfMark({});
+    setRetryResult(null);
+    setRetryIndex(start);
+    retryStartRef.current = Date.now();
+    setIsRetryVisible(true);
+  };
+
+  const retryList = (() => {
+    const pending = wrongQuestions.filter((w: any) => !w.reviewed);
+    return pending.length > 0 ? pending : wrongQuestions;
+  })();
+
+  const currentRetry = retryList[retryIndex];
+  const isSubjectiveRetry = currentRetry?.question_type === 'essay' || currentRetry?.question_type === 'composition';
+  const isChoiceRetry = currentRetry?.question_type === 'choice_single' || currentRetry?.question_type === 'choice_multi';
+
+  const submitRetry = async () => {
+    if (!currentRetry) return;
+    const ans = retryAnswers[currentRetry.id];
+    const hasAnswer = ans !== undefined && ans !== null && ans !== ''
+      && !(Array.isArray(ans) && ans.length === 0);
+    if (!hasAnswer) {
+      message.warning('请先作答');
+      return;
+    }
+    if (isSubjectiveRetry && retrySelfMark[currentRetry.id] === undefined) {
+      message.warning('主观题需要先对照参考答案自评');
+      return;
+    }
+    setRetrySubmitting(true);
+    try {
+      const res = await assignmentAPI.retryWrongQuestions([{
+        wrong_id: currentRetry.id,
+        answer: ans,
+        self_marked_correct: isSubjectiveRetry ? !!retrySelfMark[currentRetry.id] : undefined,
+        duration_ms: Date.now() - retryStartRef.current,
+      }]);
+      const r = res.data.results?.[0];
+      if (r?.ok) {
+        setRetryResult(r);
+        message.success(r.message);
+        loadMasteryStats();
+      } else {
+        message.error(r?.reason || '重做失败');
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.error || '重做失败');
+    } finally {
+      setRetrySubmitting(false);
+    }
+  };
+
+  const nextRetry = async () => {
+    setRetryResult(null);
+    if (retryIndex < retryList.length - 1) {
+      setRetryIndex(retryIndex + 1);
+      retryStartRef.current = Date.now();
+    } else {
+      setIsRetryVisible(false);
+      message.success(`本轮重做完成，共 ${retryList.length} 道题`);
+      loadWrongQuestions(filterSubject);
     }
   };
 
@@ -142,6 +242,7 @@ const WrongQuestions: React.FC = () => {
       width: 180,
       render: (_: any, record: any) => (
         <Space size="small" wrap>
+          <Button type="link" size="small" icon={<RedoOutlined />} onClick={() => openRetry(record.id)}>重做</Button>
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>详情</Button>
           {!record.reviewed && (
             <Button type="link" size="small" icon={<CheckCircleOutlined />} onClick={() => handleMarkReviewed(record.id)}>
@@ -187,6 +288,7 @@ const WrongQuestions: React.FC = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ color: '#999', fontSize: 12 }}>{dayjs(record.created_at).format('MM-DD HH:mm')}</span>
         <Space size="small">
+          <Button type="link" size="small" icon={<RedoOutlined />} onClick={() => openRetry(record.id)}>重做</Button>
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>详情</Button>
           {!record.reviewed && (
             <Button type="link" size="small" icon={<CheckCircleOutlined />} onClick={() => handleMarkReviewed(record.id)}>标记已复习</Button>
@@ -200,21 +302,26 @@ const WrongQuestions: React.FC = () => {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 8 }}>
         <h2 style={{ margin: 0 }}><BookOutlined /> 错题本</h2>
-        <Select
-          placeholder="按科目筛选"
-          allowClear
-          style={{ width: isMobile ? '100%' : 160 }}
-          value={filterSubject || undefined}
-          onChange={(v) => { setFilterSubject(v || ''); loadWrongQuestions(v); }}
-        >
-          {subjectOptions.map(s => <Option key={s} value={s}>{s}</Option>)}
-        </Select>
+        <Space wrap>
+          <Button type="primary" icon={<RedoOutlined />} onClick={() => openRetry()} disabled={wrongQuestions.length === 0}>
+            开始重做（{wrongQuestions.filter((w: any) => !w.reviewed).length || wrongQuestions.length} 题）
+          </Button>
+          <Select
+            placeholder="按科目筛选"
+            allowClear
+            style={{ width: isMobile ? '100%' : 160 }}
+            value={filterSubject || undefined}
+            onChange={(v) => { setFilterSubject(v || ''); loadWrongQuestions(v); }}
+          >
+            {subjectOptions.map(s => <Option key={s} value={s}>{s}</Option>)}
+          </Select>
+        </Space>
       </div>
 
       <Alert
         type="info"
         showIcon
-        message="做错的题目会自动收录到错题本，建议定期回顾。已复习的题目会自动标记为绿色。"
+        message="做错的题目会自动收录到错题本。点「重做」真正再做一遍——连续答对 2 次才会移出错题本，光点「标记已复习」只是标记一下。"
         style={{ marginBottom: 16 }}
       />
 
@@ -395,6 +502,158 @@ const WrongQuestions: React.FC = () => {
                 </details>
               </Card>
             ))}
+          </div>
+        )}
+      </Modal>
+
+      {/* 错题重做弹窗 */}
+      <Modal
+        title={`错题重做（${retryIndex + 1}/${retryList.length}）`}
+        open={isRetryVisible}
+        onCancel={() => setIsRetryVisible(false)}
+        width={isMobile ? '95vw' : 680}
+        destroyOnHidden
+        footer={
+          retryResult ? (
+            <Button type="primary" onClick={nextRetry}>
+              {retryIndex < retryList.length - 1 ? '下一题' : '完成本轮'}
+            </Button>
+          ) : (
+            <Space>
+              <Button onClick={() => setIsRetryVisible(false)}>稍后再做</Button>
+              <Button
+                type="primary"
+                loading={retrySubmitting}
+                onClick={submitRetry}
+                disabled={!currentRetry}
+              >
+                提交本题
+              </Button>
+            </Space>
+          )
+        }
+      >
+        {currentRetry && (
+          <div>
+            <Progress
+              percent={Math.round(((retryIndex + (retryResult ? 1 : 0)) / Math.max(1, retryList.length)) * 100)}
+              size="small"
+              style={{ marginBottom: 12 }}
+            />
+
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+              <Tag color="blue">{currentRetry.subject}</Tag>
+              <Tag>{typeMap[currentRetry.question_type]?.label || currentRetry.question_type}</Tag>
+              {currentRetry.knowledge_point && <Tag color="cyan">{currentRetry.knowledge_point}</Tag>}
+              {retryStats[currentRetry.id]?.retry_total > 0 && (
+                <Tag color="orange">已重做 {retryStats[currentRetry.id].retry_total} 次</Tag>
+              )}
+              {retryStats[currentRetry.id]?.correct_streak > 0 && (
+                <Tag color="green">已连续答对 {retryStats[currentRetry.id].correct_streak} 次</Tag>
+              )}
+            </div>
+
+            {retryResult ? (
+              <Alert
+                type={retryResult.is_correct ? 'success' : 'error'}
+                showIcon
+                message={retryResult.message}
+                description={
+                  <div style={{ fontSize: 13 }}>
+                    <div>正确答案：<strong style={{ color: '#52c41a' }}>{String(retryResult.correct_answer)}</strong></div>
+                    {retryResult.analysis && (
+                      <div style={{ marginTop: 6, color: '#666' }}>解析：{retryResult.analysis}</div>
+                    )}
+                  </div>
+                }
+              />
+            ) : (
+              <>
+                <Card size="small" style={{ marginBottom: 16, borderLeft: '4px solid #1677ff' }}>
+                  <div style={{ fontSize: 15, lineHeight: 1.8, marginBottom: 8 }}>
+                    {currentRetry.question_content}
+                  </div>
+                  {currentRetry.options && (
+                    <div style={{ marginLeft: 8, color: '#666' }}>
+                      {(typeof currentRetry.options === 'string' ? JSON.parse(currentRetry.options) : currentRetry.options)
+                        .map((opt: string, i: number) => (
+                          <div key={i}>{String.fromCharCode(65 + i)}. {opt}</div>
+                        ))}
+                    </div>
+                  )}
+                </Card>
+
+                {/* 客观题直接作答 */}
+                {isChoiceRetry && (
+                  <Radio.Group
+                    value={retryAnswers[currentRetry.id]}
+                    onChange={(e) => setRetryAnswers(prev => ({ ...prev, [currentRetry.id]: e.target.value }))}
+                  >
+                    {(typeof currentRetry.options === 'string' ? JSON.parse(currentRetry.options) : currentRetry.options || [])
+                      .map((opt: string, i: number) => (
+                        <Radio key={i} value={String.fromCharCode(65 + i)} style={{ display: 'block', marginBottom: 6 }}>
+                          {String.fromCharCode(65 + i)}. {opt}
+                        </Radio>
+                      ))}
+                  </Radio.Group>
+                )}
+
+                {currentRetry.question_type === 'judgment' && (
+                  <Radio.Group
+                    value={retryAnswers[currentRetry.id]}
+                    onChange={(e) => setRetryAnswers(prev => ({ ...prev, [currentRetry.id]: e.target.value }))}
+                  >
+                    <Radio value="正确" style={{ marginRight: 16 }}>正确</Radio>
+                    <Radio value="错误">错误</Radio>
+                  </Radio.Group>
+                )}
+
+                {currentRetry.question_type === 'fill_blank' && (
+                  <Input
+                    placeholder="请输入答案"
+                    value={retryAnswers[currentRetry.id] || ''}
+                    onChange={(e) => setRetryAnswers(prev => ({ ...prev, [currentRetry.id]: e.target.value }))}
+                  />
+                )}
+
+                {isSubjectiveRetry && (
+                  <>
+                    <TextArea
+                      rows={5}
+                      placeholder="重新作答一遍，再对照参考答案自评"
+                      value={retryAnswers[currentRetry.id] || ''}
+                      onChange={(e) => setRetryAnswers(prev => ({ ...prev, [currentRetry.id]: e.target.value }))}
+                    />
+                    <Alert
+                      type="info"
+                      style={{ marginTop: 12 }}
+                      message="对照参考答案自评"
+                      description={
+                        <div style={{ marginTop: 6 }}>
+                          <div style={{ marginBottom: 8 }}>
+                            参考答案：<strong style={{ color: '#52c41a' }}>{String(currentRetry.correct_answer)}</strong>
+                          </div>
+                          {currentRetry.analysis && (
+                            <div style={{ marginBottom: 8, color: '#666' }}>解析：{currentRetry.analysis}</div>
+                          )}
+                          <Radio.Group
+                            value={retrySelfMark[currentRetry.id]}
+                            onChange={(e) => setRetrySelfMark(prev => ({ ...prev, [currentRetry.id]: e.target.value }))}
+                          >
+                            <Radio value={true} style={{ marginRight: 16 }}>我答对了</Radio>
+                            <Radio value={false}>还没掌握</Radio>
+                          </Radio.Group>
+                        </div>
+                      }
+                    />
+                  </>
+                )}
+
+                <div style={{ marginTop: 12, fontSize: 12, color: '#999' }}>
+                  连续答对 2 次会自动移出错题本；答错会累加错误次数。
+                </div>
+              </>
+            )}
           </div>
         )}
       </Modal>

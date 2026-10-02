@@ -80,9 +80,77 @@ const upload = multer({
   }
 });
 
+/**
+ * 学生个人题库：每次作答（线上提交 / 纸质登记）逐题 upsert。
+ * 与错题本的区别：错题本只留做错的题，个人库保留做过的全部题目。
+ * 表不存在时（迁移未执行）静默跳过，不影响主流程。
+ */
+let personalBankReady = null;
+function personalBankAvailable() {
+  if (personalBankReady === null) {
+    personalBankReady = !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='personal_question_bank'`).get();
+  }
+  return personalBankReady;
+}
+
+function upsertPersonalBank({ userId, questionId, assignmentId, assignmentType, answer, isCorrect, source }) {
+  if (!personalBankAvailable() || !userId || !questionId) return;
+  try {
+    const q = db.prepare('SELECT subject, knowledge_point FROM question_bank WHERE id = ?').get(questionId);
+    const existing = db.prepare('SELECT id FROM personal_question_bank WHERE user_id = ? AND question_id = ?')
+      .get(userId, questionId);
+    if (existing) {
+      db.prepare(`
+        UPDATE personal_question_bank
+        SET last_answer = ?, is_correct = ?, attempt_count = attempt_count + 1,
+            correct_count = correct_count + ?, assignment_id = ?, assignment_type = ?,
+            source = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(String(answer || ''), isCorrect ? 1 : 0, isCorrect ? 1 : 0, assignmentId || null, assignmentType || null, source || 'online', existing.id);
+    } else {
+      db.prepare(`
+        INSERT INTO personal_question_bank
+          (user_id, question_id, assignment_id, assignment_type, subject, knowledge_point,
+           first_answer, last_answer, is_correct, attempt_count, correct_count, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      `).run(userId, questionId, assignmentId || null, assignmentType || null,
+        q?.subject || null, q?.knowledge_point || null,
+        String(answer || ''), String(answer || ''), isCorrect ? 1 : 0, isCorrect ? 1 : 0, source || 'online');
+    }
+  } catch (e) {
+    console.error('个人题库写入失败:', e.message);
+  }
+}
+
+/**
+ * 写入/更新错题本。所有错题来源（线上提交、错题重做、主观题评阅、纸质登记、教师改判）
+ * 都必须走这里，保证 created_at 一定被写入——错题本 UI 的「错误时间」列依赖它，
+ * 漏写会让整列显示 Invalid Date（009 迁移补的历史列）。
+ */
+function writeWrongQuestion({ userId, assignmentId, questionId, wrongAnswer, correctAnswer, analysis, increment = true }) {
+  const existing = db.prepare('SELECT id, wrong_count FROM wrong_questions WHERE user_id = ? AND question_id = ?')
+    .get(userId, questionId);
+  if (existing) {
+    if (increment) {
+      db.prepare(`UPDATE wrong_questions
+        SET wrong_count = wrong_count + 1, wrong_answer = ?, correct_answer = ?,
+            analysis = COALESCE(NULLIF(?, ''), analysis), reviewed = 0
+        WHERE id = ?`)
+        .run(String(wrongAnswer || ''), String(correctAnswer || ''), String(analysis || ''), existing.id);
+    }
+    return existing.id;
+  }
+  const r = db.prepare(`
+    INSERT OR IGNORE INTO wrong_questions
+      (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed, wrong_count, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?)
+  `).run(userId, assignmentId, questionId, String(wrongAnswer || ''), String(correctAnswer || ''),
+    String(analysis || ''), new Date().toISOString());
+  return r.lastInsertRowid;
+}
+
 function getAIConfig() {
-  const settings = db.prepare(`SELECT key, value FROM settings WHERE key LIKE 'ai_%'`).all();
-  const config = {};
+  const settings = db.prepare(`SELECT key, value FROM settings WHERE key LIKE 'ai_%'`).all();  const config = {};
   settings.forEach(s => config[s.key] = s.value);
   // fallback 到环境变量（数据库未配置时使用）
   if (!config.ai_api_key && process.env.AI_API_KEY) config.ai_api_key = process.env.AI_API_KEY;
@@ -648,10 +716,10 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
 
         // 更新错题本
         if (wasCorrect && !newCorrect) {
-          db.prepare(`
-            INSERT OR IGNORE INTO wrong_questions (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed, wrong_count)
-            VALUES (?, ?, ?, ?, ?, '', 0, 1)
-          `).run(qa.user_id, qa.assignment_id, qid, ua, updatedQuestion.answer);
+          writeWrongQuestion({
+            userId: qa.user_id, assignmentId: qa.assignment_id, questionId: qid,
+            wrongAnswer: ua, correctAnswer: updatedQuestion.answer, analysis: '',
+          });
         } else if (!wasCorrect && newCorrect) {
           db.prepare('DELETE FROM wrong_questions WHERE user_id = ? AND question_id = ?')
             .run(qa.user_id, qid);
@@ -721,11 +789,14 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
 
 router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
   try {
-    const { title, description, subject, question_type, max_exp, due_date, class_id, question_ids, ai_config, max_attempts } = req.body;
+    const { title, description, subject, question_type, max_exp, due_date, class_id, question_ids, ai_config, max_attempts, assignment_type } = req.body;
 
     if (!title || !subject || !question_type || !due_date) {
       return res.status(400).json({ error: '请填写必要信息' });
     }
+
+    // 作业类型：preview 预习 / homework 作业 / review 复习，缺省 homework
+    const aType = ['preview', 'homework', 'review'].includes(assignment_type) ? assignment_type : 'homework';
 
     // 重做次数上限：允许 1-10 次，缺省沿用表默认值 3
     let attempts = Number(max_attempts);
@@ -755,9 +826,9 @@ router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res
     }
 
     const result = db.prepare(`
-      INSERT INTO assignments (teacher_id, title, description, subject, question_type, max_exp, due_date, ai_config, class_id, max_attempts)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(req.user.userId, title, description, subject, question_type, max_exp, new Date(due_date).toISOString(), JSON.stringify(ai_config || {}), targetClassId, attempts);
+      INSERT INTO assignments (teacher_id, title, description, subject, question_type, max_exp, due_date, ai_config, class_id, max_attempts, assignment_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(req.user.userId, title, description, subject, question_type, max_exp, new Date(due_date).toISOString(), JSON.stringify(ai_config || {}), targetClassId, attempts, aType);
 
     const assignmentId = result.lastInsertRowid;
 
@@ -787,6 +858,7 @@ router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res
         due_date,
         class_id: targetClassId,
         max_attempts: attempts,
+        assignment_type: aType,
         question_count: question_ids ? question_ids.length : 0
       }
     });
@@ -799,7 +871,8 @@ router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res
 router.get('/', authenticateToken, (req, res) => {
   try {
     let assignments;
-    const { class_id, subject, date_from, date_to } = req.query;
+    const { class_id, subject, date_from, date_to, assignment_type } = req.query;
+    const typeFilter = ['preview', 'homework', 'review'].includes(assignment_type) ? assignment_type : null;
 
     if (req.user.role === 'admin') {
       let sql = `
@@ -815,6 +888,7 @@ router.get('/', authenticateToken, (req, res) => {
       const params = [];
       if (class_id) { sql += ` AND a.class_id = ?`; params.push(class_id); }
       if (subject) { sql += ` AND a.subject = ?`; params.push(subject); }
+      if (typeFilter) { sql += ` AND a.assignment_type = ?`; params.push(typeFilter); }
       if (date_from) { sql += ` AND a.created_at >= ?`; params.push(date_from); }
       if (date_to) { sql += ` AND a.created_at <= ?`; params.push(date_to + ' 23:59:59'); }
       sql += ` ORDER BY a.created_at DESC`;
@@ -852,6 +926,7 @@ router.get('/', authenticateToken, (req, res) => {
       }
 
       if (subject) { sql += ` AND a.subject = ?`; params.push(subject); }
+      if (typeFilter) { sql += ` AND a.assignment_type = ?`; params.push(typeFilter); }
       if (date_from) { sql += ` AND a.created_at >= ?`; params.push(date_from); }
       if (date_to) { sql += ` AND a.created_at <= ?`; params.push(date_to + ' 23:59:59'); }
       sql += ` ORDER BY a.created_at DESC`;
@@ -860,7 +935,7 @@ router.get('/', authenticateToken, (req, res) => {
       const student = db.prepare('SELECT class_id FROM users WHERE id = ?').get(req.user.userId);
       if (!student || !student.class_id) return res.json({ assignments: [] });
 
-      assignments = db.prepare(`
+      let studentSql = `
         SELECT a.*, COALESCE(u.real_name, u.username) as teacher_name, c.name as class_name,
           (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count,
           (SELECT id FROM submissions WHERE assignment_id = a.id AND user_id = ? LIMIT 1) as my_submission_id,
@@ -871,8 +946,11 @@ router.get('/', authenticateToken, (req, res) => {
         JOIN users u ON a.teacher_id = u.id
         LEFT JOIN classes c ON a.class_id = c.id
         WHERE a.class_id = ? AND a.status != 'cancelled'
-        ORDER BY a.created_at DESC
-      `).all(req.user.userId, req.user.userId, req.user.userId, req.user.userId, student.class_id);
+      `;
+      const studentParams = [req.user.userId, req.user.userId, req.user.userId, req.user.userId, student.class_id];
+      if (typeFilter) { studentSql += ` AND a.assignment_type = ?`; studentParams.push(typeFilter); }
+      studentSql += ` ORDER BY a.created_at DESC`;
+      assignments = db.prepare(studentSql).all(...studentParams);
     }
 
     res.json({ assignments });
@@ -1064,6 +1142,16 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
     const isObj = isObjectiveType(assignment.question_type);
     const submissionId = existingSubmission ? existingSubmission.id : null;
     const isRetry = !!submissionId;
+
+    // 每题作答耗时（毫秒）：前端作答时逐题计时并随答案一起提交。
+    // 用于识别「长时间无响应只蒙答案」的情况，存量数据为 NULL 需忽略。
+    const durationOf = (qid) => {
+      const raw = (answers || []).find((a) => Number(a.question_id) === Number(qid))?.duration_ms;
+      const n = parseInt(raw);
+      // 只接受合理区间：0.5 秒 ~ 30 分钟
+      return Number.isFinite(n) && n >= 500 && n <= 1800000 ? n : null;
+    };
+
     // 重做模式专用：待重做的原始题目数、以及「本次作答题目 id → 本作业原始题目 id」的映射
     let retryWrongOriginalCount = 0;
     let originalOfRetry = {};
@@ -1176,6 +1264,7 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
             correct_answer: q.answer,
             is_correct: isCorrect,
             score: isCorrect ? (100 / questions.length) : 0,
+            duration_ms: durationOf(q.id),
             explanation: q.explanation,
             analysis: q.analysis
           });
@@ -1220,10 +1309,10 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
               db.prepare('UPDATE wrong_questions SET wrong_count = wrong_count + 1, wrong_answer = ?, correct_answer = ?, reviewed = 0 WHERE id = ?')
                 .run(String(userAnswer), q.answer, existingWQ.id);
             } else {
-              db.prepare(`
-                INSERT OR IGNORE INTO wrong_questions (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed, wrong_count)
-                VALUES (?, ?, ?, ?, ?, ?, 0, 1)
-              `).run(req.user.userId, req.params.id, q.id, String(userAnswer), q.answer, q.analysis);
+              writeWrongQuestion({
+                userId: req.user.userId, assignmentId: req.params.id, questionId: q.id,
+                wrongAnswer: userAnswer, correctAnswer: q.answer, analysis: q.analysis,
+              });
             }
           } else {
             const idsToDelete = [q.id];
@@ -1254,9 +1343,24 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
           correct_answer: q.answer,
           is_correct: isCorrect,
           score: isCorrect ? (100 / questions.length) : 0,
+          duration_ms: durationOf(q.id),
           explanation: q.explanation,
           analysis: q.analysis
         });
+
+        // 错题本：首次提交时答错必须入库。
+        // 原实现漏了这一步，只有「带变体题的重做」路径会写错题本，
+        // 导致学生第一次作业做错的题永远不会出现在错题本里。
+        if (isCorrect) {
+          // 与重做路径保持一致：做对了就不再是错题
+          db.prepare('DELETE FROM wrong_questions WHERE user_id = ? AND question_id = ?')
+            .run(req.user.userId, q.id);
+        } else {
+          writeWrongQuestion({
+            userId: req.user.userId, assignmentId: req.params.id, questionId: q.id,
+            wrongAnswer: userAnswer, correctAnswer: q.answer, analysis: q.analysis || q.explanation || '',
+          });
+        }
 
         if (!isCorrect && q.variant_group_id) {
           const variants = db.prepare(`
@@ -1331,11 +1435,15 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
 
         const newSubId = result.lastInsertRowid;
         const insertQA = db.prepare(`
-          INSERT INTO question_answers (submission_id, question_bank_id, attempt_number, student_answer, is_correct, score, max_score, answered_at)
-          VALUES (?, ?, 1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          INSERT INTO question_answers (submission_id, question_bank_id, attempt_number, student_answer, is_correct, score, max_score, duration_ms, answered_at)
+          VALUES (?, ?, 1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         `);
         for (const r of results) {
-          insertQA.run(newSubId, r.question_id, r.user_answer, r.is_correct ? 1 : 0, r.score, 100 / totalQuestionCount);
+          insertQA.run(newSubId, r.question_id, r.user_answer, r.is_correct ? 1 : 0, r.score, 100 / totalQuestionCount, r.duration_ms ?? null);
+          upsertPersonalBank({
+            userId: req.user.userId, questionId: r.question_id, assignmentId: parseInt(req.params.id),
+            assignmentType: assignment.assignment_type, answer: r.user_answer, isCorrect: !!r.is_correct, source: 'online'
+          });
         }
 
         for (const wq of wrongQuestions) {
@@ -1347,10 +1455,10 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
             db.prepare('UPDATE wrong_questions SET wrong_count = wrong_count + 1, wrong_answer = ?, correct_answer = ?, reviewed = 0 WHERE id = ?')
               .run(r.user_answer || '', r.correct_answer, existingWQ.id);
           } else {
-            db.prepare(`
-              INSERT OR IGNORE INTO wrong_questions (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed, wrong_count)
-              VALUES (?, ?, ?, ?, ?, ?, 0, 1)
-            `).run(req.user.userId, req.params.id, wq.original_question_id, r.user_answer, r.correct_answer, r.analysis);
+            writeWrongQuestion({
+              userId: req.user.userId, assignmentId: req.params.id, questionId: wq.original_question_id,
+              wrongAnswer: r.user_answer, correctAnswer: r.correct_answer, analysis: r.analysis,
+            });
           }
         }
       } else {
@@ -1363,11 +1471,15 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
           .run(retryFinalStatus, totalScore, goldReward, submissionId);
 
         const insertQA = db.prepare(`
-          INSERT INTO question_answers (submission_id, question_bank_id, attempt_number, student_answer, is_correct, score, max_score, answered_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          INSERT INTO question_answers (submission_id, question_bank_id, attempt_number, student_answer, is_correct, score, max_score, duration_ms, answered_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         `);
         for (const r of results) {
-          insertQA.run(submissionId, r.question_id, (existingSubmission?.attempt_count || 0) + 1, r.user_answer, r.is_correct ? 1 : 0, r.score, 100 / totalQuestionCount);
+          insertQA.run(submissionId, r.question_id, (existingSubmission?.attempt_count || 0) + 1, r.user_answer, r.is_correct ? 1 : 0, r.score, 100 / totalQuestionCount, r.duration_ms ?? null);
+          upsertPersonalBank({
+            userId: req.user.userId, questionId: r.question_id, assignmentId: parseInt(req.params.id),
+            assignmentType: assignment.assignment_type, answer: r.user_answer, isCorrect: !!r.is_correct, source: 'online'
+          });
         }
 
         // 金币差额双向结算（原先只补发不收回，成绩下滑也能白拿金币）
@@ -1630,10 +1742,11 @@ async function reviewSubjectiveAssignment(submissionId, assignmentId, userId) {
     for (const qa of questionAnswers) {
       const qaRecord = db.prepare('SELECT is_correct, score FROM question_answers WHERE id = ?').get(qa.id);
       if (qaRecord && qaRecord.is_correct === 0) {
-        db.prepare(`
-          INSERT OR IGNORE INTO wrong_questions (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed)
-          VALUES (?, ?, ?, ?, ?, ?, 0)
-        `).run(userId, assignmentId, qa.question_bank_id, qa.student_answer, qa.reference_answer || '', qa.analysis || qa.explanation || '');
+        writeWrongQuestion({
+          userId, assignmentId, questionId: qa.question_bank_id,
+          wrongAnswer: qa.student_answer, correctAnswer: qa.reference_answer || '',
+          analysis: qa.analysis || qa.explanation || '',
+        });
       }
     }
 
@@ -1696,6 +1809,29 @@ router.get('/:id/statistics', authenticateToken, authorizeRole('teacher', 'admin
   try {
     const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
     if (!assignment) return res.status(404).json({ error: '作业不存在' });
+
+    // 归属校验：原先只校验作业存在，任何教师都能查到任意作业的全班成绩与逐题正确率
+    if (req.user.role !== 'admin') {
+      const isOwner = assignment.teacher_id === req.user.userId;
+      const isHeadTeacher = !!db.prepare(
+        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'`
+      ).get(req.user.userId, assignment.class_id);
+      const isMember = isHeadTeacher || !!db.prepare(
+        `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
+      ).get(req.user.userId, assignment.class_id);
+      if (!isMember) {
+        return res.status(403).json({ error: '无权查看该作业的统计（仅任课教师、班主任或管理员可查看）' });
+      }
+      // 同班任课老师但非本作业发布者：只允许看自己教过的科目
+      if (!isOwner && !isHeadTeacher) {
+        const teachesSubject = !!db.prepare(
+          `SELECT 1 FROM assignments WHERE teacher_id = ? AND class_id = ? AND subject = ? LIMIT 1`
+        ).get(req.user.userId, assignment.class_id, assignment.subject);
+        if (!teachesSubject) {
+          return res.status(403).json({ error: '无权查看该作业的统计（仅任课教师、班主任或管理员可查看）' });
+        }
+      }
+    }
 
     const totalStudents = db.prepare('SELECT COUNT(*) as cnt FROM users WHERE class_id = ? AND role = \'student\'').get(assignment.class_id)?.cnt || 0;
     // 按学生去重：重做会产生多条 submission，直接 COUNT 会让提交人数与完成率超过 100%
@@ -1793,6 +1929,136 @@ router.get('/:id/statistics', authenticateToken, authorizeRole('teacher', 'admin
   }
 });
 
+/**
+ * 把一位学生的纸质作答登记入库（线上提交与纸质登记同源）。
+ * 校验失败时抛出带 message 的 Error，由调用方决定 400 还是逐条收集。
+ */
+function registerPaperSubmission({ assignmentId, assignment, studentId, results, note }) {
+  const student = db.prepare('SELECT id, class_id, username, real_name FROM users WHERE id = ?').get(studentId);
+  if (!student || student.class_id !== assignment.class_id) {
+    throw new Error(`学生 ${student?.real_name || studentId} 不属于此作业的班级`);
+  }
+
+  const existing = db.prepare('SELECT id FROM submissions WHERE assignment_id = ? AND user_id = ?').get(assignmentId, studentId);
+  if (existing) {
+    throw new Error(`${student.real_name || student.username} 已有提交记录（线上或纸质），不能重复登记`);
+  }
+
+  const questions = db.prepare(`
+    SELECT qb.id, qb.type, qb.content, qb.answer, qb.analysis, qb.knowledge_point
+    FROM assignment_questions aq
+    JOIN question_bank qb ON aq.question_bank_id = qb.id
+    WHERE aq.assignment_id = ?
+    ORDER BY aq.sort_order
+  `).all(assignmentId);
+  const qMap = {};
+  for (const q of questions) qMap[q.id] = q;
+
+  const perQuestionMax = questions.length > 0 ? 100 / questions.length : 0;
+  const rows = [];
+  let totalScore = 0;
+  for (const r of results) {
+    const q = qMap[r.question_id];
+    if (!q) continue;
+    const isCorrect = r.is_correct ? 1 : 0;
+    // 客观题：对=满分错=0分；主观题：允许教师给 0-100 的部分分（折算到本题占比）
+    let score = 0;
+    if (isCorrect) {
+      score = perQuestionMax;
+    } else if (typeof r.score === 'number' && r.score > 0) {
+      score = Math.max(0, Math.min(1, r.score / 100)) * perQuestionMax;
+    }
+    totalScore += score;
+    rows.push({
+      question_id: q.id,
+      student_answer: String(r.student_answer || '纸质作答'),
+      is_correct: isCorrect,
+      score,
+    });
+  }
+
+  if (rows.length === 0) {
+    throw new Error(`${student.real_name || student.username} 没有有效的题目结果`);
+  }
+
+  const finalScore = Math.round(totalScore);
+  const goldReward = Math.floor((finalScore / 100) * (assignment.max_exp || 30));
+
+  const submitTx = db.transaction(() => {
+    const result = db.prepare(`
+      INSERT INTO submissions (assignment_id, user_id, answers, status, total_score, total_max_score, gold_reward, attempt_count, review_status)
+      VALUES (?, ?, ?, 'completed', ?, 100, ?, 1, 'graded')
+    `).run(
+      assignmentId,
+      studentId,
+      JSON.stringify({ source: 'paper', note: note || '', results }),
+      finalScore,
+      goldReward
+    );
+    const submissionId = result.lastInsertRowid;
+
+    if (goldReward > 0) {
+      grantReward(studentId, {
+        gold: goldReward,
+        source: 'paper_assignment',
+        reason: `纸质作业: ${assignment.title}`,
+      });
+    }
+
+    const insertQA = db.prepare(`
+      INSERT INTO question_answers (submission_id, question_bank_id, attempt_number, student_answer, is_correct, score, max_score, answered_at)
+      VALUES (?, ?, 1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `);
+    for (const row of rows) {
+      insertQA.run(submissionId, row.question_id, row.student_answer, row.is_correct, row.score, perQuestionMax);
+      // 个人题库：纸质作答同样沉淀，source 标记为 paper
+      upsertPersonalBank({
+        userId: studentId, questionId: row.question_id, assignmentId: parseInt(assignmentId),
+        assignmentType: assignment.assignment_type, answer: row.student_answer, isCorrect: !!row.is_correct, source: 'paper'
+      });
+      // 知识点掌握度：纸质登记与线上提交同源，否则住校生在「学习数据」里看不到任何薄弱知识点
+      const qKp = qMap[row.question_id]?.knowledge_point;
+      if (qKp) {
+        const today = getChinaDate();
+        const kpExisting = db.prepare(
+          'SELECT id FROM knowledge_point_stats WHERE user_id = ? AND knowledge_point = ? AND date = ?'
+        ).get(studentId, qKp, today);
+        if (kpExisting) {
+          // 已存在：本次作答累加（correct_attempts + is_correct 表示本次是否答对）
+          db.prepare(`UPDATE knowledge_point_stats
+            SET total_attempts = total_attempts + 1,
+                correct_attempts = correct_attempts + ?,
+                accuracy = ROUND(CAST(correct_attempts + ? AS REAL) / (total_attempts + 1) * 100, 2)
+            WHERE id = ?`)
+            .run(row.is_correct, row.is_correct, kpExisting.id);
+        } else {
+          // 首次：本次作答已计入初始值，不再累加
+          db.prepare(`INSERT INTO knowledge_point_stats
+            (user_id, knowledge_point, date, total_attempts, correct_attempts, accuracy)
+            VALUES (?, ?, ?, 1, ?, ?)`)
+            .run(studentId, qKp, today, row.is_correct, row.is_correct ? 100 : 0);
+        }
+      }
+      if (!row.is_correct) {
+        const q = qMap[row.question_id];
+        writeWrongQuestion({
+          userId: studentId, assignmentId, questionId: row.question_id,
+          wrongAnswer: row.student_answer, correctAnswer: q.answer, analysis: q.analysis,
+        });
+      }
+    }
+
+    db.prepare(`INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
+      VALUES (?, 'paper_graded', '纸质作业已登记', ?, 'assignment', ?)`)
+      .run(studentId, `作业「${assignment.title}」已由老师登记纸质作答，得分 ${finalScore} 分${goldReward > 0 ? `，获得 ${goldReward} 金币` : ''}。`, assignmentId);
+
+    return submissionId;
+  });
+
+  const submissionId = submitTx();
+  return { submission_id: submissionId, total_score: finalScore, gold_reward: goldReward, student_name: student.real_name || student.username };
+}
+
 // 教师代登记纸质作业（住校生等无设备场景），数据与线上提交同源
 router.post('/:id/paper-submit', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
   try {
@@ -1805,117 +2071,62 @@ router.post('/:id/paper-submit', authenticateToken, authorizeRole('teacher', 'ad
     if (!assignment) return res.status(404).json({ error: '作业不存在' });
     if (assignment.status === 'cancelled') return res.status(400).json({ error: '该作业已被取消' });
 
-    const student = db.prepare('SELECT id, class_id, username, real_name FROM users WHERE id = ?').get(student_id);
-    if (!student || student.class_id !== assignment.class_id) {
-      return res.status(400).json({ error: '该学生不属于此作业的班级' });
-    }
-
-    const existing = db.prepare('SELECT id FROM submissions WHERE assignment_id = ? AND user_id = ?').get(req.params.id, student_id);
-    if (existing) {
-      return res.status(400).json({ error: '该学生已有提交记录（线上或纸质），不能重复登记' });
-    }
-
-    const questions = db.prepare(`
-      SELECT qb.id, qb.type, qb.content, qb.answer, qb.analysis, qb.knowledge_point
-      FROM assignment_questions aq
-      JOIN question_bank qb ON aq.question_bank_id = qb.id
-      WHERE aq.assignment_id = ?
-      ORDER BY aq.sort_order
-    `).all(req.params.id);
-    const qMap = {};
-    for (const q of questions) qMap[q.id] = q;
-
-    const perQuestionMax = 100 / questions.length;
-    const rows = [];
-    let totalScore = 0;
-    for (const r of results) {
-      const q = qMap[r.question_id];
-      if (!q) continue;
-      const isCorrect = r.is_correct ? 1 : 0;
-      // 客观题：对=满分错=0分；主观题：允许教师给 0-100 的部分分（折算到本题占比）
-      let score = 0;
-      if (isCorrect) {
-        score = perQuestionMax;
-      } else if (typeof r.score === 'number' && r.score > 0) {
-        score = Math.max(0, Math.min(1, r.score / 100)) * perQuestionMax;
-      }
-      totalScore += score;
-      rows.push({
-        question_id: q.id,
-        student_answer: String(r.student_answer || '纸质作答'),
-        is_correct: isCorrect,
-        score,
-      });
-    }
-
-    if (rows.length === 0) {
-      return res.status(400).json({ error: '没有有效的题目结果' });
-    }
-
-    const finalScore = Math.round(totalScore);
-    const goldReward = Math.floor((finalScore / 100) * (assignment.max_exp || 30));
-
-    const submitTx = db.transaction(() => {
-      const result = db.prepare(`
-        INSERT INTO submissions (assignment_id, user_id, answers, status, total_score, total_max_score, gold_reward, attempt_count, review_status)
-        VALUES (?, ?, ?, 'completed', ?, 100, ?, 1, 'graded')
-      `).run(
-        req.params.id,
-        student_id,
-        JSON.stringify({ source: 'paper', note: note || '', results }),
-        finalScore,
-        goldReward
-      );
-      const submissionId = result.lastInsertRowid;
-
-      if (goldReward > 0) {
-        grantReward(student_id, {
-          gold: goldReward,
-          source: 'paper_assignment',
-          reason: `纸质作业: ${assignment.title}`,
-        });
-      }
-
-      const insertQA = db.prepare(`
-        INSERT INTO question_answers (submission_id, question_bank_id, attempt_number, student_answer, is_correct, score, max_score, answered_at)
-        VALUES (?, ?, 1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `);
-      for (const row of rows) {
-        insertQA.run(submissionId, row.question_id, row.student_answer, row.is_correct, row.score, perQuestionMax);
-        if (!row.is_correct) {
-          const q = qMap[row.question_id];
-          const existingWQ = db.prepare('SELECT id, wrong_count FROM wrong_questions WHERE user_id = ? AND question_id = ?')
-            .get(student_id, row.question_id);
-          if (existingWQ) {
-            db.prepare('UPDATE wrong_questions SET wrong_count = wrong_count + 1, wrong_answer = ?, correct_answer = ?, reviewed = 0 WHERE id = ?')
-              .run(row.student_answer, q.answer, existingWQ.id);
-          } else {
-            db.prepare(`
-              INSERT OR IGNORE INTO wrong_questions (user_id, assignment_id, question_id, wrong_answer, correct_answer, analysis, reviewed, wrong_count)
-              VALUES (?, ?, ?, ?, ?, ?, 0, 1)
-            `).run(student_id, req.params.id, row.question_id, row.student_answer, q.answer, q.analysis);
-          }
-        }
-      }
-
-      db.prepare(`INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
-        VALUES (?, 'paper_graded', '纸质作业已登记', ?, 'assignment', ?)`)
-        .run(student_id, `作业「${assignment.title}」已由老师登记纸质作答，得分 ${finalScore} 分${goldReward > 0 ? `，获得 ${goldReward} 金币` : ''}。`, req.params.id);
-
-      return submissionId;
+    const out = registerPaperSubmission({
+      assignmentId: req.params.id, assignment, studentId: student_id, results, note
     });
 
-    const submissionId = submitTx();
-
-    res.json({
-      message: '纸质作答登记成功',
-      submission_id: submissionId,
-      total_score: finalScore,
-      gold_reward: goldReward
-    });
+    res.json({ message: '纸质作答登记成功', ...out });
   } catch (error) {
     console.error('纸质作业登记失败:', error);
-    res.status(500).json({ error: '纸质作业登记失败: ' + (error.message || '未知错误') });
+    const isBusiness = /不属于此作业|已有提交记录|没有有效的题目结果/.test(error.message || '');
+    res.status(isBusiness ? 400 : 500).json({ error: error.message || '纸质作业登记失败' });
+  }
+});
+
+// 批量登记：一次提交多位学生的纸质结果，逐人独立事务，单条失败不影响其他人
+router.post('/:id/paper-submit-batch', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  try {
+    const { submissions, note } = req.body;
+    if (!Array.isArray(submissions) || submissions.length === 0) {
+      return res.status(400).json({ error: '没有需要登记的学生' });
+    }
+    if (submissions.length > 60) {
+      return res.status(400).json({ error: '一次最多登记 60 名学生' });
+    }
+
+    const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
+    if (!assignment) return res.status(404).json({ error: '作业不存在' });
+    if (assignment.status === 'cancelled') return res.status(400).json({ error: '该作业已被取消' });
+
+    const succeeded = [];
+    const failed = [];
+    for (const item of submissions) {
+      if (!item?.student_id || !Array.isArray(item.results) || item.results.length === 0) {
+        failed.push({ student_id: item?.student_id, reason: '缺少答题结果' });
+        continue;
+      }
+      try {
+        const out = registerPaperSubmission({
+          assignmentId: req.params.id, assignment, studentId: item.student_id,
+          results: item.results, note: item.note || note
+        });
+        succeeded.push({ student_id: item.student_id, ...out });
+      } catch (e) {
+        failed.push({ student_id: item.student_id, reason: e.message || '登记失败' });
+      }
+    }
+
+    res.json({
+      message: `登记完成：成功 ${succeeded.length} 人${failed.length > 0 ? `，失败 ${failed.length} 人` : ''}`,
+      succeeded,
+      failed,
+      total_score_avg: succeeded.length
+        ? Math.round(succeeded.reduce((s, x) => s + x.total_score, 0) / succeeded.length)
+        : 0,
+    });
+  } catch (error) {
+    console.error('批量纸质登记失败:', error);
+    res.status(500).json({ error: '批量登记失败: ' + (error.message || '未知错误') });
   }
 });
 
@@ -2034,6 +2245,175 @@ router.post('/:id/ai-paper-judge', authenticateToken, authorizeRole('teacher', '
   }
 });
 
+// 姓名匹配：AI 识别出的卷面姓名 → 班级学生。匹配不上返回 null，交由老师手动指派
+function matchStudentByName(rawName, students) {
+  const name = String(rawName || '').trim();
+  if (!name || name === '(未识别)') return null;
+  const norm = (s) => String(s || '').replace(/\s+/g, '').trim();
+  const target = norm(name);
+
+  // 1) 真实姓名精确匹配
+  let hit = students.find(s => norm(s.real_name) === target);
+  if (hit) return hit;
+  // 2) 用户名精确匹配
+  hit = students.find(s => norm(s.username) === target);
+  if (hit) return hit;
+  // 3) 姓名包含（应对 AI 识别出「张三」还是「三年二班 张三」这类前缀噪声）
+  const containsHits = students.filter(s => {
+    const rn = norm(s.real_name);
+    return rn && (target.includes(rn) || rn.includes(target));
+  });
+  // 仅在唯一命中时才采纳，避免「小明」同时命中「小明」「王小明」
+  if (containsHits.length === 1) return containsHits[0];
+  return null;
+}
+
+// 批量纸质作业识别：一次上传多张照片，AI 识别每份卷面姓名并逐题判分，返回按学生分组的结果
+router.post('/:id/ai-paper-judge-batch', authenticateToken, authorizeRole('teacher', 'admin'), async (req, res) => {
+  try {
+    const { images } = req.body;
+    if (!Array.isArray(images) || images.length === 0) {
+      return res.status(400).json({ error: '请先上传作业照片' });
+    }
+    if (images.length > 12) {
+      return res.status(400).json({ error: '一次最多识别 12 张照片' });
+    }
+
+    const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
+    if (!assignment) return res.status(404).json({ error: '作业不存在' });
+
+    const questions = db.prepare(`
+      SELECT qb.id, qb.type, qb.content, qb.answer
+      FROM assignment_questions aq
+      JOIN question_bank qb ON aq.question_bank_id = qb.id
+      WHERE aq.assignment_id = ?
+      ORDER BY aq.sort_order
+    `).all(req.params.id);
+    if (questions.length === 0) {
+      return res.status(400).json({ error: '该作业没有题目' });
+    }
+
+    const config = getAIConfig();
+    if (!config.ai_api_key || !config.ai_base_url || !config.ai_model) {
+      return res.status(500).json({ error: 'AI 配置未完成，请联系管理员' });
+    }
+    const visionModel = (config.ai_vision_model && String(config.ai_vision_model).trim()) || config.ai_model;
+
+    // 班级名单交给模型做姓名校正
+    const students = db.prepare(
+      `SELECT id, username, real_name FROM users WHERE class_id = ? AND role = 'student' AND status = 'active'`
+    ).all(assignment.class_id);
+
+    const tLabel = (t) => ({ choice_single: '单选题', choice_multi: '多选题', judgment: '判断题', fill_blank: '填空题', essay: '简答/主观题' }[t] || t);
+    const questionList = questions.map((q, i) =>
+      `ID:${q.id} 第${i + 1}题[${tLabel(q.type)}] 题目：${String(q.content).slice(0, 80)} 参考答案：${q.answer}`
+    ).join('\n');
+    const nameList = students.map(s => s.real_name || s.username).join('、') || '（未获取到名单）';
+
+    const prompt = fillTemplate(getPrompt('judge_paper_batch'), {
+      subject: assignment.subject || '',
+      question_list: questionList,
+      count: questions.length,
+      image_count: images.length,
+      name_list: nameList
+    });
+
+    const content = [
+      { type: 'text', text: prompt },
+      ...images.map((img) => ({ type: 'image_url', image_url: { url: img } }))
+    ];
+
+    const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
+    const startTime = Date.now();
+    const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
+      model: visionModel,
+      messages: [{ role: 'user', content }],
+      max_tokens: getSystemSetting('max_tokens_per_generation', 18000)
+    }, {
+      headers: {
+        'Authorization': `Bearer ${config.ai_api_key}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: timeoutMs
+    });
+
+    try {
+      const usage = response.data?.usage || {};
+      const hasTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'`).get();
+      if (hasTable) {
+        db.prepare(`
+          INSERT INTO token_usage (user_id, date, prompt_tokens, completion_tokens, total_tokens, model, subject, topic, question_type, question_count, duration_ms)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(req.user.userId, getChinaDate(), usage.prompt_tokens || 0, usage.completion_tokens || 0, usage.total_tokens || 0, visionModel, assignment.subject || '纸质识别', '批量纸质作业AI识别', assignment.question_type, questions.length * images.length, Date.now() - startTime);
+      }
+    } catch (e) {
+      // 统计失败不影响识别
+    }
+
+    const aiContent = response.data.choices[0].message.content;
+    let parsed;
+    try {
+      parsed = JSON.parse(aiContent);
+    } catch (e) {
+      const m = aiContent.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
+      if (!m) return res.status(500).json({ error: 'AI返回格式错误，请重试' });
+      parsed = JSON.parse(m[0]);
+    }
+
+    const qIds = new Set(questions.map(q => q.id));
+    const rawPapers = Array.isArray(parsed.papers) ? parsed.papers : [];
+
+    const papers = rawPapers.map((p, idx) => {
+      const matched = matchStudentByName(p.student_name, students);
+      const results = (Array.isArray(p.results) ? p.results : [])
+        .map((r) => ({
+          question_id: parseInt(r.question_id),
+          recognized_answer: r.recognized_answer ? String(r.recognized_answer) : '',
+          is_correct: r.is_correct === true || r.is_correct === 'true',
+          score: Math.max(0, Math.min(100, parseInt(r.score) || 0)),
+          comment: r.comment ? String(r.comment) : ''
+        }))
+        .filter((r) => qIds.has(r.question_id));
+
+      const imgIdx = Array.isArray(p.image_indexes)
+        ? p.image_indexes.map(i => parseInt(i)).filter(i => Number.isInteger(i) && i >= 0 && i < images.length)
+        : [];
+
+      return {
+        key: `paper_${idx}_${Date.now()}`,
+        student_id: matched ? matched.id : null,
+        student_name: matched ? (matched.real_name || matched.username) : String(p.student_name || ''),
+        raw_name: String(p.student_name || ''),
+        matched: !!matched,
+        image_indexes: imgIdx,
+        results,
+      };
+    }).filter(p => p.results.length > 0);
+
+    if (papers.length === 0) {
+      return res.status(500).json({ error: 'AI未能识别出有效结果，请重新拍照（光线充足、字迹清晰、姓名写在卷首）后再试' });
+    }
+
+    res.json({
+      papers,
+      model: visionModel,
+      // 已登记过的学生，前端据此提示「该生已有记录」
+      registered_ids: db.prepare('SELECT user_id FROM submissions WHERE assignment_id = ?').all(req.params.id).map(r => r.user_id),
+      students: students.map(s => ({ id: s.id, name: s.real_name || s.username })),
+    });
+  } catch (error) {
+    console.error('批量纸质作业AI识别失败:', error.message);
+    if (error.code === 'ECONNABORTED') {
+      return res.status(500).json({ error: 'AI识别超时，请减少照片数量后重试' });
+    }
+    if (error.response) {
+      console.error('视觉模型响应:', error.response.status, JSON.stringify(error.response.data).slice(0, 300));
+      return res.status(500).json({ error: '视觉模型调用失败，请确认已配置支持图片的模型（AI设置→视觉模型）' });
+    }
+    res.status(500).json({ error: '批量识别失败: ' + (error.message || '未知错误') });
+  }
+});
+
 router.get('/wrong/my', authenticateToken, (req, res) => {
   try {
     const { subject } = req.query;
@@ -2091,6 +2471,348 @@ router.post('/wrong/:id/review', authenticateToken, (req, res) => {
     res.json({ message: '标记复习成功' });
   } catch (error) {
     res.status(500).json({ error: '操作失败' });
+  }
+});
+
+/**
+ * 错题重做：真正做一遍，而不是「标记已复习」
+ *
+ * 设计取舍：
+ *  - question_answers.submission_id 是 NOT NULL 且外键指向 submissions，
+ *    而 submissions 又必须挂作业，所以错题重做无法复用作业提交链路。
+ *    因此写入独立的 wrong_question_attempts 表，保留完整重做历史
+ *    （原先答对即从错题本删除，历史彻底丢失）。
+ *  - 客观题自动判分；主观题由学生自评（mode=self_check）。
+ *  - 连续 2 次做对自动移出错题本。
+ */
+router.post('/wrong/retry', authenticateToken, (req, res) => {
+  try {
+    const { items } = req.body || {};
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: '没有需要重做的题目' });
+    }
+    if (items.length > 50) {
+      return res.status(400).json({ error: '一次最多重做 50 道题' });
+    }
+
+    const hasAttempts = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='wrong_question_attempts'`).get();
+    if (!hasAttempts) {
+      return res.status(503).json({ error: '错题重做功能未初始化，请联系管理员执行数据库迁移' });
+    }
+
+    const results = [];
+    const applyTx = db.transaction(() => {
+      for (const it of items) {
+        const wq = db.prepare('SELECT id, question_id FROM wrong_questions WHERE id = ? AND user_id = ?')
+          .get(it.wrong_id, req.user.userId);
+        if (!wq) {
+          results.push({ wrong_id: it.wrong_id, ok: false, reason: '错题记录不存在' });
+          continue;
+        }
+        const q = db.prepare('SELECT id, type, answer, analysis, explanation, knowledge_point FROM question_bank WHERE id = ?')
+          .get(wq.question_id);
+        if (!q) {
+          results.push({ wrong_id: it.wrong_id, ok: false, reason: '题目已被删除' });
+          continue;
+        }
+
+        const subjective = q.type === 'essay' || q.type === 'composition';
+        // 主观题采用自评；客观题自动判分
+        const isCorrect = subjective ? !!it.self_marked_correct : isAnswerCorrect(q.type, it.answer, q.answer);
+        const rawDur = parseInt(it.duration_ms);
+        const durationMs = Number.isFinite(rawDur) && rawDur >= 500 && rawDur <= 1800000 ? rawDur : null;
+
+        db.prepare(`
+          INSERT INTO wrong_question_attempts
+            (user_id, wrong_question_id, question_id, answer, is_correct, duration_ms, mode)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(req.user.userId, wq.id, wq.question_id, String(it.answer || ''),
+          isCorrect ? 1 : 0, durationMs, subjective ? 'self_check' : 'redo');
+
+        // 知识点掌握度同步更新，保证重做也能反映在「学习数据」里
+        if (q.knowledge_point) {
+          const today = getChinaDate();
+          const ex = db.prepare(
+            'SELECT id FROM knowledge_point_stats WHERE user_id = ? AND knowledge_point = ? AND date = ?'
+          ).get(req.user.userId, q.knowledge_point, today);
+          if (ex) {
+            db.prepare(`UPDATE knowledge_point_stats
+              SET total_attempts = total_attempts + 1, correct_attempts = correct_attempts + ?,
+                  accuracy = ROUND(CAST(correct_attempts + ? AS REAL) / (total_attempts + 1) * 100, 2)
+              WHERE id = ?`).run(isCorrect ? 1 : 0, isCorrect ? 1 : 0, ex.id);
+          } else {
+            db.prepare(`INSERT INTO knowledge_point_stats
+              (user_id, knowledge_point, date, total_attempts, correct_attempts, accuracy)
+              VALUES (?, ?, ?, 1, ?, ?)`)
+              .run(req.user.userId, q.knowledge_point, today, isCorrect ? 1 : 0, isCorrect ? 100 : 0);
+          }
+        }
+
+        // 个人题库同步
+        upsertPersonalBank({
+          userId: req.user.userId, questionId: wq.question_id, assignmentId: null,
+          assignmentType: null, answer: it.answer, isCorrect, source: 'wrong_retry',
+        });
+
+        // 连续做对 2 次 → 移出错题本
+        const streak = db.prepare(`
+          SELECT COUNT(*) AS c FROM wrong_question_attempts
+          WHERE user_id = ? AND question_id = ? AND is_correct = 1
+        `).get(req.user.userId, wq.question_id).c;
+
+        let mastered = false;
+        if (isCorrect && streak >= 2) {
+          db.prepare('DELETE FROM wrong_questions WHERE id = ? AND user_id = ?').run(wq.id, req.user.userId);
+          mastered = true;
+          try { updateTaskProgress(req.user.userId, 'review_weak_point', 1); } catch (e) { /* ignore */ }
+        } else if (isCorrect) {
+          db.prepare('UPDATE wrong_questions SET reviewed = 1, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?').run(wq.id);
+        } else {
+          db.prepare('UPDATE wrong_questions SET wrong_count = wrong_count + 1, wrong_answer = ?, reviewed = 0 WHERE id = ?')
+            .run(String(it.answer || ''), wq.id);
+        }
+
+        results.push({
+          wrong_id: wq.id,
+          question_id: wq.question_id,
+          ok: true,
+          is_correct: !!isCorrect,
+          subjective,
+          correct_answer: q.answer,
+          analysis: q.analysis || q.explanation || '',
+          streak,
+          mastered,
+          message: mastered
+            ? '连续答对 2 次，已从错题本移除'
+            : isCorrect ? '答对了，再练 1 次即可移出错题本' : '仍然答错，已记录',
+        });
+      }
+    });
+    applyTx();
+
+    const okCount = results.filter(r => r.ok && r.is_correct).length;
+    res.json({
+      results,
+      summary: { total: results.length, correct: okCount, mastered: results.filter(r => r.mastered).length },
+    });
+  } catch (error) {
+    console.error('错题重做失败:', error);
+    res.status(500).json({ error: '错题重做失败: ' + (error.message || '未知错误') });
+  }
+});
+
+/** 错题掌握情况：每题重做次数与最近一次结果 */
+router.get('/wrong/mastery', authenticateToken, (req, res) => {
+  try {
+    const hasAttempts = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='wrong_question_attempts'`).get();
+    if (!hasAttempts) return res.json({ items: [] });
+
+    const rows = db.prepare(`
+      SELECT wq.id AS wrong_id, wq.question_id, qb.subject, qb.knowledge_point, qb.content,
+             wq.wrong_count, wq.reviewed,
+             (SELECT COUNT(*) FROM wrong_question_attempts a
+               WHERE a.user_id = wq.user_id AND a.question_id = wq.question_id AND a.is_correct = 1) AS correct_streak,
+             (SELECT COUNT(*) FROM wrong_question_attempts a
+               WHERE a.user_id = wq.user_id AND a.question_id = wq.question_id) AS retry_total,
+             (SELECT a2.is_correct FROM wrong_question_attempts a2
+               WHERE a2.user_id = wq.user_id AND a2.question_id = wq.question_id
+               ORDER BY a2.id DESC LIMIT 1) AS last_result
+      FROM wrong_questions wq
+      JOIN question_bank qb ON qb.id = wq.question_id
+      WHERE wq.user_id = ?
+      ORDER BY (wq.reviewed = 0) DESC, correct_streak ASC, wq.id DESC
+    `).all(req.user.userId);
+
+    res.json({
+      items: rows.map(r => ({
+        ...r,
+        last_result: r.last_result == null ? null : !!r.last_result,
+        remaining: Math.max(0, 2 - r.correct_streak),  // 还差几次能移出错题本
+      })),
+    });
+  } catch (error) {
+    console.error('获取错题掌握情况失败:', error);
+    res.status(500).json({ error: '获取错题掌握情况失败' });
+  }
+});
+
+// ===== 学生个人题库：保存做过的全部题目（区别于只存错题的错题本）=====
+
+router.get('/personal-bank/my', authenticateToken, (req, res) => {
+  try {
+    if (!personalBankAvailable()) return res.json({ questions: [], total: 0, available: false });
+
+    const { subject, assignment_type, only_wrong, keyword } = req.query;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.page_size) || 20));
+
+    let where = `WHERE p.user_id = ?`;
+    const params = [req.user.userId];
+
+    if (subject) { where += ` AND p.subject = ?`; params.push(subject); }
+    if (assignment_type && ['preview', 'homework', 'review'].includes(assignment_type)) {
+      where += ` AND p.assignment_type = ?`; params.push(assignment_type);
+    }
+    if (only_wrong === '1' || only_wrong === 'true') { where += ` AND p.is_correct = 0`; }
+    if (keyword) {
+      where += ` AND (qb.content LIKE ? OR qb.knowledge_point LIKE ?)`;
+      params.push(`%${keyword}%`, `%${keyword}%`);
+    }
+
+    const total = db.prepare(`SELECT COUNT(*) as c FROM personal_question_bank p JOIN question_bank qb ON p.question_id = qb.id ${where}`)
+      .get(...params)?.c || 0;
+
+    const rows = db.prepare(`
+      SELECT p.id, p.question_id, p.assignment_id, p.assignment_type, p.subject, p.knowledge_point,
+        p.first_answer, p.last_answer, p.is_correct, p.attempt_count, p.correct_count, p.source,
+        p.created_at, p.updated_at,
+        qb.content as question_content, qb.options, qb.answer as correct_answer, qb.type as question_type,
+        qb.explanation, qb.analysis, qb.difficulty, qb.hint,
+        a.title as assignment_title
+      FROM personal_question_bank p
+      JOIN question_bank qb ON p.question_id = qb.id
+      LEFT JOIN assignments a ON p.assignment_id = a.id
+      ${where}
+      ORDER BY p.updated_at DESC, p.id DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, pageSize, (page - 1) * pageSize);
+
+    for (const r of rows) {
+      if (r.options) { try { r.options = JSON.parse(r.options); } catch (e) {} }
+    }
+
+    res.json({ questions: rows, total, page, page_size: pageSize, available: true });
+  } catch (error) {
+    console.error('获取个人题库失败:', error);
+    res.status(500).json({ error: '获取个人题库失败' });
+  }
+});
+
+router.get('/personal-bank/stats', authenticateToken, (req, res) => {
+  try {
+    if (!personalBankAvailable()) {
+      return res.json({ available: false, total: 0, correct: 0, wrong: 0, accuracy: 0, by_subject: [], by_type: [] });
+    }
+    const uid = req.user.userId;
+
+    const base = db.prepare(`
+      SELECT COUNT(*) as total,
+        SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) as correct,
+        SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) as wrong,
+        SUM(attempt_count) as attempts
+      FROM personal_question_bank WHERE user_id = ?
+    `).get(uid);
+
+    const total = base?.total || 0;
+    const correct = base?.correct || 0;
+    const wrong = base?.wrong || 0;
+
+    const bySubject = db.prepare(`
+      SELECT COALESCE(p.subject, '未分类') as subject, COUNT(*) as total,
+        SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END) as correct
+      FROM personal_question_bank p WHERE p.user_id = ?
+      GROUP BY COALESCE(p.subject, '未分类') ORDER BY total DESC
+    `).all(uid).map(r => ({ ...r, accuracy: r.total > 0 ? Math.round(r.correct / r.total * 100) : 0 }));
+
+    const typeLabel = { preview: '预习', homework: '作业', review: '复习' };
+    const byType = db.prepare(`
+      SELECT COALESCE(p.assignment_type, 'homework') as assignment_type, COUNT(*) as total,
+        SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END) as correct
+      FROM personal_question_bank p WHERE p.user_id = ?
+      GROUP BY COALESCE(p.assignment_type, 'homework')
+    `).all(uid).map(r => ({
+      assignment_type: r.assignment_type,
+      label: typeLabel[r.assignment_type] || r.assignment_type,
+      total: r.total,
+      correct: r.correct || 0,
+      accuracy: r.total > 0 ? Math.round((r.correct || 0) / r.total * 100) : 0
+    }));
+
+    res.json({
+      available: true,
+      total, correct, wrong,
+      attempts: base?.attempts || 0,
+      accuracy: total > 0 ? Math.round(correct / total * 100) : 0,
+      by_subject: bySubject,
+      by_type: byType,
+    });
+  } catch (error) {
+    console.error('获取个人题库统计失败:', error);
+    res.status(500).json({ error: '获取个人题库统计失败' });
+  }
+});
+
+router.delete('/personal-bank/:id', authenticateToken, (req, res) => {
+  try {
+    const result = db.prepare('DELETE FROM personal_question_bank WHERE id = ? AND user_id = ?')
+      .run(req.params.id, req.user.userId);
+    if (result.changes === 0) return res.status(404).json({ error: '记录不存在' });
+    res.json({ message: '已从个人题库移除' });
+  } catch (error) {
+    res.status(500).json({ error: '操作失败' });
+  }
+});
+
+// ===== 学情分组统计：按预习/作业/复习维度汇总班级完成情况 =====
+
+router.get('/stats/type-summary', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  try {
+    const { class_id, subject, date_from, date_to } = req.query;
+
+    let classFilter = '';
+    const params = [];
+    if (class_id) {
+      classFilter = ` AND a.class_id = ?`;
+      params.push(class_id);
+    } else if (req.user.role === 'teacher') {
+      const owned = db.prepare('SELECT class_id FROM class_teachers WHERE teacher_id = ?').all(req.user.userId).map(r => r.class_id);
+      if (owned.length === 0) return res.json({ summary: [] });
+      classFilter = ` AND a.class_id IN (${owned.map(() => '?').join(',')})`;
+      params.push(...owned);
+    }
+    if (subject) { classFilter += ` AND a.subject = ?`; params.push(subject); }
+    if (date_from) { classFilter += ` AND a.created_at >= ?`; params.push(date_from); }
+    if (date_to) { classFilter += ` AND a.created_at <= ?`; params.push(date_to + ' 23:59:59'); }
+
+    const rows = db.prepare(`
+      SELECT a.id, a.assignment_type, a.subject, a.class_id, a.max_exp,
+        (SELECT COUNT(*) FROM users u WHERE u.class_id = a.class_id AND u.role = 'student' AND u.status = 'active') as total_students,
+        (SELECT COUNT(DISTINCT user_id) FROM submissions s WHERE s.assignment_id = a.id) as submitted_count,
+        (SELECT AVG(total_score) FROM (
+            SELECT user_id, MAX(total_score) as total_score FROM submissions
+            WHERE assignment_id = a.id GROUP BY user_id
+         )) as avg_score
+      FROM assignments a
+      WHERE a.status != 'cancelled' ${classFilter}
+    `).all(...params);
+
+    const labelOf = { preview: '预习', homework: '作业', review: '复习' };
+    const acc = {};
+    for (const key of ['preview', 'homework', 'review']) {
+      acc[key] = { assignment_type: key, label: labelOf[key], assignment_count: 0, total_students: 0, submitted_count: 0, score_sum: 0, score_count: 0 };
+    }
+    for (const r of rows) {
+      const key = acc[r.assignment_type] ? r.assignment_type : 'homework';
+      const g = acc[key];
+      g.assignment_count += 1;
+      g.total_students += r.total_students || 0;
+      g.submitted_count += r.submitted_count || 0;
+      if (r.avg_score != null) { g.score_sum += r.avg_score; g.score_count += 1; }
+    }
+
+    const summary = Object.values(acc).map(g => ({
+      assignment_type: g.assignment_type,
+      label: g.label,
+      assignment_count: g.assignment_count,
+      submitted_count: g.submitted_count,
+      completion_rate: g.total_students > 0 ? Math.round(g.submitted_count / g.total_students * 100) : 0,
+      average_score: g.score_count > 0 ? Math.round(g.score_sum / g.score_count) : 0,
+    }));
+
+    res.json({ summary });
+  } catch (error) {
+    console.error('学情分组统计失败:', error);
+    res.status(500).json({ error: '获取学情分组统计失败' });
   }
 });
 

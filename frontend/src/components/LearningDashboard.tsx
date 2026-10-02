@@ -838,6 +838,74 @@ const LearningDashboard: React.FC = () => {
                 <div style={{ marginTop: 12, padding: 10, background: '#f0f5ff', borderRadius: 4, fontSize: 13, color: '#1d39c4' }}>
                   💡 你最活跃的时段是 <strong>{learningTime.summary.peak_weekday || '-'} 的 {learningTime.summary.peak_hour || '-'}</strong>，建议把每天的重点学习安排在这个时段，学习效率更高。
                 </div>
+
+                {/* 预习 / 作业 / 复习 三类维度 */}
+                {(learningTime.by_type || []).length > 0 && (
+                  <div style={{ marginTop: 16 }}>
+                    <div style={{ fontWeight: 500, marginBottom: 8, color: '#666' }}>📚 预习 / 作业 / 复习 表现</div>
+                    <Row gutter={[12, 12]}>
+                      {learningTime.by_type.map((t: any) => (
+                        <Col xs={12} sm={8} key={t.assignment_type}>
+                          <Card size="small" style={{ borderRadius: 8 }}>
+                            <div style={{ marginBottom: 6 }}>
+                              <Tag color={t.assignment_type === 'preview' ? 'purple' : t.assignment_type === 'review' ? 'orange' : 'blue'}>
+                                {t.label}
+                              </Tag>
+                              <span style={{ color: '#999', fontSize: 12 }}>{t.assignment_count} 份 · {t.answers} 题</span>
+                            </div>
+                            <Statistic
+                              title="正确率"
+                              value={t.accuracy}
+                              suffix="%"
+                              valueStyle={{ fontSize: 20, color: t.accuracy >= 80 ? '#52c41a' : t.accuracy >= 60 ? '#1890ff' : '#ff4d4f' }}
+                            />
+                          </Card>
+                        </Col>
+                      ))}
+                    </Row>
+                  </div>
+                )}
+
+                {/* 作答耗时（需先做带耗时统计的题目） */}
+                {learningTime.duration?.available && (
+                  <div style={{ marginTop: 16 }}>
+                    <div style={{ fontWeight: 500, marginBottom: 8, color: '#666' }}>⏱️ 作答节奏</div>
+                    <Row gutter={[12, 12]}>
+                      <Col xs={12} sm={8}>
+                        <Statistic title="平均每题用时" value={learningTime.duration.avg_seconds} suffix="秒" valueStyle={{ fontSize: 20 }} />
+                      </Col>
+                      <Col xs={12} sm={8}>
+                        <Statistic title="累计作答" value={learningTime.duration.total_minutes} suffix="分钟" valueStyle={{ fontSize: 20 }} />
+                      </Col>
+                      <Col xs={12} sm={8}>
+                        <Statistic
+                          title="有耗时记录的题"
+                          value={learningTime.duration.measured_questions}
+                          suffix="题"
+                          valueStyle={{ fontSize: 20 }}
+                        />
+                      </Col>
+                    </Row>
+                    {learningTime.duration.pace_bias === 'too_fast' && (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        style={{ marginTop: 10 }}
+                        message="平均每题用时偏短"
+                        description="做题速度明显快于正常思考时间，可能是凭印象蒙答案。建议先读清题干再作答。"
+                      />
+                    )}
+                    {learningTime.duration.pace_bias === 'too_slow' && (
+                      <Alert
+                        type="info"
+                        showIcon
+                        style={{ marginTop: 10 }}
+                        message="平均每题用时偏长"
+                        description="可能是卡在不会的题上。试试先跳过难题，把会做的先做完，回头再来攻。"
+                      />
+                    )}
+                  </div>
+                )}
               </>
             ) : (
               <Empty description="暂无答题时间数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
