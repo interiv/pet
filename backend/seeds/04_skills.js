@@ -1,3 +1,4 @@
+// 说明：本文件已改为「只补空表」模式（技能）。
 const skills = [
   { name: '普通攻击', description: '普通的物理攻击', icon: '⚔️', skill_type: 'physical', subject: null, base_damage: 50, base_defense: 0, base_speed: 0, cooldown: 0, required_level: 1, required_knowledge_point: null, required_accuracy: 0 },
   { name: '火焰冲击', description: '强力的火焰魔法', icon: '🔥', skill_type: 'magical', subject: '数学', base_damage: 80, base_defense: 0, base_speed: 0, cooldown: 2, required_level: 5, required_knowledge_point: '分数运算', required_accuracy: 0.6 },
@@ -13,6 +14,12 @@ const skills = [
 module.exports.skills = skills;
 
 exports.seed = async function (knex) {
-  await knex('skills').del();
+  // 只补空表：表里已有数据说明这个站已经在用基础数据了，
+  // 再删会触发外键约束（且会毁掉管理员在后台自定义的内容），因此直接跳过
+  const existing = await knex('skills').count({ c: '*' }).first();
+  if (Number(existing && existing.c) > 0) {
+    console.log('  · 技能（skills）已有 ' + existing.c + ' 条，跳过');
+    return;
+  }
   await knex('skills').insert(skills);
 };

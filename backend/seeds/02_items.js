@@ -1,3 +1,4 @@
+// 说明：本文件已改为「只补空表」模式（道具）。
 const items = [
   { name: '普通粮食', type: 'food', effect_type: 'hunger', effect_value: 20, price: 10, description: '普通的宠物粮食，恢复20饱腹度', rarity: 'common', image_url: '/images/items/普通粮食.png' },
   { name: '高级零食', type: 'food', effect_type: 'hunger', effect_value: 50, price: 50, description: '美味的零食，恢复50饱腹度', rarity: 'rare', image_url: '/images/items/高级零食.png' },
@@ -36,6 +37,12 @@ const items = [
 module.exports.items = items;
 
 exports.seed = async function (knex) {
-  await knex('items').del();
+  // 只补空表：表里已有数据说明这个站已经在用基础数据了，
+  // 再删会触发外键约束（且会毁掉管理员在后台自定义的内容），因此直接跳过
+  const existing = await knex('items').count({ c: '*' }).first();
+  if (Number(existing && existing.c) > 0) {
+    console.log('  · 道具（items）已有 ' + existing.c + ' 条，跳过');
+    return;
+  }
   await knex('items').insert(items);
 };

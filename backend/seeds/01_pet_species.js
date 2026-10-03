@@ -1,3 +1,4 @@
+// 说明：本文件已改为「只补空表」模式（宠物种类）。
 const fs = require('fs');
 const path = require('path');
 
@@ -85,7 +86,13 @@ module.exports.petsData = petsData;
 module.exports.buildSpeciesRows = buildSpeciesRows;
 
 exports.seed = async function (knex) {
-  await knex('pet_species').del();
+  // 只补空表：表里已有数据说明这个站已经在用基础数据了，
+  // 再删会触发外键约束（且会毁掉管理员在后台自定义的内容），因此直接跳过
+  const existing = await knex('pet_species').count({ c: '*' }).first();
+  if (Number(existing && existing.c) > 0) {
+    console.log('  · 宠物种类（pet_species）已有 ' + existing.c + ' 条，跳过');
+    return;
+  }
   for (const row of buildSpeciesRows(petsDir, stages)) {
     await knex('pet_species').insert(row);
   }

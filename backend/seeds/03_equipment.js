@@ -1,3 +1,4 @@
+// 说明：本文件已改为「只补空表」模式（装备）。
 const equipment = [
   { name: '铁剑', slot: 'weapon', stats_bonus: JSON.stringify({ attack: 5, defense: 2, speed: 1 }), price: 100, rarity: 'common', required_level: 1, image_url: '/images/equipment/铁剑_ai.png' },
   { name: '钢剑', slot: 'weapon', stats_bonus: JSON.stringify({ attack: 10, defense: 3, speed: 2 }), price: 200, rarity: 'rare', required_level: 10, image_url: '/images/equipment/钢剑_ai.png' },
@@ -29,6 +30,12 @@ const equipment = [
 module.exports.equipment = equipment;
 
 exports.seed = async function (knex) {
-  await knex('equipment').del();
+  // 只补空表：表里已有数据说明这个站已经在用基础数据了，
+  // 再删会触发外键约束（且会毁掉管理员在后台自定义的内容），因此直接跳过
+  const existing = await knex('equipment').count({ c: '*' }).first();
+  if (Number(existing && existing.c) > 0) {
+    console.log('  · 装备（equipment）已有 ' + existing.c + ' 条，跳过');
+    return;
+  }
   await knex('equipment').insert(equipment);
 };

@@ -1,3 +1,4 @@
+// 说明：本文件已改为「只补空表」模式（每日任务模板）。
 /**
  * 每日任务种子数据
  * 任务类型与 src/routes/daily-tasks.js 中的硬编码任务保持一致。
@@ -13,6 +14,12 @@ const tasks = [
 module.exports.tasks = tasks;
 
 exports.seed = async function (knex) {
-  await knex('tasks').del();
+  // 只补空表：表里已有数据说明这个站已经在用基础数据了，
+  // 再删会触发外键约束（且会毁掉管理员在后台自定义的内容），因此直接跳过
+  const existing = await knex('tasks').count({ c: '*' }).first();
+  if (Number(existing && existing.c) > 0) {
+    console.log('  · 每日任务模板（tasks）已有 ' + existing.c + ' 条，跳过');
+    return;
+  }
   await knex('tasks').insert(tasks);
 };
