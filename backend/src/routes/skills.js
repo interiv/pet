@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { recordGoldChange, recordItemChange } = require('../services/rewards');
 
 // 宠物技能槽上限
 const MAX_SKILL_SLOTS = 4;
@@ -46,26 +47,64 @@ router.get('/available', authenticateToken, (req, res) => {
       WHERE ps.pet_id = ?
     `).all(pet.id);
 
-    const learnedSkillIds = new Set(learnedSkills.map(s => s.skill_id));
+    const learnedMap = new Map(learnedSkills.map((s) => [s.skill_id, s]));
 
     // 检查每个技能是否可学习
     const skills = allSkills.map(skill => {
-      const isLearned = learnedSkillIds.has(skill.id);
-      
-      // 检查解锁条件
-      const canUnlock = !isLearned && 
-        pet.level >= skill.required_level;
+      const learned = learnedMap.get(skill.id) || null;
+      const isLearned = !!learned;
+
+      // 检查解锁条件：等级 + 知识点掌握度 + 该学科正确率（seeds 里定义的门槛）
+      let lockReason = '';
+      if (pet.level < (skill.required_level || 1)) {
+        lockReason = `需要宠物达到 ${skill.required_level} 级`;
+      } else if (skill.required_knowledge_point) {
+        // knowledge_point_stats 用 accuracy（0~1）表示掌握度
+        const kp = db.prepare(
+          `SELECT AVG(accuracy) AS acc, SUM(total_attempts) AS attempts
+             FROM knowledge_point_stats
+            WHERE user_id = ? AND knowledge_point = ?`
+        ).get(req.user.userId, skill.required_knowledge_point);
+        const attempts = kp && kp.attempts ? kp.attempts : 0;
+        const acc = kp && kp.acc != null ? kp.acc : 0;
+        if (attempts === 0 || acc < 0.6) {
+          lockReason = `需要掌握知识点「${skill.required_knowledge_point}」（正确率 60%）`;
+        }
+      } else if (skill.required_accuracy) {
+        // question_answers 没有 subject 列，需经 submissions 关联
+        const params = skill.subject ? [req.user.userId, skill.subject] : [req.user.userId];
+        const acc = db.prepare(
+          `SELECT AVG(CASE WHEN qa.is_correct = 1 THEN 1.0 ELSE 0 END) AS rate
+             FROM question_answers qa
+             JOIN submissions s ON s.id = qa.submission_id
+            WHERE s.user_id = ? ${skill.subject ? 'AND s.assignment_id IN (SELECT id FROM assignments WHERE subject = ?)' : ''}`
+        ).get(...params);
+        const rate = acc && acc.rate != null ? acc.rate : 0;
+        if (rate < skill.required_accuracy) {
+          lockReason = `需要${skill.subject || '该学科'}正确率达到 ${Math.round(skill.required_accuracy * 100)}%`;
+        }
+      }
+
+      const canUnlock = !isLearned && !lockReason;
 
       return {
         ...skill,
         isLearned,
         canUnlock,
-        locked: !isLearned && !canUnlock
+        lockReason,
+        locked: !isLearned && !canUnlock,
+        // 已学习的技能要带上 pet_skills 的等级/精通度/使用次数，
+        // 否则前端会显示 Lv.undefined、精通度恒为 0%
+        level: learned ? learned.level : 0,
+        mastery: learned ? learned.mastery : 0,
+        use_count: learned ? learned.use_count : 0,
+        learned_at: learned ? learned.learned_at : null,
       };
     });
 
     res.json({
       skills,
+      learnedCount: learnedSkills.length,
       pet: {
         id: pet.id,
         name: pet.name,
@@ -160,6 +199,8 @@ router.post('/upgrade', authenticateToken, (req, res) => {
 
     // 扣除金币并升级技能
     db.prepare('UPDATE users SET gold = gold - ? WHERE id = ?').run(goldCost, req.user.userId);
+    const skillName = (db.prepare('SELECT name FROM skills WHERE id = ?').get(skill_id) || {}).name || `技能#${skill_id}`;
+    recordGoldChange(req.user.userId, -goldCost, `升级技能：${skillName} Lv.${petSkill.level}`, 'upgrade_skill');
     db.prepare('UPDATE pet_skills SET level = level + 1 WHERE id = ?').run(petSkill.id);
 
     const updatedPetSkill = db.prepare('SELECT * FROM pet_skills WHERE id = ?').get(petSkill.id);

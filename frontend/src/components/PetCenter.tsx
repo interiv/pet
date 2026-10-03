@@ -59,7 +59,7 @@ const PetCenter: React.FC<PetCenterProps> = ({ onNavigate: _onNavigate }) => {
     },
     {
       key: 'skills',
-      label: '宠物技能',
+      label: '技能培养',
       icon: <ThunderboltOutlined />,
       children: <PetSkills />,
     },

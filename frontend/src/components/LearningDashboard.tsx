@@ -58,6 +58,7 @@ const LearningDashboard: React.FC = () => {
   const [reviewEffectLoading, setReviewEffectLoading] = useState(false);
   const [heatmapData, setHeatmapData] = useState<any[]>([]);
   const [trendData, setTrendData] = useState<any[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [learningTime, setLearningTime] = useState<any>(null);
   const [learningTimeLoading, setLearningTimeLoading] = useState(false);
   const [kpTablePage, setKpTablePage] = useState(1);
@@ -159,6 +160,9 @@ const LearningDashboard: React.FC = () => {
       setTrendData(trend);
     } catch (error: any) {
       console.error('加载学习数据失败:', error);
+      // 之前只 console.error，接口 500 与「真的没数据」在界面上完全一样，
+      // 让人误以为功能坏了。这里给出明确提示 + 可重试入口。
+      setLoadError(error?.response?.data?.error || '学习数据加载失败，请稍后重试');
     } finally {
       setLoading(false);
     }
@@ -307,6 +311,16 @@ const LearningDashboard: React.FC = () => {
 
   return (
     <div>
+      {loadError && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="学习数据加载失败"
+          description={loadError + '（若图表为空，通常是因为还没有作答记录：完成作业或练习后就会出现）'}
+          action={<Button size="small" onClick={loadData}>重新加载</Button>}
+        />
+      )}
       <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' as const, gap: 8 }}>
         <div>
           <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 12 }}>

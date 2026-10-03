@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { recordItemChange, recordGoldChange } = require('../services/rewards');
 
 /**
  * 有实际消费入口的道具类型。
@@ -57,6 +58,8 @@ router.post('/buy', authenticateToken, (req, res) => {
     // 扣金币与入背包必须同生同死：原先无事务，入背包失败会导致金币白白扣掉
     db.transaction(() => {
       db.prepare('UPDATE users SET gold = gold - ? WHERE id = ?').run(totalCost, req.user.userId);
+      // 商店消费要记流水，否则学生端「资产明细」看不到支出
+      recordGoldChange(req.user.userId, -totalCost, `购买${item.name} x${quantity}`, 'shop');
 
       const existing = db.prepare('SELECT * FROM user_items WHERE user_id = ? AND item_id = ?').get(req.user.userId, item_id);
 
@@ -65,6 +68,10 @@ router.post('/buy', authenticateToken, (req, res) => {
       } else {
         db.prepare('INSERT INTO user_items (user_id, item_id, quantity) VALUES (?, ?, ?)').run(req.user.userId, item_id, quantity);
       }
+      recordItemChange(req.user.userId, {
+        refType: 'item', refId: item_id, name: item.name,
+        quantity, reason: `商店购买（-${totalCost} 金币）`, source: 'shop',
+      });
     })();
 
     const updatedItems = db.prepare(`

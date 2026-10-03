@@ -74,6 +74,12 @@ export const authAPI = {
     api.get('/auth/approval-status', { params: { username } }),
 };
 
+// ===== 我的资产明细（金币 + 物品/装备/技能流水）=====
+export const userAPI = {
+  getMyTransactions: (params?: { type?: 'all' | 'gold' | 'item'; page?: number; pageSize?: number }) =>
+    api.get('/users/me/transactions', { params }),
+};
+
 // 宠物相关 API
 export const petAPI = {
   getMyPet: () => api.get('/pets/my-pet'),

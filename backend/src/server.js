@@ -41,6 +41,7 @@ const schoolRoutes = require('./routes/schools');
 const aiCoachRoutes = require('./routes/ai-coach');
 const questionBankRoutes = require('./routes/question-bank');
 const cardRoutes = require('./routes/cards');
+const userTransactionRoutes = require('./routes/user-transactions');
 
 // 初始化数据库
 initDatabase();
@@ -141,6 +142,8 @@ app.use('/api/schools', schoolRoutes);
 app.use('/api/ai-coach', aiCoachRoutes);
 app.use('/api/question-bank', questionBankRoutes);
 app.use('/api/cards', cardRoutes);
+// 学生端「我的资产明细」（金币 + 物品/装备/技能流水）
+app.use('/api/users', userTransactionRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {

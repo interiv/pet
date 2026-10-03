@@ -87,4 +87,66 @@ function grantReward(userId, options = {}) {
   return result;
 }
 
-module.exports = { grantReward };
+module.exports = { grantReward, recordItemChange, recordGoldChange };
+
+/**
+ * 只记一笔金币流水，不改余额
+ *
+ * 用于那些已经自己写了 `UPDATE users SET gold = ...` 的地方（如商店扣款），
+ * 把它们补录进流水表，避免学生端「资产明细」只能看到收入看不到支出。
+ * 注意：调用方要保证自己的余额更新是成功的。
+ */
+function recordGoldChange(userId, goldChange, reason, source) {
+  const delta = Number(goldChange) || 0;
+  if (!userId || !delta) return false;
+  try {
+    db.prepare(
+      'INSERT INTO gold_transactions (user_id, gold_change, reason, source) VALUES (?, ?, ?, ?)'
+    ).run(userId, delta, reason || source || '', source || '');
+    return true;
+  } catch (e) {
+    console.error('记录金币流水失败:', e.message);
+    return false;
+  }
+}
+
+/**
+ * 记录物品 / 装备 / 技能的变动流水
+ *
+ * 背景：原先只有 gold_transactions（金币流水），物品与装备的获得、消耗
+ *   完全没记录，导致学生端「我的资产明细」只能看到金币，看不到道具。
+ *   表结构见迁移 014_add_item_transactions.js。
+ *
+ * 用法：
+ *   recordItemChange(userId, { refType: 'item', refId: 3, name: '体力药水', change: -1, reason: '投喂宠物', source: 'feed_pet' });
+ *
+ * 约定：
+ *   - change 用 +1 / -1 表示获得 / 消耗（真实数量可用 quantity 覆盖）
+ *   - 表不存在时静默跳过，绝不影响主流程
+ */
+function recordItemChange(userId, options = {}) {
+  const {
+    refType = 'item', refId = null, name = '', change = 0,
+    quantity = null, reason = '', source = '',
+  } = options;
+
+  const delta = quantity != null ? Number(quantity) : Number(change);
+  if (!userId || !delta) return false;
+
+  try {
+    const hasTable = db.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='item_transactions'`
+    ).get();
+    if (!hasTable) return false;
+
+    db.prepare(`
+      INSERT INTO item_transactions
+        (user_id, ref_type, ref_id, name, change, reason, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(userId, refType, refId, name || '', delta, reason || source, source || '');
+    return true;
+  } catch (e) {
+    console.error('记录物品流水失败:', e.message);
+    return false;
+  }
+}

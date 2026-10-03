@@ -6,6 +6,12 @@ const { updateTaskProgress } = require('./daily-tasks');
 const { checkAndAwardAchievement } = require('./achievements');
 // 技能槽规则统一复用 skills.js 的实现，避免两个学习接口口径不一致
 const { allocateSkillSlot, countPetSkills, MAX_SKILL_SLOTS } = require('./skills');
+const { recordItemChange } = require('../services/rewards');
+
+// 取道具名（user_items 查询不一定带出 items.name，缺省回退成「道具#id」）
+function itemNameOf(userItem, itemId) {
+  return (userItem && (userItem.item_name || userItem.name)) || `道具#${itemId}`;
+}
 
 // feed_count 已由 001_initial_schema 创建，缺失时由 004 号迁移兜底，不再在运行时 ALTER
 
@@ -215,9 +221,13 @@ router.post('/create', authenticateToken, (req, res) => {
     }
 
     // 赠送新手初始道具：3个普通粮食
-    const starterItem = db.prepare('SELECT id FROM items WHERE name = ?').get('普通粮食');
+    const starterItem = db.prepare('SELECT id, name FROM items WHERE name = ?').get('普通粮食');
     if (starterItem) {
       db.prepare('INSERT INTO user_items (user_id, item_id, quantity) VALUES (?, ?, ?)').run(req.user.userId, starterItem.id, 3);
+      recordItemChange(req.user.userId, {
+        refType: 'item', refId: starterItem.id, name: starterItem.name,
+        quantity: 3, reason: '新手赠送道具', source: 'create_pet',
+      });
     }
 
     const pet = db.prepare(`
@@ -226,6 +236,28 @@ router.post('/create', authenticateToken, (req, res) => {
       JOIN pet_species ps ON p.species_id = ps.id
       WHERE p.id = ?
     `).get(result.lastInsertRowid);
+
+    // 预置入门技能：否则新宠物一个技能都没有，技能页看起来是空的
+    // （技能只能手动学，若不预置，学生永远不知道还有「技能培养」这回事）
+    try {
+      const starterSkill = db.prepare(
+        'SELECT id, name FROM skills ORDER BY required_level ASC, id ASC LIMIT 1'
+      ).get();
+      if (starterSkill) {
+        const has = db.prepare('SELECT id FROM pet_skills WHERE pet_id = ? AND skill_id = ?')
+          .get(pet.id, starterSkill.id);
+        if (!has) {
+          db.prepare('INSERT INTO pet_skills (pet_id, skill_id, level, mastery, use_count) VALUES (?, ?, 1, 0, 0)')
+            .run(pet.id, starterSkill.id);
+          recordItemChange(req.user.userId, {
+            refType: 'skill', refId: starterSkill.id, name: starterSkill.name,
+            change: 1, reason: '新手预置技能', source: 'create_pet',
+          });
+        }
+      }
+    } catch (e) {
+      console.error('预置新手技能失败（不影响创建宠物）:', e.message);
+    }
 
     try {
       checkAndAwardAchievement(req.user.userId, 'create_pet', 1);
@@ -360,6 +392,10 @@ router.post('/feed', authenticateToken, (req, res) => {
     }
 
     db.prepare('UPDATE user_items SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?').run(req.user.userId, item_id);
+    recordItemChange(req.user.userId, {
+      refType: 'item', refId: item_id, name: userItem.item_name || `道具#${item_id}`,
+      change: -1, reason: '投喂宠物', source: 'feed_pet',
+    });
 
     // 更新每日任务进度
     try {
@@ -505,6 +541,10 @@ router.post('/revive', authenticateToken, (req, res) => {
       return res.status(400).json({ error: '没有复活道具' });
     }
     db.prepare('UPDATE user_items SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?').run(req.user.userId, item_id);
+    recordItemChange(req.user.userId, {
+      refType: 'item', refId: item_id, name: itemNameOf(userItem, item_id),
+      change: -1, reason: '复活宠物', source: 'revive_pet',
+    });
 
     const penalty = 0.1 + Math.random() * 0.05;
     const newAttack = Math.floor(pet.attack * (1 - penalty));
@@ -578,6 +618,10 @@ router.post('/rebirth', authenticateToken, (req, res) => {
     `).run(newAttack, newDefense, newSpeed, pet.id);
 
     db.prepare('UPDATE user_items SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?').run(req.user.userId, item_id);
+    recordItemChange(req.user.userId, {
+      refType: 'item', refId: item_id, name: itemNameOf(userItem, item_id),
+      change: -1, reason: '宠物转生', source: 'rebirth_pet',
+    });
 
     const updatedPet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(req.user.userId);
 

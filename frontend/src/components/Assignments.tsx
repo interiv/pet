@@ -1221,23 +1221,48 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     { title: '科目', dataIndex: 'subject', key: 'subject', render: (subject: string) => <Tag color="blue">{subject}</Tag> },
     { title: '题型', dataIndex: 'question_type', key: 'question_type', responsive: ['md'] as any, render: (type: string) => <Tag color="purple">{typeOptions.find(t => t.value === type)?.label || type}</Tag> },
     { title: '题目数', dataIndex: 'question_count', key: 'question_count', responsive: ['md'] as any, render: (count: number) => count ?? '-' },
-    { title: '班级人数', dataIndex: 'class_student_count', key: 'class_student_count', responsive: ['md'] as any, render: (count: number) => count ?? '-' },
-    { title: '已作答', dataIndex: 'submitted_count', key: 'submitted_count', responsive: ['md'] as any, render: (count: number, r: any) => {
-      const total = r.class_student_count || 0;
-      const submitted = count || 0;
-      const unsubmitted = total - submitted;
-      return (
-        <span>
-          <span style={{ color: '#52c41a', fontWeight: 'bold' }}>{submitted}</span>
-          {total > 0 && unsubmitted > 0 && (
-            <span style={{ color: '#ff4d4f', marginLeft: 4 }}>（{unsubmitted}人未做）</span>
-          )}
-          {total > 0 && unsubmitted === 0 && (
-            <span style={{ color: '#52c41a', marginLeft: 4 }}>（全部完成）</span>
-          )}
-        </span>
-      );
-    }},
+    // 班级人数 / 已作答 是教师与管理员视角的统计，学生看到没有意义，故不显示
+    ...(isTeacher ? [
+      { title: '班级人数', dataIndex: 'class_student_count', key: 'class_student_count', responsive: ['md'] as any, render: (count: number) => count ?? '-' },
+      { title: '已作答', dataIndex: 'submitted_count', key: 'submitted_count', responsive: ['md'] as any, render: (count: number, r: any) => {
+        const total = r.class_student_count || 0;
+        const submitted = count || 0;
+        const unsubmitted = total - submitted;
+        return (
+          <span>
+            <span style={{ color: '#52c41a', fontWeight: 'bold' }}>{submitted}</span>
+            {total > 0 && unsubmitted > 0 && (
+              <span style={{ color: '#ff4d4f', marginLeft: 4 }}>（{unsubmitted}人未做）</span>
+            )}
+            {total > 0 && unsubmitted === 0 && (
+              <span style={{ color: '#52c41a', marginLeft: 4 }}>（全部完成）</span>
+            )}
+          </span>
+        );
+      }},
+    ] : []),
+    // 作答时间：首次作答 ~ 最后作答 + 总耗时（来自逐题答题时间）
+    { title: '作答时间', key: 'my_answer_time', responsive: ['md'] as any, render: (_: any, r: any) => {
+        if (isTeacher || !r.my_submission_id) return <span style={{ color: '#bbb' }}>-</span>;
+        const first = r.my_first_answered_at;
+        const last = r.my_last_answered_at || first;
+        if (!first) return <span style={{ color: '#bbb' }}>-</span>;
+        const start = new Date(first);
+        const end = last ? new Date(last) : start;
+        const sameDay = start.toDateString() === end.toDateString();
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const timeText = sameDay
+          ? `${pad(start.getHours())}:${pad(start.getMinutes())} ~ ${pad(end.getHours())}:${pad(end.getMinutes())}`
+          : `${start.toLocaleDateString()} ${pad(start.getHours())}:${pad(start.getMinutes())} ~ ${end.toLocaleDateString()} ${pad(end.getHours())}:${pad(end.getMinutes())}`;
+        const minutes = Math.max(1, Math.round((r.my_duration_ms || 0) / 60000));
+        return (
+          <div style={{ fontSize: 12, color: '#666' }}>
+            <div>{timeText}</div>
+            <div style={{ color: '#999' }}>用时约 {minutes} 分钟</div>
+          </div>
+        );
+      }
+    },
     { title: '金币奖励', dataIndex: 'max_exp', key: 'max_exp', responsive: ['md'] as any, render: (exp: number) => <span style={{ color: '#faad14', fontWeight: 'bold' }}>+{exp} 金币</span> },
     { 
       title: '截止日期', dataIndex: 'due_date', key: 'due_date', responsive: ['sm'] as any,

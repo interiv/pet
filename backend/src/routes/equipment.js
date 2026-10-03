@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
+const { recordItemChange, recordGoldChange } = require('../services/rewards');
 
 // 计算套装效果
 function calculateSetBonus(userId) {
@@ -102,7 +103,12 @@ router.post('/buy', authenticateToken, (req, res) => {
 
     const buyTransaction = db.transaction(() => {
       db.prepare('UPDATE users SET gold = gold - ? WHERE id = ?').run(equip.price, req.user.userId);
+      recordGoldChange(req.user.userId, -equip.price, `购买装备：${equip.name}`, 'shop');
       db.prepare('INSERT INTO user_equipment (user_id, equipment_id, equipped, level) VALUES (?, ?, 0, 1)').run(req.user.userId, equipment_id);
+      recordItemChange(req.user.userId, {
+        refType: 'equipment', refId: equipment_id, name: equip.name,
+        change: 1, reason: `商店购买（-${equip.price} 金币）`, source: 'shop',
+      });
     });
     buyTransaction();
 
@@ -138,9 +144,15 @@ router.post('/sell', authenticateToken, (req, res) => {
 
     const sellTransaction = db.transaction(() => {
       // 出售装备属于「退款/变现」，不是奖励，因此不走 grantReward：
-      // 不应计入 total_gold_earned（生涯累计只统计奖励获得的金币），也不产生金币流水奖励记录
+      // 不应计入 total_gold_earned（生涯累计只统计奖励获得的金币），
+      // 但仍要记一笔流水，学生端才看得到这笔收入
       db.prepare('UPDATE users SET gold = gold + ? WHERE id = ?').run(sellPrice, req.user.userId);
+      recordGoldChange(req.user.userId, sellPrice, `出售装备：${equip.name}`, 'sell_equipment');
       db.prepare('DELETE FROM user_equipment WHERE id = ?').run(user_equip_id);
+      recordItemChange(req.user.userId, {
+        refType: 'equipment', refId: equip.equipment_id, name: equip.name,
+        change: -1, reason: `出售获得 ${sellPrice} 金币`, source: 'sell_equipment',
+      });
     });
     sellTransaction();
 
@@ -262,6 +274,7 @@ router.post('/upgrade', authenticateToken, (req, res) => {
     
     const upgradeTransaction = db.transaction(() => {
       db.prepare('UPDATE users SET gold = gold - ? WHERE id = ?').run(upgradeCost, req.user.userId);
+      recordGoldChange(req.user.userId, -upgradeCost, `强化装备：${equip.name} Lv.${currentLevel} → Lv.${currentLevel + 1}`, 'upgrade_equipment');
       db.prepare('UPDATE user_equipment SET level = ? WHERE id = ?').run(currentLevel + 1, user_equip_id);
     });
     upgradeTransaction();

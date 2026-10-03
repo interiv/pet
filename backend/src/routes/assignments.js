@@ -87,10 +87,12 @@ const upload = multer({
  */
 let personalBankReady = null;
 function personalBankAvailable() {
+  // 不再永久缓存：迁移可能在本进程启动之后才执行完，
+  // 一旦缓存成 false，个人题库会一直"永远为空"。
   if (personalBankReady === null) {
     personalBankReady = !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='personal_question_bank'`).get();
   }
-  return personalBankReady;
+  return personalBankReady || !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='personal_question_bank'`).get();
 }
 
 function upsertPersonalBank({ userId, questionId, assignmentId, assignmentType, answer, isCorrect, source }) {
@@ -938,16 +940,31 @@ router.get('/', authenticateToken, (req, res) => {
       let studentSql = `
         SELECT a.*, COALESCE(u.real_name, u.username) as teacher_name, c.name as class_name,
           (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count,
+          (SELECT COUNT(*) FROM users WHERE class_id = a.class_id AND role = 'student' AND status = 'active') as class_student_count,
+          (SELECT COUNT(DISTINCT user_id) FROM submissions WHERE assignment_id = a.id) as submitted_count,
           (SELECT id FROM submissions WHERE assignment_id = a.id AND user_id = ? LIMIT 1) as my_submission_id,
           (SELECT status FROM submissions WHERE assignment_id = a.id AND user_id = ? ORDER BY id DESC LIMIT 1) as my_submission_status,
           (SELECT MAX(total_score) FROM submissions WHERE assignment_id = a.id AND user_id = ?) as my_score,
-          (SELECT SUM(gold_reward) FROM submissions WHERE assignment_id = a.id AND user_id = ?) as my_gold_reward
+          (SELECT SUM(gold_reward) FROM submissions WHERE assignment_id = a.id AND user_id = ?) as my_gold_reward,
+          (SELECT MIN(qa.answered_at) FROM question_answers qa
+             JOIN submissions s ON s.id = qa.submission_id
+            WHERE s.assignment_id = a.id AND s.user_id = ?) as my_first_answered_at,
+          (SELECT MAX(qa.answered_at) FROM question_answers qa
+             JOIN submissions s ON s.id = qa.submission_id
+            WHERE s.assignment_id = a.id AND s.user_id = ?) as my_last_answered_at,
+          (SELECT SUM(COALESCE(qa.duration_ms, 0)) FROM question_answers qa
+             JOIN submissions s ON s.id = qa.submission_id
+            WHERE s.assignment_id = a.id AND s.user_id = ?) as my_duration_ms
         FROM assignments a
         JOIN users u ON a.teacher_id = u.id
         LEFT JOIN classes c ON a.class_id = c.id
         WHERE a.class_id = ? AND a.status != 'cancelled'
       `;
-      const studentParams = [req.user.userId, req.user.userId, req.user.userId, req.user.userId, student.class_id];
+      const studentParams = [
+        req.user.userId, req.user.userId, req.user.userId, req.user.userId,
+        req.user.userId, req.user.userId, req.user.userId,
+        student.class_id,
+      ];
       if (typeFilter) { studentSql += ` AND a.assignment_type = ?`; studentParams.push(typeFilter); }
       studentSql += ` ORDER BY a.created_at DESC`;
       assignments = db.prepare(studentSql).all(...studentParams);

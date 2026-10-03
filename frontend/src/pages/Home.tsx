@@ -1,6 +1,6 @@
 import React, { useEffect, useState, lazy, Suspense } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, Modal, Spin, Table, Segmented, Drawer, Button, Steps, message, Alert, Pagination, Badge } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, Modal, Spin, Table, Segmented, Drawer, Button, Steps, message, Alert, Pagination, Badge, Tooltip } from 'antd';
 import {
   HomeOutlined,
   BookOutlined,
@@ -20,6 +20,7 @@ import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { notificationAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
 import CreatePet from '../components/CreatePet';
+import TransactionDrawer from '../components/TransactionDrawer';
 import { getPetThumbUrl } from '../utils/petImage';
 
 const Admin = lazy(() => import('../components/Admin'));
@@ -79,6 +80,8 @@ const Home: React.FC = () => {
   const [leaderboardView, setLeaderboardView] = useState<'card' | 'list'>('card');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [noticeVisible, setNoticeVisible] = useState(true);
+  // 资产明细抽屉（点右上角金币打开）
+  const [txDrawerOpen, setTxDrawerOpen] = useState(false);
   
   // 新手引导状态
   const [newbieGuideVisible, setNewbieGuideVisible] = useState(false);
@@ -260,7 +263,7 @@ const Home: React.FC = () => {
   if (isStudent) {
     menuItems.push(
       { key: 'study', icon: <BookOutlined />, label: '学习中心' },
-      { key: 'pet', icon: <HomeOutlined />, label: '我的宠物' },
+      { key: 'pet', icon: <HomeOutlined />, label: '宠物中心' },
       { key: 'social', icon: <MessageOutlined />, label: '班级' },
       { key: 'card-redeem', icon: <GiftOutlined />, label: '卡兑换' },
       { key: 'notifications', icon: <Badge count={unreadCount} size="small" offset={[6, -3]}><BellOutlined /></Badge>, label: '通知' },
@@ -599,7 +602,14 @@ const Home: React.FC = () => {
             <>
               {isStudent && pet && (
                 <div style={{ display: isMobile ? 'none' : 'flex', alignItems: 'center', gap: 6, color: '#ffd700', fontSize: 14 }}>
-                  <span>💰 {user?.gold || 0}</span>
+                  <Tooltip title="点击查看我的资产明细">
+                    <span
+                      onClick={() => setTxDrawerOpen(true)}
+                      style={{ cursor: 'pointer', textDecoration: 'underline dotted' }}
+                    >
+                      💰 {user?.gold || 0}
+                    </span>
+                  </Tooltip>
                   <span>⭐ Lv.{pet.level}</span>
                 </div>
               )}
@@ -715,6 +725,9 @@ const Home: React.FC = () => {
           <span style={{ color: '#ad6800', fontSize: 13 }}>{siteSettings.site_announcement}</span>
         </div>
       )}
+
+      {/* 我的资产明细：点击右上角金币打开 */}
+      <TransactionDrawer open={txDrawerOpen} onClose={() => setTxDrawerOpen(false)} />
 
       <Footer style={{
         background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',

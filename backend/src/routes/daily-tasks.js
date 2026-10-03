@@ -223,7 +223,10 @@ router.post('/claim', authenticateToken, (req, res) => {
     }
 
     // 根据任务类型发放奖励
+    // 注意：任务定义（tasks 表）里写的是 exp 奖励，但这里原先只发金币，
+    // 与前端文案不一致。现按定义补上经验，同时保留金币。
     let rewardGold = 0;
+    let rewardExp = 0;
     let rewardMessage = '';
 
     switch (task_type) {
@@ -233,6 +236,7 @@ router.post('/claim', authenticateToken, (req, res) => {
         break;
       case 'complete_assignment':
         rewardGold = 10;
+        rewardExp = 100;
         rewardMessage = '完成作业奖励';
         break;
       case 'feed_pet':
@@ -241,6 +245,7 @@ router.post('/claim', authenticateToken, (req, res) => {
         break;
       case 'correct_rate':
         rewardGold = 15;
+        rewardExp = 150;
         rewardMessage = '正确率达标奖励';
         break;
       case 'review_weak_point':
@@ -252,9 +257,10 @@ router.post('/claim', authenticateToken, (req, res) => {
         rewardMessage = '任务奖励';
     }
 
-    // 发放金币（累计金币成就与流水由统一管道处理）
+    // 发放金币与经验（累计金币成就、升级判定、流水均由统一管道处理）
     grantReward(userId, {
       gold: rewardGold,
+      exp: rewardExp,
       source: 'daily_task',
       reason: `${rewardMessage}: ${task_type}`,
     });
@@ -270,6 +276,7 @@ router.post('/claim', authenticateToken, (req, res) => {
     `).get(userId, today);
 
     let allCompleted = false;
+    let streakDays = dailyTask.streak_days;
     if (dailyTask.tasks_completed >= dailyTask.total_tasks) {
       allCompleted = true;
       // 检查昨天的连续天数，避免同一天重复累加
@@ -282,14 +289,19 @@ router.post('/claim', authenticateToken, (req, res) => {
         db.prepare(`
           UPDATE daily_tasks SET streak_days = ? WHERE user_id = ? AND date = ?
         `).run(expectedStreak, userId, today);
+        streakDays = expectedStreak;
       }
     }
 
+    const expText = rewardExp > 0 ? `，${rewardExp} 经验` : '';
     res.json({
-      message: `领取成功！获得 ${rewardGold} 金币`,
+      message: `领取成功！获得 ${rewardGold} 金币${expText}`,
       reward_gold: rewardGold,
+      reward_exp: rewardExp,
       all_completed: allCompleted,
-      streak_days: dailyTask.streak_days + (allCompleted ? 1 : 0)
+      // 修：原先这里返回 dailyTask.streak_days + 1，与上面已写入的 expectedStreak
+      // 重复计算，会多报一天
+      streak_days: streakDays,
     });
   } catch (error) {
     console.error('领取奖励失败:', error);

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Progress, Tag, message, Tabs, TabsProps, Badge, Tooltip } from 'antd';
+import { Card, Row, Col, Progress, Tag, message, Tabs, TabsProps, Badge, Tooltip , Alert, Button } from 'antd';
 import { TrophyOutlined, CheckCircleOutlined, StarOutlined, LockOutlined, CrownOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import { achievementAPI } from '../utils/api';
@@ -41,6 +41,9 @@ const Achievements: React.FC = () => {
   const { isAuthenticated } = useAuthStore();
   const [searchParams, setSearchParams] = useSearchParams();
   const [achievements, setAchievements] = useState<Achievement[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -50,12 +53,20 @@ const Achievements: React.FC = () => {
 
   const loadAchievements = async () => {
     if (!isAuthenticated) return;
+    setLoading(true);
     try {
       const res = await achievementAPI.getAchievementStatus();
-      setAchievements(res.data.achievements || []);
+      const list = res.data.achievements || [];
+      setAchievements(list);
+      setTotal(res.data.total ?? list.length);
+      setLoadFailed(false);
     } catch (error) {
       console.error('加载成就失败:', error);
-      message.error('加载成就失败');
+      // 之前这里只弹提示、数组保持空，页面会显示成「0 / 0」，让人误以为成就丢了
+      setLoadFailed(true);
+      message.error('加载成就失败，请检查网络后重试');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -63,9 +74,8 @@ const Achievements: React.FC = () => {
     return achievements.filter(a => a.completed).length;
   };
 
-  const getTotalCount = () => {
-    return achievements.length;
-  };
+  // 分母优先用后端给的 total，避免接口异常时被算成 0
+  const getTotalCount = () => total || achievements.length;
 
   const getProgressByCategory = (category: string) => {
     const categoryAchievements = achievements.filter(a => (a.category || 'special') === category);
@@ -191,11 +201,23 @@ const Achievements: React.FC = () => {
       label: <span><TrophyOutlined /> 全部成就</span>,
       children: (
         <div>
+          {loadFailed && (
+            <Alert
+              type="error"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="成就数据加载失败"
+              description="下方列表为空不代表成就不存在，请检查网络后重试。"
+              action={<Button size="small" onClick={loadAchievements}>重新加载</Button>}
+            />
+          )}
           <Card style={{ marginBottom: 16, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', borderRadius: 12 }}>
             <div style={{ textAlign: 'center', color: '#fff' }}>
-              <div style={{ fontSize: 16, marginBottom: 8 }}>成就进度</div>
+              <div style={{ fontSize: 16, marginBottom: 8 }}>
+                成就进度{getTotalCount() > 0 ? `（共 ${getTotalCount()} 个）` : ''}
+              </div>
               <div style={{ fontSize: 32, fontWeight: 'bold' }}>
-                {getCompletedCount()} / {getTotalCount()}
+                {loading ? '加载中...' : `${getCompletedCount()} / ${getTotalCount()}`}
               </div>
               <Progress
                 percent={getTotalCount() > 0 ? Math.round((getCompletedCount() / getTotalCount()) * 100) : 0}

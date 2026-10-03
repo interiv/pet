@@ -6,7 +6,7 @@ const conditionTypes = require('../config/achievementConditions');
 // 本模块与 services/rewards.js 互相依赖（发成就奖励要用到 grantReward，
 // grantReward 发放金币后又要检查累计金币成就）。rewards.js 是在函数内部延迟 require
 // 本模块的，因此这里顶层 require 不会形成加载期死锁。
-const { grantReward } = require('../services/rewards');
+const { grantReward, recordItemChange } = require('../services/rewards');
 
 // type → 该类型对应的阈值字段（见 config/achievementConditions.js 的 thresholdKey）
 const TYPE_META = new Map(conditionTypes.map((c) => [c.type, c]));
@@ -84,6 +84,11 @@ function checkAndAwardAchievement(userId, achievementType, currentValue) {
           db.prepare('INSERT INTO user_items (user_id, item_id, quantity) VALUES (?, ?, 1)')
             .run(userId, ach.reward_value);
         }
+        const rewardItem = db.prepare('SELECT name FROM items WHERE id = ?').get(ach.reward_value);
+        recordItemChange(userId, {
+          refType: 'item', refId: ach.reward_value, name: rewardItem ? rewardItem.name : `道具#${ach.reward_value}`,
+          change: 1, reason: `成就奖励：${ach.name}`, source: 'achievement',
+        });
       }
 
       newAchievements.push(ach);
@@ -243,7 +248,12 @@ router.get('/status', authenticateToken, (req, res) => {
       };
     });
 
-    res.json({ achievements: status });
+    res.json({
+      achievements: status,
+      // 额外给出总数，前端用它做「共 N 个成就」兜底，避免接口异常时显示成 0/0
+      total: status.length,
+      completed: status.filter((a) => a.completed).length,
+    });
   } catch (error) {
     console.error('获取成就状态错误:', error);
     res.status(500).json({ error: '获取成就状态失败' });
