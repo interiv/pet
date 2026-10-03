@@ -5,6 +5,7 @@ import {
   HomeOutlined,
   BookOutlined,
   UserOutlined,
+  TrophyOutlined,
   LogoutOutlined,
   SettingOutlined,
   MessageOutlined,
@@ -20,9 +21,8 @@ import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { notificationAPI } from '../utils/api';
 import { useAuthStore, usePetStore } from '../store/authStore';
 import CreatePet from '../components/CreatePet';
-import TransactionDrawer from '../components/TransactionDrawer';
+import Achievements from '../components/Achievements';
 import { getPetThumbUrl } from '../utils/petImage';
-
 const Admin = lazy(() => import('../components/Admin'));
 const AdminHome = lazy(() => import('../components/AdminHome'));
 const Profile = lazy(() => import('../components/Profile'));
@@ -80,8 +80,6 @@ const Home: React.FC = () => {
   const [leaderboardView, setLeaderboardView] = useState<'card' | 'list'>('card');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [noticeVisible, setNoticeVisible] = useState(true);
-  // 资产明细抽屉（点右上角金币打开）
-  const [txDrawerOpen, setTxDrawerOpen] = useState(false);
   
   // 新手引导状态
   const [newbieGuideVisible, setNewbieGuideVisible] = useState(false);
@@ -265,6 +263,8 @@ const Home: React.FC = () => {
       { key: 'study', icon: <BookOutlined />, label: '学习中心' },
       { key: 'pet', icon: <HomeOutlined />, label: '宠物中心' },
       { key: 'social', icon: <MessageOutlined />, label: '班级' },
+      // 成就原先藏在「学习中心 → 成就」里，要点两层才看到，入口太深
+      { key: 'achievement', icon: <TrophyOutlined />, label: '成就' },
       { key: 'card-redeem', icon: <GiftOutlined />, label: '卡兑换' },
       { key: 'notifications', icon: <Badge count={unreadCount} size="small" offset={[6, -3]}><BellOutlined /></Badge>, label: '通知' },
     );
@@ -523,7 +523,10 @@ const Home: React.FC = () => {
     }} />);
     if (activeMenu === 'pet') return wrap(<PetCenter onNavigate={handleMenuChange} />);
     if (activeMenu === 'arena') return wrap(<PetCenter onNavigate={handleMenuChange} />);
-    if (activeMenu === 'achievement') return wrap(<StudyCenter onNavigate={handleMenuChange} />);
+    if (activeMenu === 'achievement') {
+      // 侧边栏已有「成就」这一项，就不必再套一层「学习中心」标签页，避免菜单套菜单
+      return wrap(<Achievements />);
+    }
     if (activeMenu === 'social') return wrap(<SocialHub />);
     if (activeMenu === 'notifications') return wrap(<Notifications />);
     if (activeMenu === 'card-redeem') return wrap(<CardRedeem />);
@@ -604,7 +607,15 @@ const Home: React.FC = () => {
                 <div style={{ display: isMobile ? 'none' : 'flex', alignItems: 'center', gap: 6, color: '#ffd700', fontSize: 14 }}>
                   <Tooltip title="点击查看我的资产明细">
                     <span
-                      onClick={() => setTxDrawerOpen(true)}
+                      onClick={() => {
+                        // 资产明细放在个人中心里（页签形式，方便手机查看）
+                        setSearchParams(prev => {
+                          prev.set('menu', 'profile');
+                          prev.set('sub', 'assets');
+                          return prev;
+                        }, { replace: true });
+                        setActiveMenu('profile');
+                      }}
                       style={{ cursor: 'pointer', textDecoration: 'underline dotted' }}
                     >
                       💰 {user?.gold || 0}
@@ -726,8 +737,7 @@ const Home: React.FC = () => {
         </div>
       )}
 
-      {/* 我的资产明细：点击右上角金币打开 */}
-      <TransactionDrawer open={txDrawerOpen} onClose={() => setTxDrawerOpen(false)} />
+      {/* 我的资产明细已移入「个人中心」，这里不再挂抽屉 */}
 
       <Footer style={{
         background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',

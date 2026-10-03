@@ -1,13 +1,18 @@
 import React, { useState } from 'react';
 import { Card, Form, Input, Button, message, Tabs, Avatar } from 'antd';
-import { UserOutlined, LockOutlined, MailOutlined } from '@ant-design/icons';
+import { UserOutlined, LockOutlined, MailOutlined, WalletOutlined } from '@ant-design/icons';
+import { useSearchParams } from 'react-router-dom';
 import { authAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+import TransactionPanel from './TransactionPanel';
 
 const Profile: React.FC = () => {
   const { user } = useAuthStore();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
+  // 只有学生会用到金币与背包体系，教师/管理员不显示「资产明细」页签
+  const isStudent = user?.role === 'student';
 
   const handleUpdateProfile = async (values: any) => {
     setLoading(true);
@@ -118,6 +123,11 @@ const Profile: React.FC = () => {
         </Card>
       ),
     },
+    ...(isStudent ? [{
+      key: 'assets',
+      label: <span><WalletOutlined /> 资产明细</span>,
+      children: <TransactionPanel />,
+    }] : []),
   ];
 
   return (
@@ -130,7 +140,17 @@ const Profile: React.FC = () => {
           {user?.real_name ? ` · 账号：${user.username}` : ''}
         </p>
       </Card>
-      <Tabs items={tabItems} defaultActiveKey="info" />
+      <Tabs
+        activeKey={searchParams.get('sub') || 'info'}
+        onChange={(key) => {
+          setSearchParams(prev => {
+            if (key === 'info') prev.delete('sub');
+            else prev.set('sub', key);
+            return prev;
+          }, { replace: true });
+        }}
+        items={tabItems}
+      />
     </div>
   );
 };

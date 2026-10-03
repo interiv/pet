@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Progress, Tag, message, Tabs, TabsProps, Badge, Tooltip , Alert, Button } from 'antd';
+import { Card, Row, Col, Progress, Tag, message, Tabs, TabsProps, Badge, Tooltip , Alert, Button, Typography } from 'antd';
 import { TrophyOutlined, CheckCircleOutlined, StarOutlined, LockOutlined, CrownOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import { achievementAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+
+const { Text } = Typography;
 
 interface Achievement {
   id: number;
@@ -211,19 +213,16 @@ const Achievements: React.FC = () => {
               action={<Button size="small" onClick={loadAchievements}>重新加载</Button>}
             />
           )}
-          <Card style={{ marginBottom: 16, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', borderRadius: 12 }}>
-            <div style={{ textAlign: 'center', color: '#fff' }}>
-              <div style={{ fontSize: 16, marginBottom: 8 }}>
-                成就进度{getTotalCount() > 0 ? `（共 ${getTotalCount()} 个）` : ''}
-              </div>
-              <div style={{ fontSize: 32, fontWeight: 'bold' }}>
-                {loading ? '加载中...' : `${getCompletedCount()} / ${getTotalCount()}`}
-              </div>
+          <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <Text type="secondary" style={{ fontSize: 13 }}>
+                「全部成就」= 不做筛选，显示所有成就；其他标签只是按类别筛选，与它并列。
+              </Text>
               <Progress
+                type="circle"
+                size={54}
                 percent={getTotalCount() > 0 ? Math.round((getCompletedCount() / getTotalCount()) * 100) : 0}
-                showInfo={false}
-                strokeColor="#fff"
-                style={{ marginTop: 8 }}
+                format={() => `${getCompletedCount()}/${getTotalCount()}`}
               />
             </div>
           </Card>
@@ -268,9 +267,26 @@ const Achievements: React.FC = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 20, gap: 12 }}>
-        <TrophyOutlined style={{ fontSize: 24, color: '#faad14' }} />
-        <h2 style={{ margin: 0 }}>成就中心</h2>
+      {/* 概览条：侧边栏已经有「成就」这一项，这里不再重复大标题，
+          否则会出现「成就 → 成就中心 → 全部成就」三层套娃 */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        flexWrap: 'wrap', gap: 12, marginBottom: 12,
+        padding: '12px 16px', borderRadius: 12,
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      }}>
+        <div style={{ color: '#fff', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <TrophyOutlined style={{ fontSize: 22 }} />
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>成就进度</div>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>
+              共 {getTotalCount()} 个成就，已解锁 {getCompletedCount()} 个
+            </div>
+          </div>
+        </div>
+        <div style={{ color: '#fff', fontSize: 22, fontWeight: 'bold' }}>
+          {loading ? '加载中...' : `${getCompletedCount()} / ${getTotalCount()}`}
+        </div>
       </div>
 
       <Tabs
