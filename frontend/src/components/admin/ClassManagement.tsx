@@ -177,6 +177,12 @@ const ClassManagement: React.FC = () => {
     return cls.teachers?.some((t: any) => t.teacher_id === user?.id && t.role === 'head_teacher');
   };
 
+  // 教师展示统一「真实姓名 · 登录账号」，缺真实姓名时只显示账号
+  const teacherLabel = (t: any) => {
+    if (!t) return '';
+    return t.real_name ? `${t.real_name} · ${t.username}` : (t.username || '');
+  };
+
   const columns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     { title: '班级名称', dataIndex: 'name', key: 'name' },
@@ -194,53 +200,54 @@ const ClassManagement: React.FC = () => {
             {(record.teachers || []).map((t: any) => {
               // 班主任不能直接移除，必须先换成任课教师（后端也有同样校验）
               const removable = canManage && t.role !== 'head_teacher';
+              const nameText = t.real_name || t.username;
+              const subText = t.real_name ? t.username : '未填真实姓名';
               return (
-                <div
+                // 姓名 + 笔 + 叉 全部放进同一个 Tag 里，视觉上是一体
+                <Tag
                   key={t.teacher_id}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 0, marginBottom: 4 }}
+                  color={t.role === 'head_teacher' ? 'blue' : 'default'}
+                  style={{ marginBottom: 4 }}
                 >
-                  <Tag
-                    color={t.role === 'head_teacher' ? 'blue' : 'default'}
-                    style={{ marginInlineEnd: 2 }}
-                  >
-                    {/* 名字本身即可点击编辑身份 */}
-                    <a onClick={() => openEditTeacherModal(record, t)}>
-                      {t.real_name || t.username}
-                    </a>
-                    {t.role === 'head_teacher' ? '（班主任）' : ''}
-                  </Tag>
-                  <Tooltip title="修改身份（任课教师 / 班主任）">
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<EditOutlined />}
-                      onClick={() => openEditTeacherModal(record, t)}
-                      style={{ width: 22, height: 22, padding: 0 }}
-                    />
-                  </Tooltip>
-                  {removable ? (
-                    <Popconfirm
-                      title="确定从该班移除该教师？"
-                      onConfirm={() => handleRemoveTeacher(record.id, t.teacher_id)}
-                      okText="移除"
-                      cancelText="取消"
-                    >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                    {/* 姓名本身即可点击编辑身份 */}
+                    <a onClick={() => openEditTeacherModal(record, t)}>{nameText}</a>
+                    <span style={{ color: '#999', fontSize: 12 }}>· {subText}</span>
+                    <Tooltip title="修改身份（任课教师 / 班主任）">
                       <Button
                         type="text"
                         size="small"
-                        danger
-                        icon={<CloseOutlined />}
-                        style={{ width: 22, height: 22, padding: 0 }}
+                        icon={<EditOutlined />}
+                        onClick={() => openEditTeacherModal(record, t)}
+                        style={{ width: 20, height: 20, padding: 0 }}
                       />
-                    </Popconfirm>
-                  ) : (
-                    <Tooltip title="班主任不能直接移除，请先将其改为任课教师">
-                      <span style={{ display: 'inline-flex', width: 22, height: 22, alignItems: 'center', justifyContent: 'center', color: '#d9d9d9' }}>
-                        <CloseOutlined />
-                      </span>
                     </Tooltip>
-                  )}
-                </div>
+                    {removable ? (
+                      <Popconfirm
+                        title={`确定把「${nameText}」从本班移除？`}
+                        onConfirm={() => handleRemoveTeacher(record.id, t.teacher_id)}
+                        okText="移除"
+                        cancelText="取消"
+                      >
+                        <Tooltip title="从本班移除该教师">
+                          <Button
+                            type="text"
+                            size="small"
+                            danger
+                            icon={<CloseOutlined />}
+                            style={{ width: 20, height: 20, padding: 0 }}
+                          />
+                        </Tooltip>
+                      </Popconfirm>
+                    ) : (
+                      <Tooltip title="班主任不能直接移除，请先将其改为任课教师">
+                        <span style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center', color: '#bfbfbf' }}>
+                          <CloseOutlined />
+                        </span>
+                      </Tooltip>
+                    )}
+                  </span>
+                </Tag>
               );
             })}
             {canManage && (
@@ -339,7 +346,11 @@ const ClassManagement: React.FC = () => {
             <Select placeholder="选择要添加的教师" filterOption={(input, option) => String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())}>
               {teachers
                 .filter(t => !selectedClass?.teachers?.some((ct: any) => ct.teacher_id === t.id))
-                .map(t => <Select.Option key={t.id} value={t.id} label={t.real_name || t.username}>{t.real_name || t.username}</Select.Option>)
+                .map(t => (
+                  <Select.Option key={t.id} value={t.id} label={teacherLabel(t)}>
+                    {teacherLabel(t)}{!t.real_name ? '（未填真实姓名）' : ''}
+                  </Select.Option>
+                ))
               }
             </Select>
           </Form.Item>
@@ -353,7 +364,7 @@ const ClassManagement: React.FC = () => {
       </Modal>
 
       <Modal
-        title={`修改「${editingClassTeacher?.real_name || editingClassTeacher?.username || ''}」在班级「${selectedClass?.name}」中的身份`}
+        title={`修改「${teacherLabel(editingClassTeacher)}」在班级「${selectedClass?.name}」中的身份`}
         open={editTeacherModalVisible}
         onOk={handleUpdateClassTeacher}
         onCancel={() => { setEditTeacherModalVisible(false); setEditingClassTeacher(null); editTeacherForm.resetFields(); }}

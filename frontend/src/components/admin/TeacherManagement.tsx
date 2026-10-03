@@ -157,25 +157,24 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
     { title: '用户名', dataIndex: 'username', key: 'username' },
     { title: '邮箱', dataIndex: 'email', key: 'email' },
     {
-      title: '身份 / 班级',
+      title: '任教班级 / 身份',
       key: 'classes',
       render: (_: any, record: any) => {
         const classes: any[] = record.classes || [];
         if (classes.length === 0) {
           return <span style={{ color: '#bbb' }}>未分配班级</span>;
         }
+        // 一个班级一个块，身份跟着班级走：「演示1班（班主任）」「演示2班（任课教师）」
         return (
-          <Space direction="vertical" size={2}>
-            <Tag color={record.teacher_identity === 'head_teacher' ? 'gold' : 'blue'}>
-              {record.teacher_identity === 'head_teacher' ? '班主任' : '任课教师'}
-            </Tag>
-            <Space size={4} wrap>
-              {classes.map((c) => (
-                <Tag key={c.id} color={c.role === 'head_teacher' ? 'gold' : 'default'}>
-                  {c.name}{c.role === 'head_teacher' ? '（班主任）' : ''}
-                </Tag>
-              ))}
-            </Space>
+          <Space size={[4, 4]} wrap>
+            {classes.map((c) => (
+              <Tag key={c.id} color={c.role === 'head_teacher' ? 'gold' : 'default'}>
+                {c.name}
+                <span style={{ opacity: 0.7, fontSize: 12 }}>
+                  （{c.role === 'head_teacher' ? '班主任' : '任课教师'}）
+                </span>
+              </Tag>
+            ))}
           </Space>
         );
       }
