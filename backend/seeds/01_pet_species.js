@@ -39,9 +39,14 @@ const petsData = [
   { name: '秘银龟', element_type: 'light', desc: '背负秘银重壳的长寿灵龟' },
 ];
 
-exports.seed = async function (knex) {
-  await knex('pet_species').del();
-
+/**
+ * 生成宠物种子的数据库行
+ * 抽成函数是为了让「启动时基础数据兜底」（services/baseData.js）能复用同一份逻辑，
+ * 避免两处各写一份导致数据不一致。
+ */
+function buildSpeciesRows(petsDir, stageList) {
+  const stages = stageList || stages;
+  const rows = [];
   for (const p of petsData) {
     const baseStats = JSON.stringify({
       attack: 10 + Math.floor(Math.random() * 10),
@@ -64,7 +69,7 @@ exports.seed = async function (knex) {
       }
     }
 
-    await knex('pet_species').insert({
+    rows.push({
       name: p.name,
       element_type: p.element_type,
       base_stats: baseStats,
@@ -72,5 +77,16 @@ exports.seed = async function (knex) {
       description: p.desc,
       image_urls: JSON.stringify(imageUrls),
     });
+  }
+  return rows;
+}
+
+module.exports.petsData = petsData;
+module.exports.buildSpeciesRows = buildSpeciesRows;
+
+exports.seed = async function (knex) {
+  await knex('pet_species').del();
+  for (const row of buildSpeciesRows(petsDir, stages)) {
+    await knex('pet_species').insert(row);
   }
 };

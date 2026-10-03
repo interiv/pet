@@ -33,6 +33,8 @@ const items = [
   { name: '灵丹妙药', type: 'potion', effect_type: 'stamina', effect_value: 100, price: 400, description: '恢复满体力、满健康、满心情', rarity: 'legendary', image_url: '/images/items/灵丹妙药.png' },
 ];
 
+module.exports.items = items;
+
 exports.seed = async function (knex) {
   await knex('items').del();
   await knex('items').insert(items);

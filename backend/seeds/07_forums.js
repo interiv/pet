@@ -5,6 +5,8 @@ const forums = [
   { name: '建议反馈', description: '产品建议与Bug反馈', icon: '💡', sort_order: 4 },
 ];
 
+module.exports.forums = forums;
+
 exports.seed = async function (knex) {
   await knex('forums').del();
   await knex('forums').insert(forums);

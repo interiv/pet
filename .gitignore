@@ -71,3 +71,4 @@ temp/
 
 # 发布产物（由 scripts/release.mjs 生成，不入库）
 release/
+backend/tmp-bd.err

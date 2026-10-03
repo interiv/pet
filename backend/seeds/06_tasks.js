@@ -10,6 +10,8 @@ const tasks = [
   { type: 'daily', name: '复习错题', description: '复习3道错题', condition: JSON.stringify({ type: 'review_weak_point', count: 3 }), reward: JSON.stringify({ type: 'gold', value: 60 }), reset_type: 'daily' },
 ];
 
+module.exports.tasks = tasks;
+
 exports.seed = async function (knex) {
   await knex('tasks').del();
   await knex('tasks').insert(tasks);

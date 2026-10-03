@@ -271,6 +271,19 @@ const PORT = process.env.PORT || 3000;
 // 启动前自动执行数据库迁移：
 // 传文件 + 重启即可完成建表/补列/老数据回填；迁移失败只记日志，不阻断服务启动（管理后台会给出提示）
 runMigrations().finally(() => {
+  // 基础数据兜底：启动只跑迁移、不跑 seed，会导致成就/宠物/道具等基础数据为空
+  //（典型表现：后台一切正常，但学生的「成就」列表是空的、宠物选不了）
+  // 这里只补空表，绝不覆盖已有数据，因此不会影响管理员自定义的内容。
+  try {
+    const filled = require('./services/baseData').ensureBaseData();
+    const added = filled.filter((x) => x.status === 'filled');
+    if (added.length > 0) {
+      console.log(`✅ 已自动补齐基础数据：${added.map((x) => x.label + " " + x.count + " 条").join("，")}`);
+    }
+  } catch (e) {
+    console.error('基础数据兜底失败（不影响服务启动）:', e.message);
+  }
+
   // 迁移完成后兜底清理：教师生成了题目却没发布就关掉页面的情况，
   // 前端来不及上报撤销，这里统一退还额度并删掉无人引用的孤儿题目
   try {

@@ -26,6 +26,8 @@ const equipment = [
   { name: '学霸眼镜', slot: 'accessory', stats_bonus: JSON.stringify({ attack: 5, defense: 5, speed: 5 }), price: 300, rarity: 'rare', required_level: 10, image_url: '/images/equipment/学霸眼镜_ai.png' },
 ];
 
+module.exports.equipment = equipment;
+
 exports.seed = async function (knex) {
   await knex('equipment').del();
   await knex('equipment').insert(equipment);

@@ -10,6 +10,8 @@ const skills = [
   { name: '全力一击', description: '高威力但命中率低的攻击', icon: '💥', skill_type: 'physical', subject: null, base_damage: 120, base_defense: 0, base_speed: 0, cooldown: 4, required_level: 10, required_knowledge_point: null, required_accuracy: 0 },
 ];
 
+module.exports.skills = skills;
+
 exports.seed = async function (knex) {
   await knex('skills').del();
   await knex('skills').insert(skills);

@@ -5,10 +5,12 @@ import { useSearchParams } from 'react-router-dom';
 import { authAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import TransactionPanel from './TransactionPanel';
+import { useMobile } from './admin/hooks';
 
 const Profile: React.FC = () => {
   const { user } = useAuthStore();
   const [searchParams, setSearchParams] = useSearchParams();
+  const isMobile = useMobile();
   const [loading, setLoading] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
   // 只有学生会用到金币与背包体系，教师/管理员不显示「资产明细」页签
@@ -48,50 +50,61 @@ const Profile: React.FC = () => {
   const tabItems = [
     {
       key: 'info',
-      label: '个人信息',
+      label: <span><UserOutlined /> 个人信息</span>,
       children: (
-        <Card>
-          <Form
-            layout="vertical"
-            initialValues={{ email: user?.email }}
-            onFinish={handleUpdateProfile}
-          >
-            <Form.Item label="用户名">
-              <Input 
-                prefix={<UserOutlined />} 
-                value={user?.username} 
-                disabled 
-              />
-            </Form.Item>
-            <Form.Item label="角色">
-              <Input 
-                value={user?.role === 'student' ? '学生' : user?.role === 'teacher' ? '教师' : '管理员'} 
-                disabled 
-              />
-            </Form.Item>
-            <Form.Item 
-              name="email" 
-              label="邮箱"
+        <div>
+          <Card style={{ marginBottom: 16, textAlign: 'center' }}>
+            <Avatar size={72} icon={<UserOutlined />} src={user?.avatar} style={{ marginBottom: 12 }} />
+            <div style={{ fontSize: 18, fontWeight: 600 }}>{user?.real_name || user?.username}</div>
+            <div style={{ color: '#999', fontSize: 13, marginTop: 4 }}>
+              {user?.role === 'student' ? '学生' : user?.role === 'teacher' ? '教师' : '管理员'}
+              {user?.real_name ? ` · 账号：${user.username}` : ''}
+            </div>
+          </Card>
+          <Card>
+            <Form
+              layout="vertical"
+              initialValues={{ email: user?.email }}
+              onFinish={handleUpdateProfile}
             >
-              <Input prefix={<MailOutlined />} placeholder="请输入邮箱" />
-            </Form.Item>
-            <Form.Item>
-              <Button type="primary" htmlType="submit" loading={loading}>
-                更新信息
-              </Button>
-            </Form.Item>
-          </Form>
-        </Card>
+              <Form.Item label="用户名">
+                <Input
+                  prefix={<UserOutlined />}
+                  value={user?.username}
+                  disabled
+                />
+              </Form.Item>
+              <Form.Item label="角色">
+                <Input
+                  value={user?.role === 'student' ? '学生' : user?.role === 'teacher' ? '教师' : '管理员'}
+                  disabled
+                />
+              </Form.Item>
+              <Form.Item
+                name="email"
+                label="邮箱"
+              >
+                <Input prefix={<MailOutlined />} placeholder="请输入邮箱" />
+              </Form.Item>
+              <Form.Item>
+                <Button type="primary" htmlType="submit" loading={loading}>
+                  更新信息
+                </Button>
+              </Form.Item>
+            </Form>
+          </Card>
+        </div>
       ),
     },
     {
       key: 'password',
-      label: '修改密码',
+      label: <span><LockOutlined /> 修改密码</span>,
       children: (
         <Card>
           <Form
             layout="vertical"
             onFinish={handleChangePassword}
+            style={{ maxWidth: 460 }}
           >
             <Form.Item
               name="currentPassword"
@@ -131,16 +144,12 @@ const Profile: React.FC = () => {
   ];
 
   return (
-    <div style={{ maxWidth: 600, margin: '0 auto' }}>
-      <Card style={{ marginBottom: 24, textAlign: 'center' }}>
-        <Avatar size={80} icon={<UserOutlined />} src={user?.avatar} style={{ marginBottom: 16 }} />
-        <h2 style={{ margin: 0 }}>{user?.real_name || user?.username}</h2>
-        <p style={{ color: '#999', margin: '8px 0 0 0' }}>
-          {user?.role === 'student' ? '学生' : user?.role === 'teacher' ? '教师' : '管理员'}
-          {user?.real_name ? ` · 账号：${user.username}` : ''}
-        </p>
-      </Card>
+    <div>
+      {/* 页签放在页面顶部通栏，形态与「学习中心」「教学管理」一致；
+          之前整页被限制在 600px 宽，标签又挤在卡片里，看着很小 */}
       <Tabs
+        size="large"
+        tabBarGutter={isMobile ? 16 : 32}
         activeKey={searchParams.get('sub') || 'info'}
         onChange={(key) => {
           setSearchParams(prev => {
