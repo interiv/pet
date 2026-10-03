@@ -186,6 +186,8 @@ async function checkForUpdates() {
       packageSizeText: manifest.package.size ? formatSize(manifest.package.size) : '-',
       requireMigrations: manifest.requireMigrations !== false,
       needRestart: manifest.needRestart !== false,
+      needNpmInstall: manifest.needNpmInstall === true,
+      npmInstallCommand: manifest.npmInstallCommand || 'cd backend && npm install --omit=dev',
       targets: manifest.targets || DEFAULT_TARGETS,
       docker: manifest.docker || null,
     });
@@ -481,6 +483,9 @@ async function applyUpdate(expectVersion) {
       appliedMigrations: (migrationResult && migrationResult.applied) || [],
       backup: backupName,
       needRestart: manifest.needRestart !== false,
+      // 升级包不含 node_modules：新版若改了依赖，站点必须自己装一次
+      needNpmInstall: manifest.needNpmInstall === true,
+      npmInstallCommand: manifest.npmInstallCommand || 'cd backend && npm install --omit=dev',
       restart: detectRuntime(),
       at: new Date().toISOString(),
     };

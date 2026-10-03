@@ -20,6 +20,7 @@ const SoftwareUpdate: React.FC = () => {
   const [progress, setProgress] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [lastResult, setLastResult] = useState<any>(null);
 
   const loadInfo = useCallback(async () => {
     try {
@@ -98,6 +99,7 @@ const SoftwareUpdate: React.FC = () => {
     try {
       const res = await adminAPI.applyUpdate(check.latest);
       setProgress({ phase: 'done', message: '升级完成', progress: 100 });
+      setLastResult(res.data);
       message.success(res.data.message || '升级完成');
       setCheck(null);
       loadInfo(); loadBackups(); loadLogs();
@@ -248,6 +250,35 @@ const SoftwareUpdate: React.FC = () => {
             请勿关闭页面或重启服务器。升级过程会下载并校验升级包、备份旧文件、执行数据库迁移。
           </div>
         </Card>
+      )}
+
+      {lastResult && (
+        <Alert
+          type={lastResult.needNpmInstall ? 'warning' : 'success'}
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={'升级完成：' + lastResult.from + ' → ' + lastResult.to}
+          description={
+            <div style={{ fontSize: 13, lineHeight: 1.9 }}>
+              {lastResult.needNpmInstall && (
+                <div>
+                  <WarningOutlined /> 本次版本调整了后端依赖，升级包内不含 node_modules，请到服务器执行：
+                  <Text code copyable>{lastResult.npmInstallCommand}</Text>
+                </div>
+              )}
+              {(lastResult.appliedMigrations || []).length > 0 && (
+                <div>已执行数据库迁移：{lastResult.appliedMigrations.join('、')}</div>
+              )}
+              {lastResult.backup && <div>已备份旧文件：<Text code>{lastResult.backup}</Text>（有问题可在「历史备份」回滚）</div>}
+              <div>
+                接下来：
+                {lastResult.restart && lastResult.restart.canSelfRestart
+                  ? '点下方「重启服务」按钮生效。'
+                  : <>在服务器执行 <Text code copyable>{lastResult.restart && lastResult.restart.restartCommand}</Text> 生效。</>}
+              </div>
+            </div>
+          }
+        />
       )}
 
       {info.runtime?.canSelfRestart && (

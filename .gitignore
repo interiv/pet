@@ -68,3 +68,6 @@ scripts/e2e/_tmp-*.sqlite
 temp/
 我的脚本/
 
+
+# 发布产物（由 scripts/release.mjs 生成，不入库）
+release/

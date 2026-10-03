@@ -58,9 +58,19 @@ const FILE = 'pet-' + version + '.tar.gz';
 // 写入版本号（VERSION 是升级判定的唯一依据）
 const versionFile = path.join(BACKEND, 'VERSION');
 const before = fs.existsSync(versionFile) ? fs.readFileSync(versionFile, 'utf8').trim() : '(无)';
-fs.writeFileSync(versionFile, version + '\n', 'utf8');
 const pkgPath = path.join(BACKEND, 'package.json');
-fs.writeFileSync(pkgPath, fs.readFileSync(pkgPath, 'utf8').replace(/("version"\s*:\s*")[^"]+(")/, '$1' + version + '$2'), 'utf8');
+const pkgBeforeText = fs.readFileSync(pkgPath, 'utf8');
+const pkgBefore = JSON.parse(pkgBeforeText);
+fs.writeFileSync(versionFile, version + '\n', 'utf8');
+fs.writeFileSync(pkgPath, pkgBeforeText.replace(/("version"\s*:\s*")[^"]+(")/, '$1' + version + '$2'), 'utf8');
+
+// 依赖是否变化：升级包不含 node_modules，依赖变了站点必须自己装一次
+const pkgAfter = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+const depsChanged = JSON.stringify(pkgBefore.dependencies || {}) !== JSON.stringify(pkgAfter.dependencies || {});
+if (depsChanged) {
+  console.log('⚠️检测到 package.json 依赖有变化，升级后站点需执行：npm install --omit=dev');
+}
+
 
 let commit = null;
 try {
@@ -103,6 +113,9 @@ const manifest = {
   minVersion: before === '(无)' ? undefined : before,
   requireMigrations: true,
   needRestart: true,
+  // 依赖变化时，站点升级后必须自己跑一次 npm install（升级包不含 node_modules）
+  needNpmInstall: depsChanged,
+  npmInstallCommand: 'cd backend && npm install --omit=dev',
   targets,
   package: {
     file: FILE,
@@ -113,14 +126,31 @@ const manifest = {
 };
 fs.writeFileSync(path.join(OUT, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
 
+// 可选：顺带打一个版本标签（--tag）
+if (hasFlag('tag')) {
+  const tag = 'v' + version;
+  try {
+    execFileSync('git', ['tag', '-a', tag, '-m', 'release ' + version], { cwd: ROOT, stdio: 'inherit' });
+    console.log('已打标签：' + tag + '（推送：git push origin ' + tag + '）');
+  } catch (e) {
+    console.log('打标签失败（可能已存在同名标签）：' + e.message);
+  }
+}
+
 console.log('');
 console.log('版本 ' + before + ' -> ' + version);
 console.log('升级包：' + path.relative(ROOT, archive) + '（' + (buf.length / 1024 / 1024).toFixed(2) + ' MB）');
 console.log('sha256：' + sha256);
 console.log('清单：  ' + path.relative(ROOT, path.join(OUT, 'manifest.json')));
+if (depsChanged) {
+  console.log('');
+  console.log('⚠️ 依赖有变化：请在文档/通知里提醒站点升级后执行  npm install --omit=dev');
+}
 console.log('');
 console.log('接下来：');
-console.log('  1) 把 ' + FILE + ' 和 manifest.json 一起上传到服务器/对象存储（保持同一目录）');
+console.log('  1) 把 ' + FILE + ' 和 manifest.json 一起上传到更新源目录（保持同一目录）');
 console.log('  2) 打开 manifest.json，把 package.url 改成真实下载地址');
 console.log('  3) 站点管理员登录后台上「软件升级」，把 manifest.json 的地址填进「更新源地址」');
 console.log('  4) 点「检查更新」->「立即升级」');
+console.log('');
+console.log('详见根目录《发布指南.md》');
