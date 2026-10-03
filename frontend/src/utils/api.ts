@@ -378,6 +378,9 @@ export const adminAPI = {
   updateClass: (id: number, data: any) => api.put(`/admin/classes/${id}`, data),
   deleteClass: (id: number) => api.delete(`/admin/classes/${id}`),
   addTeacherToClass: (classId: number, data: { teacher_id: number; role?: string }) => api.post(`/admin/classes/${classId}/teachers`, data),
+  // 修改教师在某班内的身份：'head_teacher' | 'teacher'
+  updateClassTeacherRole: (classId: number, teacherId: number, role: 'head_teacher' | 'teacher') =>
+    api.put(`/admin/classes/${classId}/teachers/${teacherId}`, { role }),
   removeTeacherFromClass: (classId: number, teacherId: number) => api.delete(`/admin/classes/${classId}/teachers/${teacherId}`),
 
   // 班级申请审批

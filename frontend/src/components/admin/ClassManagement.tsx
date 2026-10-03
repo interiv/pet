@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Form, Input, message, Tag, Space, Modal, Select, Popconfirm, Switch } from 'antd';
+import { Table, Button, Form, Input, message, Tag, Space, Modal, Select, Popconfirm, Switch, Tooltip, Alert } from 'antd';
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import { adminAPI, schoolAPI } from '../../utils/api';
 import { useAuthStore } from '../../store/authStore';
@@ -16,10 +16,13 @@ const ClassManagement: React.FC = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [addTeacherModalVisible, setAddTeacherModalVisible] = useState(false);
+  const [editTeacherModalVisible, setEditTeacherModalVisible] = useState(false);
   const [selectedClass, setSelectedClass] = useState<any>(null);
+  const [editingClassTeacher, setEditingClassTeacher] = useState<any>(null);
   const [form] = Form.useForm();
   const [editForm] = Form.useForm();
   const [addTeacherForm] = Form.useForm();
+  const [editTeacherForm] = Form.useForm();
 
   const isAdmin = user?.role === 'admin';
   const isTeacher = user?.role === 'teacher';
@@ -96,12 +99,15 @@ const ClassManagement: React.FC = () => {
   const handleUpdate = async () => {
     try {
       const values = await editForm.validateFields();
-      await adminAPI.updateClass(selectedClass.id, values);
+      // slug 留空表示不修改（而不是清空），避免误操作让班级主页失效
+      const payload: any = { ...values };
+      if (!payload.slug) delete payload.slug;
+      await adminAPI.updateClass(selectedClass.id, payload);
       message.success('班级更新成功');
       setEditModalVisible(false);
       loadClasses();
-    } catch (error) {
-      message.error('更新失败');
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '更新失败');
     }
   };
 
@@ -144,6 +150,29 @@ const ClassManagement: React.FC = () => {
     setAddTeacherModalVisible(true);
   };
 
+  // 修改已添加教师的身份（任课教师 <-> 班主任），无需删除后重新添加
+  const openEditTeacherModal = (cls: any, t: any) => {
+    setSelectedClass(cls);
+    setEditingClassTeacher(t);
+    editTeacherForm.setFieldsValue({ role: t.role });
+    setEditTeacherModalVisible(true);
+  };
+
+  const handleUpdateClassTeacher = async () => {
+    if (!editingClassTeacher || !selectedClass) return;
+    try {
+      const values = await editTeacherForm.validateFields();
+      const res = await adminAPI.updateClassTeacherRole(selectedClass.id, editingClassTeacher.teacher_id, values.role);
+      message.success(res.data?.message || '教师身份更新成功');
+      setEditTeacherModalVisible(false);
+      setEditingClassTeacher(null);
+      editTeacherForm.resetFields();
+      loadClasses();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || '修改身份失败');
+    }
+  };
+
   const isHeadTeacherOf = (cls: any) => {
     return cls.teachers?.some((t: any) => t.teacher_id === user?.id && t.role === 'head_teacher');
   };
@@ -169,6 +198,17 @@ const ClassManagement: React.FC = () => {
             >
               {t.real_name || t.username} {t.role === 'head_teacher' ? '(班主任)' : ''}
             </Tag>
+          ))}
+          {(record.teachers || []).map((t: any) => (
+            <Tooltip key={`edit-${t.teacher_id}`} title="修改身份（任课教师 / 班主任）">
+              <Button
+                type="link"
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => openEditTeacherModal(record, t)}
+                style={{ padding: '0 6px' }}
+              />
+            </Tooltip>
           ))}
           {(isAdmin || isHeadTeacherOf(record)) && (
             <Button type="link" size="small" onClick={() => openAddTeacherModal(record)}>+ 添加教师</Button>
@@ -249,8 +289,9 @@ const ClassManagement: React.FC = () => {
           <Form.Item
             name="slug"
             label="班级标识 (slug)"
+            tooltip="班级主页地址 /c/<slug>，学生进工作台也用它；留空表示不修改"
             rules={[
-              { pattern: /^[a-z0-9][a-z0-9-]{2,31}$/i, message: '3-32 位字母/数字/连字符，首字符为字母或数字' },
+              { pattern: /^[\u4e00-\u9fffa-z0-9][\u4e00-\u9fffa-z0-9-]{1,62}[\u4e00-\u9fffa-z0-9]$/i, message: '3-64 位中文/字母/数字/连字符，首尾为中文、字母或数字' },
             ]}
           >
             <Input placeholder="例：class3-grade2" />
@@ -274,6 +315,31 @@ const ClassManagement: React.FC = () => {
               <Select.Option value="teacher">任课教师</Select.Option>
             </Select>
           </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`修改「${editingClassTeacher?.real_name || editingClassTeacher?.username || ''}」在班级「${selectedClass?.name}」中的身份`}
+        open={editTeacherModalVisible}
+        onOk={handleUpdateClassTeacher}
+        onCancel={() => { setEditTeacherModalVisible(false); setEditingClassTeacher(null); editTeacherForm.resetFields(); }}
+      >
+        <Form form={editTeacherForm} layout="vertical">
+          <Form.Item
+            name="role"
+            label="身份"
+            tooltip="一个班级只能有一位班主任；一位教师只能担任一个班的班主任"
+          >
+            <Select>
+              <Select.Option value="head_teacher">班主任</Select.Option>
+              <Select.Option value="teacher">任课教师</Select.Option>
+            </Select>
+          </Form.Item>
+          <Alert
+            type="info"
+            showIcon
+            message="改任课教师后，该教师在本班的学生管理、作业审批等班主任权限会相应变化；设为班主任则会自动接管本班班主任权限。"
+          />
         </Form>
       </Modal>
     </div>

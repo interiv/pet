@@ -22,9 +22,9 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
     loadTeachers();
   }, [statusFilter, searchText]);
 
-  // 打开"添加教师"弹窗时刷新学校与班级（可能刚在其他页签新建过）
+  // 打开"添加教师 / 编辑教师"弹窗时刷新学校与班级（可能刚在其他页签新建过）
   useEffect(() => {
-    if (!createModalVisible) return;
+    if (!createModalVisible && !editModalVisible) return;
     (async () => {
       try {
         const [sRes, cRes] = await Promise.all([schoolAPI.getSchools(), adminAPI.getClasses()]);
@@ -34,7 +34,7 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
         console.error('加载学校/班级列表失败', e);
       }
     })();
-  }, [createModalVisible]);
+  }, [createModalVisible, editModalVisible]);
 
   const createSchoolId = Form.useWatch('school_id', createForm);
   const createIdentity = Form.useWatch('teacher_identity', createForm) || 'teacher';
@@ -45,6 +45,18 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
   // 班主任只能分配到"还没有班主任"的班级
   const headTeacherCandidateClasses = createClassOptions.filter(
     (c: any) => !c.head_teacher_id && !(c.teachers || []).some((t: any) => t.role === 'head_teacher')
+  );
+
+  const editSchoolId = Form.useWatch('school_id', form);
+  const editIdentity = Form.useWatch('teacher_identity', form) || 'teacher';
+  const editClassOptions = editSchoolId
+    ? classList.filter((c: any) => c.school_id === editSchoolId || !c.school_id)
+    : classList;
+  // 编辑时把自己当前担任班主任的班级也算作候选，否则无法「保持原样」
+  const editHeadTeacherCandidateClasses = editClassOptions.filter(
+    (c: any) =>
+      (!c.head_teacher_id && !(c.teachers || []).some((t: any) => t.role === 'head_teacher'))
+      || c.head_teacher_id === editingTeacher?.id
   );
 
   const loadTeachers = async () => {
@@ -61,7 +73,16 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
 
   const handleEdit = (record: any) => {
     setEditingTeacher(record);
-    form.setFieldsValue(record);
+    form.setFieldsValue({
+      real_name: record.real_name || '',
+      username: record.username,
+      email: record.email || '',
+      status: record.status,
+      password: '',
+      teacher_identity: record.teacher_identity === 'head_teacher' ? 'head_teacher' : 'teacher',
+      class_ids: (record.classes || []).filter((c: any) => c.role !== 'head_teacher').map((c: any) => c.id),
+      class_id: (record.classes || []).find((c: any) => c.role === 'head_teacher')?.id,
+    });
     setEditModalVisible(true);
   };
 
@@ -83,12 +104,34 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
   const handleUpdate = async () => {
     try {
       const values = await form.validateFields();
-      await adminAPI.updateTeacher(editingTeacher.id, values);
-      message.success('教师信息更新成功');
+      const payload: any = {
+        real_name: values.real_name,
+        username: values.username,
+        email: values.email,
+        status: values.status,
+        // 留空表示不修改密码
+        password: values.password || undefined,
+      };
+      // 班级归属：班主任只能一个班（单选），任课教师可多班（多选）
+      if (values.teacher_identity === 'head_teacher') {
+        payload.teacher_identity = 'head_teacher';
+        payload.class_id = values.class_id ?? null;
+        payload.class_ids = [];
+      } else {
+        payload.teacher_identity = 'teacher';
+        payload.class_ids = values.class_ids || [];
+      }
+      const res = await adminAPI.updateTeacher(editingTeacher.id, payload);
+      message.success(res.data?.message || '教师信息更新成功');
       setEditModalVisible(false);
+      form.resetFields();
       loadTeachers();
-    } catch (error) {
-      message.error('更新失败');
+    } catch (error: any) {
+      if (error?.response?.data?.error) {
+        message.error(error.response.data.error);
+      } else {
+        message.error('更新失败');
+      }
     }
   };
 
@@ -110,6 +153,30 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
     { title: '姓名', dataIndex: 'real_name', key: 'real_name', render: (v: string) => v || <span style={{ color: '#bbb' }}>—</span> },
     { title: '用户名', dataIndex: 'username', key: 'username' },
     { title: '邮箱', dataIndex: 'email', key: 'email' },
+    {
+      title: '身份 / 班级',
+      key: 'classes',
+      render: (_: any, record: any) => {
+        const classes: any[] = record.classes || [];
+        if (classes.length === 0) {
+          return <span style={{ color: '#bbb' }}>未分配班级</span>;
+        }
+        return (
+          <Space direction="vertical" size={2}>
+            <Tag color={record.teacher_identity === 'head_teacher' ? 'gold' : 'blue'}>
+              {record.teacher_identity === 'head_teacher' ? '班主任' : '任课教师'}
+            </Tag>
+            <Space size={4} wrap>
+              {classes.map((c) => (
+                <Tag key={c.id} color={c.role === 'head_teacher' ? 'gold' : 'default'}>
+                  {c.name}{c.role === 'head_teacher' ? '（班主任）' : ''}
+                </Tag>
+              ))}
+            </Space>
+          </Space>
+        );
+      }
+    },
     { title: '注册时间', dataIndex: 'created_at', key: 'created_at', render: (v: string) => new Date(v).toLocaleDateString() },
     { title: '最后登录', dataIndex: 'last_login', key: 'last_login', render: (v: string) => v ? new Date(v).toLocaleDateString() : '从未登录' },
     {
@@ -286,11 +353,82 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
         </Form>
       </Modal>
 
-      <Modal title="编辑教师" open={editModalVisible} onOk={handleUpdate} onCancel={() => setEditModalVisible(false)}>
+      <Modal title="编辑教师" open={editModalVisible} onOk={handleUpdate} onCancel={() => { setEditModalVisible(false); form.resetFields(); }}>
         <Form form={form} layout="vertical">
           <Form.Item name="real_name" label="姓名"><Input placeholder="教师姓名" /></Form.Item>
           <Form.Item name="username" label="用户名（登录账号）"><Input /></Form.Item>
+          <Form.Item
+            name="password"
+            label="重置密码"
+            extra="留空表示不修改；填写并保存后立即生效，教师下次登录请使用新密码"
+            rules={[{ validator: (_, v) => (!v || String(v).length >= 6) ? Promise.resolve() : Promise.reject(new Error('密码至少 6 位')) }]}
+          >
+            <Input.Password
+              placeholder="至少 6 位，留空不修改"
+              autoComplete="new-password"
+              addonAfter={<a onClick={() => form.setFieldValue('password', String(Math.floor(100000 + Math.random() * 900000)))}>随机生成</a>}
+            />
+          </Form.Item>
           <Form.Item name="email" label="邮箱"><Input /></Form.Item>
+          <Form.Item name="school_id" label="所属学校（用于筛选班级）" tooltip="仅用于筛选下方班级列表，不会写入教师资料">
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="选择学校（可选）"
+              onChange={() => form.setFieldsValue({ class_id: undefined, class_ids: undefined })}
+              options={schools.map((s: any) => ({ value: s.id, label: `${s.name}${s.city ? ` - ${s.city}` : ''}` }))}
+            />
+          </Form.Item>
+          <Form.Item
+            name="teacher_identity"
+            label="教师身份"
+            tooltip="班主任只能带一个班；任课教师可以同时加入多个班级。修改后下方班级列表按此身份保存"
+          >
+            <Select
+              onChange={() => {
+                // 切换身份时清空已选班级（两种身份用的字段不同）
+                form.setFieldsValue({ class_id: undefined, class_ids: undefined });
+              }}
+            >
+              <Select.Option value="teacher">任课教师</Select.Option>
+              <Select.Option value="head_teacher">班主任</Select.Option>
+            </Select>
+          </Form.Item>
+
+          {editIdentity === 'head_teacher' ? (
+            <Form.Item name="class_id" label="担任班主任的班级（只能一个）">
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="children"
+                placeholder={editHeadTeacherCandidateClasses.length ? '选择班级' : '暂无可选班级（都已设置班主任）'}
+              >
+                {editHeadTeacherCandidateClasses.map((c: any) => (
+                  <Select.Option key={c.id} value={c.id}>
+                    {c.name}{c.grade ? `（${c.grade}）` : ''}
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+          ) : (
+            <Form.Item name="class_ids" label="任教班级（可多选，留空表示暂不分配班级）">
+              <Select
+                mode="multiple"
+                allowClear
+                showSearch
+                optionFilterProp="children"
+                maxTagCount={3}
+                placeholder={editClassOptions.length ? '选择班级（可多选）' : '暂无可选班级'}
+              >
+                {editClassOptions.map((c: any) => (
+                  <Select.Option key={c.id} value={c.id}>
+                    {c.name}{c.grade ? `（${c.grade}）` : ''}
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+          )}
           <Form.Item name="status" label="状态">
             <Select>
               <Select.Option value="active">已激活</Select.Option>

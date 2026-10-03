@@ -5,20 +5,11 @@ const jwt = require('jsonwebtoken');
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const crypto = require('crypto');
+const { isValidSlug, generateClassSlug } = require('../utils/slug');
 
 // 生成推荐码
 function generateInviteCode() {
   return crypto.randomBytes(4).toString('hex').toUpperCase();
-}
-
-// 生成班级 slug：基于名称拼音 + 随机后缀
-function generateSlug(name) {
-  const base = name
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  const suffix = crypto.randomBytes(3).toString('hex');
-  return `${base || 'class'}-${suffix}`;
 }
 
 router.get('/public-list', (req, res) => {
@@ -197,8 +188,8 @@ router.put('/:id/slug', authenticateToken, (req, res) => {
     if (!classId) return res.status(400).json({ error: '班级 ID 无效' });
     const { slug } = req.body || {};
     const s = String(slug || '').trim();
-    if (!/^[a-z0-9][a-z0-9-]{2,31}$/i.test(s)) {
-      return res.status(400).json({ error: 'slug 需 3-32 位字母/数字/连字符，且首字符为字母或数字' });
+    if (!isValidSlug(s)) {
+      return res.status(400).json({ error: 'slug 需 3-64 位中文/字母/数字/连字符，且首尾为中文、字母或数字' });
     }
     if (req.user.role !== 'admin') {
       const row = db.prepare(
@@ -273,7 +264,7 @@ router.post('/create', authenticateToken, (req, res) => {
     }
 
     // 创建班级，教师自动成为班主任
-    const slug = generateSlug(name);
+    const slug = generateClassSlug(name, (candidate) => !!db.prepare('SELECT 1 FROM classes WHERE slug = ?').get(candidate));
     const result = db.prepare(`
       INSERT INTO classes (name, grade, slug, head_teacher_id, student_count, total_exp, created_at)
       VALUES (?, ?, ?, ?, 0, 0, datetime('now'))

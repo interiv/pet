@@ -1,6 +1,6 @@
 import React, { useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { ConfigProvider, Spin, Alert, Button, Space } from 'antd';
+import { ConfigProvider, Spin, Alert, Button, message } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { useAuthStore } from './store/authStore';
 import LandingPage from './pages/LandingPage';
@@ -25,10 +25,26 @@ export const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children
 
 // 根路径：始终展示首页内容
 const RootRedirect: React.FC = () => {
-  const { user } = useAuthStore();
+  const { user, checkAuth } = useAuthStore();
+  const [refreshing, setRefreshing] = React.useState(false);
 
+  // 只有「自己注册待审批」或「确实还没有任何班级」才算待处理；
+  // 管理员批量导入 / 生成账号的学生入班即生效（class_id 有值），不该再提示申请进度
   const pendingStudent = user && user.role === 'student'
-    && ((user as any).status === 'pending_approval' || !user.class_slug);
+    && ((user as any).status === 'pending_approval' || !(user as any).class_id);
+
+  // 「查询进度」= 重新拉取当前账号状态，而不是把人送回登录页
+  const refreshStatus = async () => {
+    setRefreshing(true);
+    try {
+      await checkAuth();
+      message.info('已刷新账号状态，若审批已通过可直接进入班级工作台');
+    } catch (e) {
+      message.error('刷新失败，请稍后重试');
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   return (
     <>
@@ -40,9 +56,7 @@ const RootRedirect: React.FC = () => {
             message="您的入班申请尚未处理"
             description="请联系班主任处理您的申请，或留在公开首页浏览各班级。接入班级后即可体验完整功能。"
             action={
-              <Space>
-                <Button size="small" onClick={() => window.location.href = '/login'}>查询进度</Button>
-              </Space>
+              <Button size="small" loading={refreshing} onClick={refreshStatus}>查询进度</Button>
             }
           />
         </div>

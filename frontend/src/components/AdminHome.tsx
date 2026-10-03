@@ -102,6 +102,21 @@ const AdminHome: React.FC<AdminHomeProps> = ({ onNavigate }) => {
     announcement: '📢',
   };
 
+  // 后端 recent_events 只返回 { type, time, message }，没有 time_ago，这里前端自行算相对时间
+  const eventTimeText = (time?: string) => {
+    if (!time) return '';
+    const diff = Date.now() - new Date(time).getTime();
+    if (Number.isNaN(diff)) return '';
+    const min = Math.floor(diff / 60000);
+    if (min < 1) return '刚刚';
+    if (min < 60) return `${min} 分钟前`;
+    const hour = Math.floor(min / 60);
+    if (hour < 24) return `${hour} 小时前`;
+    const day = Math.floor(hour / 24);
+    if (day < 8) return `${day} 天前`;
+    return new Date(time).toLocaleDateString();
+  };
+
   const quickActions = [
     { key: 'teachers', icon: <UserOutlined />, label: '教师申请审批', tab: 'applications', color: '#faad14', badge: pendingTeachers },
     { key: 'applications', icon: <TeamOutlined />, label: '申请审批', tab: 'applications', color: '#1890ff', badge: pendingApps },
@@ -365,9 +380,9 @@ const AdminHome: React.FC<AdminHomeProps> = ({ onNavigate }) => {
             {recentEvents.slice(0, 8).map((event: any, index: number) => (
               <div key={index} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderBottom: index < recentEvents.slice(0, 8).length - 1 ? '1px solid #f5f5f5' : 'none' }}>
                 <span style={{ fontSize: 16 }}>{eventIconMap[event.type] || '📌'}</span>
-                <span style={{ flex: 1, fontSize: 13, color: '#555' }}>{event.description}</span>
+                <span style={{ flex: 1, fontSize: 13, color: '#555' }}>{event.message || '-'}</span>
                 <span style={{ fontSize: 11, color: '#bbb', whiteSpace: 'nowrap' }}>
-                  {event.time_ago || ''}
+                  {eventTimeText(event.time)}
                 </span>
               </div>
             ))}

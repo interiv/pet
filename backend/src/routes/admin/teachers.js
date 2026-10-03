@@ -26,6 +26,65 @@ const {
   ensureSettingsTable,
 } = require('./_shared');
 
+/**
+ * 校验「教师 → 班级 + 身份」的分配是否合法
+ * 规则：一个班级只能有一个班主任；一个教师只能当一个班的班主任
+ * @returns {{ classIds: number[], role: 'teacher'|'head_teacher', classes: any[] }}
+ * @throws {Error} 校验失败时抛出，message 为可直接展示给管理员的提示
+ */
+function resolveTeacherAssignment(rawClassIds, teacherIdentity, teacherId) {
+  const role = teacherIdentity === 'head_teacher' ? 'head_teacher' : 'teacher';
+  const classIds = [...new Set((Array.isArray(rawClassIds) ? rawClassIds : [])
+    .map((v) => parseInt(v, 10))
+    .filter((n) => Number.isFinite(n)))];
+
+  if (role === 'head_teacher' && classIds.length > 1) {
+    throw new Error('班主任只能分配一个班级');
+  }
+
+  const classes = [];
+  for (const cid of classIds) {
+    const cls = db.prepare('SELECT id, name, head_teacher_id FROM classes WHERE id = ?').get(cid);
+    if (!cls) throw new Error(`班级 ID ${cid} 不存在`);
+
+    if (role === 'head_teacher') {
+      const existingHeadId = cls.head_teacher_id
+        || db.prepare(`SELECT teacher_id FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(cid)?.teacher_id;
+      // 同一教师重复设置自己为班主任不算冲突
+      if (existingHeadId && Number(existingHeadId) !== Number(teacherId)) {
+        const head = db.prepare('SELECT real_name, username FROM users WHERE id = ?').get(existingHeadId);
+        throw new Error(`班级「${cls.name}」已有班主任（${head ? (head.real_name || head.username) : existingHeadId}），请先更换班主任`);
+      }
+    }
+    classes.push(cls);
+  }
+
+  return { classIds, role, classes };
+}
+
+/**
+ * 覆盖式同步教师的班级归属：先清空旧归属，再按新设置重建
+ * （class_teachers 上有 UNIQUE(class_id, teacher_id)，删除后重建最直接）
+ */
+function syncTeacherClasses(teacherId, classIds, role) {
+  const owned = db.prepare('SELECT class_id, role FROM class_teachers WHERE teacher_id = ?').all(teacherId);
+  for (const row of owned) {
+    if (row.role === 'head_teacher') {
+      // 该教师不再担任此班班主任，必须同步清空冗余字段，否则「我的班级」等依赖它的地方会失效
+      db.prepare('UPDATE classes SET head_teacher_id = NULL WHERE id = ? AND head_teacher_id = ?').run(row.class_id, teacherId);
+    }
+  }
+  db.prepare('DELETE FROM class_teachers WHERE teacher_id = ?').run(teacherId);
+
+  for (const cid of classIds) {
+    db.prepare('INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, ?)')
+      .run(cid, teacherId, role);
+    if (role === 'head_teacher') {
+      db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?').run(teacherId, cid);
+    }
+  }
+}
+
 router.get('/teachers', authenticateToken, (req, res) => {
   try {
     if (req.user.role === 'student') {
@@ -34,7 +93,7 @@ router.get('/teachers', authenticateToken, (req, res) => {
     const { status, search } = req.query;
     let sql = `SELECT id, username, real_name, email, avatar, created_at, last_login, status FROM users WHERE role = 'teacher'`;
     const params = [];
-    
+
     if (status) {
       sql += ` AND status = ?`;
       params.push(status);
@@ -44,9 +103,28 @@ router.get('/teachers', authenticateToken, (req, res) => {
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
     sql += ` ORDER BY created_at DESC`;
-    
+
     const teachers = db.prepare(sql).all(...params);
-    res.json({ teachers });
+
+    //附带每个教师所在的班级与身份（班主任 / 任课教师），供列表展示与编辑
+    const classStmt = db.prepare(`
+      SELECT c.id, c.name, c.slug, c.grade, ct.role
+      FROM class_teachers ct JOIN classes c ON ct.class_id = c.id
+      WHERE ct.teacher_id = ?
+      ORDER BY CASE ct.role WHEN 'head_teacher' THEN 0 ELSE 1 END, c.created_at DESC
+    `);
+    const withClasses = teachers.map((t) => {
+      const classes = classStmt.all(t.id);
+      return {
+        ...t,
+        classes,
+        class_ids: classes.map((c) => c.id),
+        //  只要在任意班级担任班主任，身份即为班主任（一个教师只能带一个班）
+        teacher_identity: classes.some((c) => c.role === 'head_teacher') ? 'head_teacher' : 'teacher',
+      };
+    });
+
+    res.json({ teachers: withClasses });
   } catch (error) {
     console.error('获取教师列表失败:', error);
     res.status(500).json({ error: '获取教师列表失败' });
@@ -123,31 +201,17 @@ router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
     }
 
     // 指定班级时的校验（支持多班级：任课教师可多选，班主任只能一个班）
-    const identity = teacher_identity === 'head_teacher' ? 'head_teacher' : 'teacher';
-    let targetClassIds = Array.isArray(class_ids) && class_ids.length > 0
-      ? class_ids
-      : (class_id ? [class_id] : []);
-    targetClassIds = [...new Set(targetClassIds.map((v) => parseInt(v)).filter((n) => Number.isFinite(n)))];
-
-    if (identity === 'head_teacher' && targetClassIds.length > 1) {
-      return res.status(400).json({ error: '班主任只能分配一个班级' });
+    let assignment;
+    try {
+      assignment = resolveTeacherAssignment(
+        Array.isArray(class_ids) && class_ids.length > 0 ? class_ids : (class_id ? [class_id] : []),
+        teacher_identity,
+        null
+      );
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
     }
-
-    const targetClasses = [];
-    for (const cid of targetClassIds) {
-      const cls = db.prepare('SELECT id, name, head_teacher_id FROM classes WHERE id = ?').get(cid);
-      if (!cls) {
-        return res.status(400).json({ error: `班级 ID ${cid} 不存在` });
-      }
-      if (identity === 'head_teacher') {
-        const hasHeadTeacher = cls.head_teacher_id
-          || db.prepare(`SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(cid);
-        if (hasHeadTeacher) {
-          return res.status(400).json({ error: `班级「${cls.name}」已有班主任，无法再指定班主任` });
-        }
-      }
-      targetClasses.push(cls);
-    }
+    const { classIds: targetClassIds, role: identity, classes: targetClasses } = assignment;
 
     const passwordHash = await bcrypt.hash(password, 10);
 
@@ -159,18 +223,7 @@ router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
       `).run(String(username).trim(), passwordHash, email || null, realName);
 
       const teacherId = result.lastInsertRowid;
-
-      for (const cls of targetClasses) {
-        if (identity === 'head_teacher') {
-          db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'head_teacher')`)
-            .run(cls.id, teacherId);
-          db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?').run(teacherId, cls.id);
-        } else {
-          db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'teacher')`)
-            .run(cls.id, teacherId);
-        }
-      }
-
+      syncTeacherClasses(teacherId, targetClassIds, identity);
       return teacherId;
     });
 
@@ -196,13 +249,13 @@ router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
 router.put('/teachers/:id', authenticateToken, requireAdmin, (req, res) => {
   try {
     const { id } = req.params;
-    const { username, email, avatar, status, real_name } = req.body;
-    
+    const { username, email, avatar, status, real_name, password, class_id, class_ids, teacher_identity } = req.body;
+
     const teacher = db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'teacher'`).get(id);
     if (!teacher) {
       return res.status(404).json({ error: '教师不存在' });
     }
-    
+
     const updates = [];
     const params = [];
     if (username !== undefined) {
@@ -222,14 +275,69 @@ router.put('/teachers/:id', authenticateToken, requireAdmin, (req, res) => {
     if (status !== undefined) { updates.push('status = ?'); params.push(status); }
     // 真实姓名（与登录账号分离）：传空字符串表示清空
     if (real_name !== undefined) { updates.push('real_name = ?'); params.push(String(real_name || '').trim() || null); }
-    
-    if (updates.length === 0) {
+    // 重置密码（可选）：与学生编辑一致，留空表示不修改
+    let passwordChanged = false;
+    if (password !== undefined && password !== null && String(password).trim() !== '') {
+      const pwd = String(password).trim();
+      if (pwd.length < 6) {
+        return res.status(400).json({ error: '密码至少 6 位' });
+      }
+      updates.push('password_hash = ?'); params.push(bcrypt.hashSync(pwd, 10));
+      passwordChanged = true;
+    }
+
+    // 班级归属 + 身份：任课教师可多班，班主任只能一个班（覆盖式保存）
+    const wantsClassUpdate = class_ids !== undefined || class_id !== undefined || teacher_identity !== undefined;
+    let assignment = null;
+    if (wantsClassUpdate) {
+      // 未显式传班级时，沿用该教师当前所在班级（例如只改身份）
+      const rawClassIds = class_ids !== undefined
+        ? class_ids
+        : (class_id !== undefined
+          ? (class_id ? [class_id] : [])
+          : db.prepare('SELECT class_id FROM class_teachers WHERE teacher_id = ? ORDER BY class_id').all(id).map((r) => r.class_id));
+
+      let identity = teacher_identity;
+      if (identity === undefined) {
+        const current = db.prepare(`SELECT 1 FROM class_teachers WHERE teacher_id = ? AND role = 'head_teacher'`).get(id);
+        identity = current ? 'head_teacher' : 'teacher';
+      }
+
+      try {
+        assignment = resolveTeacherAssignment(rawClassIds, identity, id);
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+    }
+
+    if (updates.length === 0 && !assignment) {
       return res.status(400).json({ error: '没有要更新的字段' });
     }
-    
-    params.push(id);
-    db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-    res.json({ message: '教师信息更新成功' });
+
+    const save = db.transaction(() => {
+      if (updates.length > 0) {
+        db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params, id);
+      }
+      if (assignment) {
+        syncTeacherClasses(id, assignment.classIds, assignment.role);
+      }
+    });
+    save();
+
+    const parts = [];
+    if (updates.length > 0 || assignment) parts.push('教师信息更新成功');
+    if (passwordChanged) parts.push('密码已重置');
+    if (assignment) {
+      parts.push(assignment.classIds.length > 0
+        ? `已${assignment.role === 'head_teacher' ? '设为班主任' : '以任课教师身份加入'}：${assignment.classes.map((c) => `「${c.name}」`).join('、')}`
+        : '已移出所有班级');
+    }
+
+    res.json({
+      message: parts.join('，'),
+      class_ids: assignment ? assignment.classIds : undefined,
+      teacher_identity: assignment ? assignment.role : undefined,
+    });
   } catch (error) {
     console.error('更新教师信息失败:', error);
     res.status(500).json({ error: '更新教师信息失败' });

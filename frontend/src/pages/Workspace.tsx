@@ -23,6 +23,26 @@ const Workspace: React.FC = () => {
         navigate(`/c/${user.class_slug}/app`, { replace: true });
         return;
       }
+      // 学生已入班但登录信息里没有班级标识（例如班级创建时未生成 slug）：
+      // 用班级 ID 兜底查一次，拿到 slug 后正常进入，避免卡在「缺少班级标识」
+      if (user?.role === 'student' && (user as any)?.class_id) {
+        (async () => {
+          try {
+            const res = await classAPI.getHomeSummary((user as any).class_id);
+            const cls = res.data?.class;
+            if (cls?.slug) {
+              navigate(`/c/${cls.slug}/app`, { replace: true });
+              return;
+            }
+            setError('该班级尚未生成访问标识，请联系班主任或管理员在「班级管理 → 编辑班级」中补充 slug');
+          } catch (e: any) {
+            setError(e?.response?.data?.error || '班级加载失败');
+          } finally {
+            setLoading(false);
+          }
+        })();
+        return;
+      }
       setError('缺少班级标识');
       setLoading(false);
       return;
