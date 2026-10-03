@@ -10,6 +10,12 @@
 |------|----------|
 | **宠物系统** | 32种宠物选择（火焰狮、水灵龟、森林鹿、光明鸟、暗影狼、雷霆狐、冰晶熊、疾风鹰、大地象、钢铁犀、熔岩龙、深海鲸、剧毒蝎、幻影猫、荆棘蛇、圣光兽、幽冥蝠、闪电豹、极地狐、狂风熊、岩石鳄、钛金龙、赤炎凤、潮汐马、灵木猿、晨星灵、梦魇犬、雷云虎、霜冻企鹅、飓风螳螂、沙漠鸵、秘银龟），7阶段成长（宠物蛋→初生期→幼年期→成长期→成年期→完全体→究极体），属性养成（攻击、防御、速度、生命、心情、饥饿度），技能系统，进化机制 |
 | **作业系统** | AI 作业生成（GPT 大模型），客观题自动批改，主观题 AI 评分，错题本智能管理，作业提交图片上传，知识点关联 |
+| **作业类型** | 预习 / 作业 / 复习三类；预习题可整班打印成纸质卷，供住校生等无设备学生使用 |
+| **纸质闭环** | 按班级名单预填姓名批量打印 A4 试卷 → 学生笔答 → 拍照上传（最多 12 张）→ 视觉大模型识别卷面姓名自动分人 → 逐题判分 → 一键批量登记 |
+| **学情报告** | 教师/班主任按学科或全学科、按时间段分析个人/每人/全班：KPI、趋势、知识点掌握热力矩阵、需关注名单、AI 成因分析与教学建议，可导出 Excel/CSV，报告按班级存档留历史 |
+| **个人题库** | 每次作答（线上提交或纸质登记）自动沉淀做过的**全部**题目，区别于只存错题的错题本，可按学科/类型/正误筛选 |
+| **错题重做** | 错题可逐题重做（客观题自动判、主观题自评），**连续答对 2 次**才移出错题本，完整保留重做历史 |
+| **学习数据** | 知识点掌握度、薄弱点排行、复习效果环比监测、每日/周内/时段分布、**逐题作答耗时**与作答节奏提醒 |
 | **战斗系统** | 1v1 对战、BOSS 战、属性克制（火→草→水→火，光↔暗），回合制战斗，实时匹配，战斗奖励 |
 | **社交系统** | 好友系统，好友对战，礼物赠送，聊天室，班级论坛，班级动态 |
 | **装备系统** | 武器、防具、饰品装备，属性加成，装备强化 |
@@ -17,16 +23,18 @@
 | **排行榜** | 等级排行、战斗排行、作业完成度排行、宠物排行 |
 | **每日任务** | 签到、活跃任务，经验奖励 |
 | **班级管理** | 班级创建、学生管理、教师管理、班级 BOSS 战、班级首页展示 |
-| **教师功能** | 发布作业、查看学情统计、管理班级学生、作业模板 |
+| **教师功能** | 发布作业、查看学情统计与学情报告、管理班级学生、作业模板、纸质打印与批量登记 |
 | **管理后台** | 用户管理、学校管理、班级管理、数据统计、系统设置 |
 
 ### 特色亮点
 
 - **AI 作业批改**：集成大模型 API，智能生成作业并批改主观题
+- **住校生无设备闭环**：预习题打印成带姓名的纸质卷，笔答后拍照由 AI 认姓名、判分、归档，全程不需要学生有设备
+- **学情报告**：按学科/时间/学生三个维度出报告，AI 给出成因分析与教学建议，可导出、可存档、可发给家长
 - **属性克制系统**：火→草→水→火循环，光暗相互克制
 - **多维度成长**：经验、金币、装备、技能多维度提升宠物实力
 - **班级生态**：班级排行榜、BOSS 战，集体荣誉感
-- **数据可视化**：学习仪表盘、知识点掌握进度
+- **数据可视化**：学习仪表盘、知识点掌握进度、掌握热力矩阵
 
 ## 技术栈
 
@@ -59,10 +67,10 @@ pet/
 │   ├── migrations/        # 数据库迁移文件
 │   ├── seeds/             # 种子数据文件
 │   ├── src/
-│   │   ├── config/          # 配置（database / ai / achievementConditions 等）
+│   │   ├── config/          # 配置（database / ai / timezone / achievementConditions 等）
 │   │   │   └── prompts/     # AI 提示词模板（gen / classroom / coach / judge / admin）
 │   │   ├── middleware/      # 认证中间件
-│   │   ├── utils/           # 公共工具（判分标准化等）
+│   │   ├── utils/           # 公共工具（判分标准化 / 属性克制 / analytics 统一分析层）
 │   │   ├── services/        # 服务
 │   │   │   └── demoData/    # 演示数据（导入 / 清除 / 统计）
 │   │   ├── routes/         # API 路由
@@ -70,7 +78,7 @@ pet/
 │   │   │   ├── achievements.js  # 成就系统
 │   │   │   ├── admin.js         # 管理后台
 │   │   │   ├── ai-coach.js     # AI 教练
-│   │   │   ├── assignments.js   # 作业系统
+│   │   │   ├── assignments.js   # 作业系统（含纸质登记、个人题库、错题重做）
 │   │   │   ├── auth.js          # 认证
 │   │   │   ├── battles.js       # 战斗系统
 │   │   │   ├── boss-battles.js # BOSS 战
@@ -81,7 +89,9 @@ pet/
 │   │   │   ├── forum.js         # 论坛
 │   │   │   ├── friends.js       # 好友系统
 │   │   │   ├── items.js         # 物品系统
-│   │   │   ├── knowledge-points.js # 知识点
+│   │   │   ├── knowledge-points.js # 知识点掌握度
+│   │   │   ├── learning-reports.js    # 学情报告（总览/知识点矩阵/学生名单/个体画像）
+│   │   │   ├── learning-reports-ai.js # 学情报告 AI 生成与存档
 │   │   │   ├── leaderboard.js   # 排行榜
 │   │   │   ├── notifications.js # 通知
 │   │   │   ├── pets.js          # 宠物系统
@@ -109,7 +119,11 @@ pet/
 │   │   │   ├── Forum.tsx              # 论坛
 │   │   │   ├── Friends.tsx            # 好友
 │   │   │   ├── LearningDashboard.tsx  # 学习仪表盘
+│   │   │   ├── LearningReports.tsx    # 学情报告（教师端）
 │   │   │   ├── Notifications.tsx      # 通知
+│   │   │   ├── PaperBatchRegister.tsx # 纸质作业批量扫描登记
+│   │   │   ├── PaperRegister.tsx      # 纸质作业单人登记
+│   │   │   ├── PersonalQuestionBank.tsx # 学生个人题库
 │   │   │   ├── PetCenter.tsx          # 宠物中心
 │   │   │   ├── PetDisplay.tsx         # 宠物展示
 │   │   │   ├── PetSkills.tsx          # 宠物技能
@@ -123,7 +137,7 @@ pet/
 │   │   │   └── admin/                  # 管理组件
 │   │   ├── pages/            # 页面
 │   │   ├── store/            # 状态管理
-│   │   ├── utils/            # 工具函数
+│   │   ├── utils/            # 工具函数（api 请求封装 / printPaper 纸质卷生成 / imageCompress 图片压缩）
 │   │   └── App.tsx           # 主组件
 │   └── package.json
 └── README.md
@@ -244,6 +258,7 @@ JWT_SECRET=your-secret-key
 JWT_EXPIRES_IN=7d
 
 # AI 服务配置
+# 注意：数据库 settings 表里的 ai_* 优先级更高，环境变量仅作 fallback
 AI_API_KEY=your-api-key
 AI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 AI_MODEL=doubao-seed-2-0-pro-260215
@@ -251,6 +266,20 @@ AI_MODEL=doubao-seed-2-0-pro-260215
 # 前端地址（用于 CORS 和邀请链接）
 FRONTEND_URL=https://your-domain.com
 ```
+
+### AI 配置在后台管理
+
+`AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL` 均可在**管理后台 → AI设置**中修改，存于数据库 `settings` 表，**优先级高于 `.env`**。
+
+其中 **「视觉模型」** 单独配置，用于批量扫描纸质作业时识别照片上的题目与姓名。
+需填一个支持图片输入的模型（视觉模型留空时会回退到 `AI_MODEL`）。
+
+| 配置项 | 用途 | 缺失时表现 |
+|---|---|---|
+| `ai_model` | 出题、批改、教练、学情报告 | 相关接口报「AI 配置未完成」 |
+| `ai_vision_model` | 纸质作业照片识别（批量扫描） | 批量扫描报错，其余功能不受影响 |
+| `ai_timeout` | 单次 AI 调用超时秒数（默认 300） | 大批量识别易超时，建议调大 |
+| `ai_report_interval_days` | AI 报告缓存天数（默认 3） | 改小可让报告更"新鲜" |
 
 ## 游戏说明
 
@@ -324,6 +353,42 @@ FRONTEND_URL=https://your-domain.com
 - 完成任务
 - 成就奖励
 
+## 住校生（无设备）学习闭环
+
+面向住校生、学生手上没有手机/平板/电脑的场景设计的完整闭环，教师侧操作：
+
+1. **发布预习题** — 作业发布第 3 步「作业类型」选 `预习`
+2. **打印** — 作业列表点「打印」，选「按名单预填姓名」，可勾选"仅未提交"的学生；
+   系统为每位学生生成一份 A4 卷（页眉已填好姓名/学号），每人一页自动分页，打开即弹出打印对话框
+3. **学生笔答** — 纸质卷发给学生，学生用笔在纸上作答
+4. **批量扫描** — 收齐后逐张拍照上传（一次最多 12 张），点「AI批量识别」：
+   视觉大模型识别每张卷面的**姓名**并自动归到对应学生，逐题判分
+5. **人工校对** — 未认出姓名的标红「待指派」，下拉手动指定；逐题核对 AI 判分（主观题可给部分分）
+6. **一键登记** — 批量写入成绩、发放金币、记入个人题库与错题本，学生端即时可见
+
+> 单份补录可用「纸质登记」（选学生 → 拍照 → 识别 → 保存），适合个别学生。
+> 批量识别的准确率取决于卷面姓名是否清晰写在卷首，以及视觉模型能力。
+
+## 学情报告使用说明
+
+教师端「学习中心 → 学情报告」，支持按 **班级 / 学科（单科或全部）/ 时间段** 组合分析：
+
+| 区块 | 内容 |
+|---|---|
+| 总览 | 答题数、正确率、参与率、平均分、每日正确率趋势、学科对比、作业类型分布、作业完成率 |
+| 知识点掌握矩阵 | 学生 × 知识点热力表，一眼看出「哪些人栽在同一题上」，可导出 Excel/CSV |
+| 学生名单 | 正确率、掌握度、错题积压、需关注名单（低正确率 / 无作答 / 错题积压多） |
+| AI 班级报告 | 班级薄弱环节成因分析、教学建议、需关注学生清单，并生成可直接发家长的说明 |
+| AI 个体报告 | 针对单个学生的辅导计划与知识点补救措施 |
+
+报告按「班级 + 学科 + 时间段 + 类型」存档，可回看历史（`learning_reports` 表）。
+
+**数据口径说明**（避免误读）：
+- 任课老师只能看到自己所授学科的数据，班主任可看全科
+- 正确率按**答题量加权**（非各知识点算术平均），与「知识点平均正确率」不同
+- 知识点需累计练习 ≥ 1 次才纳入统计；掌握/薄弱判定需 ≥ 2 次
+- 纸质登记与线上提交数据同源，都会计入
+
 ## API 概览
 
 | 模块 | 端点 |
@@ -331,12 +396,20 @@ FRONTEND_URL=https://your-domain.com
 | 认证 | `/api/auth/register`, `/api/auth/login`, `/api/auth/me` |
 | 宠物 | `/api/pets/my-pet`, `/api/pets/create`, `/api/pets/feed` |
 | 作业 | `/api/assignments`, `/api/assignments/:id/submit` |
+| 作业类型 | `/api/assignments?assignment_type=preview\|homework\|review`, `/api/assignments/stats/type-summary` |
+| 纸质作业 | `/api/assignments/:id/paper-submit`, `/api/assignments/:id/paper-submit-batch`, `/api/assignments/:id/ai-paper-judge`, `/api/assignments/:id/ai-paper-judge-batch` |
+| 个人题库 | `/api/assignments/personal-bank/my`, `/api/assignments/personal-bank/stats` |
+| 错题本 | `/api/assignments/wrong/my`, `/api/assignments/wrong/:id/review`, `/api/assignments/wrong/retry`, `/api/assignments/wrong/mastery` |
+| 学情报告 | `/api/learning-reports/overview`, `/knowledge-matrix`, `/students`, `/student/:id`, `POST /ai-report`, `POST /ai-report/student`, `/ai-report/history` |
+| 知识点 | `/api/knowledge-points/`, `/weak-points`, `/heatmap`, `/review-effectiveness`, `/learning-time`, `/class/:id/overview`, `/class/:id/student/:sid` |
 | 战斗 | `/api/battles/start`, `/api/battles/history` |
 | BOSS 战 | `/api/boss-battles/*` |
 | 排行榜 | `/api/leaderboard/level`, `/api/leaderboard/battle` |
 | 好友 | `/api/friends/*` |
 | 装备 | `/api/equipment/*` |
 | 成就 | `/api/achievements/*` |
+
+> 学情报告接口按角色隔离：班主任看全科，任课老师仅看自己所授学科，学生访问返回 403。
 
 ## 许可证
 
