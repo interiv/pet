@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Table, Button, Form, Input, message, Tag, Space, Modal, Select, Popconfirm, Switch, Tooltip, Alert } from 'antd';
-import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, PlusOutlined, CloseOutlined } from '@ant-design/icons';
 import { adminAPI, schoolAPI } from '../../utils/api';
 import { useAuthStore } from '../../store/authStore';
 import { useMobile, useTablePagination } from './hooks';
@@ -187,34 +187,68 @@ const ClassManagement: React.FC = () => {
     {
       title: '教师',
       key: 'teachers',
-      render: (_: any, record: any) => (
-        <div>
-          {(record.teachers || []).map((t: any) => (
-            <Tag
-              key={t.teacher_id}
-              closable={(isAdmin || isHeadTeacherOf(record)) && t.role !== 'head_teacher'}
-              onClose={() => (isAdmin || isHeadTeacherOf(record)) && t.role !== 'head_teacher' ? handleRemoveTeacher(record.id, t.teacher_id) : undefined}
-              color={t.role === 'head_teacher' ? 'blue' : 'default'}
-            >
-              {t.real_name || t.username} {t.role === 'head_teacher' ? '(班主任)' : ''}
-            </Tag>
-          ))}
-          {(record.teachers || []).map((t: any) => (
-            <Tooltip key={`edit-${t.teacher_id}`} title="修改身份（任课教师 / 班主任）">
-              <Button
-                type="link"
-                size="small"
-                icon={<EditOutlined />}
-                onClick={() => openEditTeacherModal(record, t)}
-                style={{ padding: '0 6px' }}
-              />
-            </Tooltip>
-          ))}
-          {(isAdmin || isHeadTeacherOf(record)) && (
-            <Button type="link" size="small" onClick={() => openAddTeacherModal(record)}>+ 添加教师</Button>
-          )}
-        </div>
-      )
+      render: (_: any, record: any) => {
+        const canManage = isAdmin || isHeadTeacherOf(record);
+        return (
+          <div>
+            {(record.teachers || []).map((t: any) => {
+              // 班主任不能直接移除，必须先换成任课教师（后端也有同样校验）
+              const removable = canManage && t.role !== 'head_teacher';
+              return (
+                <div
+                  key={t.teacher_id}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 0, marginBottom: 4 }}
+                >
+                  <Tag
+                    color={t.role === 'head_teacher' ? 'blue' : 'default'}
+                    style={{ marginInlineEnd: 2 }}
+                  >
+                    {/* 名字本身即可点击编辑身份 */}
+                    <a onClick={() => openEditTeacherModal(record, t)}>
+                      {t.real_name || t.username}
+                    </a>
+                    {t.role === 'head_teacher' ? '（班主任）' : ''}
+                  </Tag>
+                  <Tooltip title="修改身份（任课教师 / 班主任）">
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<EditOutlined />}
+                      onClick={() => openEditTeacherModal(record, t)}
+                      style={{ width: 22, height: 22, padding: 0 }}
+                    />
+                  </Tooltip>
+                  {removable ? (
+                    <Popconfirm
+                      title="确定从该班移除该教师？"
+                      onConfirm={() => handleRemoveTeacher(record.id, t.teacher_id)}
+                      okText="移除"
+                      cancelText="取消"
+                    >
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<CloseOutlined />}
+                        style={{ width: 22, height: 22, padding: 0 }}
+                      />
+                    </Popconfirm>
+                  ) : (
+                    <Tooltip title="班主任不能直接移除，请先将其改为任课教师">
+                      <span style={{ display: 'inline-flex', width: 22, height: 22, alignItems: 'center', justifyContent: 'center', color: '#d9d9d9' }}>
+                        <CloseOutlined />
+                      </span>
+                    </Tooltip>
+                  )}
+                </div>
+              );
+            })}
+            {canManage && (
+              <Button type="link" size="small" onClick={() => openAddTeacherModal(record)}>+ 添加教师</Button>
+            )}
+          </div>
+        );
+      }
     },
     { title: '学生数', dataIndex: 'student_count', key: 'student_count' },
     ...(isAdmin ? [{ title: '总经验', dataIndex: 'total_exp', key: 'total_exp' }] : []),
