@@ -435,9 +435,19 @@ export const adminAPI = {
   // 公开统计（无需认证）
   getPublicStatistics: () => api.get('/admin/statistics/public'),
 
+  // ===== 软件升级 =====
+  getUpdateInfo: () => api.get('/admin/system/update/info'),
+  setUpdateSource: (url: string) => api.put('/admin/system/update/source', { url }),
+  checkUpdate: () => api.post('/admin/system/update/check'),
+  getUpdateStatus: () => api.get('/admin/system/update/status'),
+  applyUpdate: (version: string) => api.post('/admin/system/update/apply', { version }, { timeout: 15 * 60 * 1000 }),
+  getUpdateBackups: () => api.get('/admin/system/update/backups'),
+  rollbackUpdate: (file: string) => api.post('/admin/system/update/rollback', { file }, { timeout: 10 * 60 * 1000 }),
+  getUpdateLog: () => api.get('/admin/system/update/log'),
+  restartService: () => api.post('/admin/system/update/restart'),
+
   // 运营看板
-  getOperationalStats: () => api.get('/admin/operational-stats'),
-  getClassTeacherActivity: (classId: number) => api.get(`/admin/classes/${classId}/teacher-activity`),
+  getOperationalStats: () => api.get('/admin/operational-stats'),  getClassTeacherActivity: (classId: number) => api.get(`/admin/classes/${classId}/teacher-activity`),
 
   getTokenUsageDashboard: () => api.get('/admin/token-usage/dashboard'),
   getTokenUsageRecords: (params?: { user_id?: number; date?: string; page?: number; pageSize?: number }) => api.get('/admin/token-usage/records', { params }),

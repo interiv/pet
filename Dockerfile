@@ -24,6 +24,8 @@ WORKDIR /app
 
 COPY --from=backend-builder /app/node_modules ./node_modules
 COPY backend/package*.json ./
+# 版本号文件：软件升级功能靠它判断当前版本，容器里必须有
+COPY backend/VERSION ./VERSION
 COPY backend/src ./src
 COPY backend/scripts ./scripts
 COPY backend/migrations ./migrations

@@ -13,6 +13,7 @@ const AboutPage = lazy(() => import('./pages/AboutPage'));
 const HelpPage = lazy(() => import('./pages/HelpPage'));
 const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
 const ContactPage = lazy(() => import('./pages/ContactPage'));
+const VersionWatcher = lazy(() => import('./components/VersionWatcher'));
 
 // 路由守卫组件：未登录跳 /login 并带上原地址
 export const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -114,6 +115,8 @@ const App: React.FC = () => {
           <Route path="/" element={<RootRedirect />} />
         </Routes>
         </Suspense>
+        {/* 服务端升级后引导用户刷新，避免继续用旧前端调新接口 */}
+        <VersionWatcher />
       </Router>
     </ConfigProvider>
   );

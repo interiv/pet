@@ -45,6 +45,9 @@ const cardRoutes = require('./routes/cards');
 // 初始化数据库
 initDatabase();
 
+// 服务启动时间（升级重启后时间会变，前端可据此判断服务端是否换过）
+const STARTED_AT = new Date().toISOString();
+
 const { db } = require('./config/database');
 
 // 未配置 FRONTEND_URL 时（本地开发 / 首次部署）默认为空数组会拒绝所有跨域请求，
@@ -143,9 +146,28 @@ app.use('/api/cards', cardRoutes);
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: '班级宠物养成系统运行中' });
 });
+// 公开版本号：前端用它判断「服务端是否已升级」，有新版本就提示刷新页面
+app.get('/api/version', (req, res) => {
+  try {
+    const { getCurrentVersion } = require('./utils/version');
+    res.set('Cache-Control', 'no-store');
+    res.json({ version: getCurrentVersion(), startedAt: STARTED_AT, serverTime: new Date().toISOString() });
+  } catch (error) {
+    res.status(500).json({ error: '获取版本失败' });
+  }
+});
 
 // 前端静态文件（生产环境）
 app.use(express.static(path.join(__dirname, '../public')));
+
+// index.html 绝不能被缓存：否则升级后浏览器仍会加载旧版前端
+app.get(['/', '/index.html'], (req, res, next) => {
+  if (!fs.existsSync(PUBLIC_INDEX)) return next();
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.sendFile(PUBLIC_INDEX);
+});
 
 // SPA fallback：非 API 请求都返回 index.html
 const PUBLIC_INDEX = path.join(__dirname, '../public/index.html');

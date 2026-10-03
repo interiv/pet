@@ -14,5 +14,7 @@ router.use('/', require('./settings'));
 router.use('/', require('./monitor'));
 router.use('/', require('./assignments'));
 router.use('/', require('./maintenance'));
+// 软件升级（挂 /api/admin/system/update）
+router.use('/system/update', require('./update'));
 
 module.exports = router;

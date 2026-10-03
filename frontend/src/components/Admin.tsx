@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Tabs } from 'antd';
-import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DatabaseOutlined, GlobalOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, LineChartOutlined, ClearOutlined } from '@ant-design/icons';
+import { UserOutlined, TeamOutlined, FolderOutlined, NotificationOutlined, DatabaseOutlined, GlobalOutlined, ThunderboltOutlined, RobotOutlined, BankOutlined, TrophyOutlined, LineChartOutlined, ClearOutlined, CloudUploadOutlined } from '@ant-design/icons';
 import { useAuthStore } from '../store/authStore';
 import { useMobile } from './admin/hooks';
 import Dashboard from './admin/Dashboard';
@@ -16,6 +16,7 @@ import TokenDashboard from './admin/TokenDashboard';
 import DataView from './admin/DataView';
 import CleanData from './admin/CleanData';
 import SystemData from './admin/SystemData';
+import SoftwareUpdate from './admin/SoftwareUpdate';
 import ClassInvitationManager from './ClassInvitationManager';
 import AchievementManagement from './admin/AchievementManagement';
 
@@ -72,6 +73,7 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
         { key: 'achievements', label: <span><TrophyOutlined /> 成就管理</span>, children: <AchievementManagement /> },
         { key: 'clean_data', label: <span><ClearOutlined /> 清理数据</span>, children: <CleanData /> },
         { key: 'system', label: <span><ThunderboltOutlined /> 系统数据</span>, children: <SystemData /> },
+        { key: 'software_update', label: <span><CloudUploadOutlined /> 软件升级</span>, children: <SoftwareUpdate /> },
       ];
     } else if (isTeacher) {
       const isHeadTeacher = (user as any).teacher_classes?.some((c: any) => c.class_role === 'head_teacher');

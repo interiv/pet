@@ -18,3 +18,22 @@ services:
       - AI_MODEL=doubao-seed-2-0-pro-260215
     volumes:
       - ./data:/app/data
+
+  # ---------------------------------------------------------------------------
+  # 可选：Watchtower 自动更新容器（Docker 部署推荐方案）
+  # 开启方式：docker compose --profile watchtower up -d
+  # 说明：它会定期拉取新镜像并自动重建容器，比在后台「软件升级」里改文件更彻底
+  #      （容器内改的文件在重建后会丢失）。开启前请先在管理后台做好数据库备份。
+  # ---------------------------------------------------------------------------
+  watchtower:
+    image: containrrr/watchtower
+    profiles: ["watchtower"]
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=86400     # 每天检查一次
+      - WATCHTOWER_LABEL_ENABLE=true       # 只更新带 com.centurylinklabs.watchtower.enable 标签的服务
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
