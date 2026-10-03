@@ -17,6 +17,7 @@ import DataView from './admin/DataView';
 import CleanData from './admin/CleanData';
 import SystemData from './admin/SystemData';
 import SoftwareUpdate from './admin/SoftwareUpdate';
+import Profile from './Profile';
 import ClassInvitationManager from './ClassInvitationManager';
 import AchievementManagement from './admin/AchievementManagement';
 
@@ -74,6 +75,8 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
         { key: 'clean_data', label: <span><ClearOutlined /> 清理数据</span>, children: <CleanData /> },
         { key: 'system', label: <span><ThunderboltOutlined /> 系统数据</span>, children: <SystemData /> },
         { key: 'software_update', label: <span><CloudUploadOutlined /> 软件升级</span>, children: <SoftwareUpdate /> },
+        // 个人中心：管理员在工作台左侧菜单已有一份，这里再放一份避免换页后找不着
+        { key: 'profile', label: <span><UserOutlined /> 个人中心</span>, children: <Profile /> },
       ];
     } else if (isTeacher) {
       const isHeadTeacher = (user as any).teacher_classes?.some((c: any) => c.class_role === 'head_teacher');
@@ -90,6 +93,7 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
       }
       items.push(
         { key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> },
+        { key: 'profile', label: <span><UserOutlined /> 个人中心</span>, children: <Profile /> },
       );
       return items;
     }

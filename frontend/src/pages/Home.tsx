@@ -280,6 +280,11 @@ const Home: React.FC = () => {
     }
   }
 
+  // 个人中心（改密码 / 资料）：学生、教师、管理员都放在左侧菜单最后一项，
+  // 避免只能通过右上角头像进入，学生和老师常常找不到入口
+  menuItems.push({ type: 'divider' });
+  menuItems.push({ key: 'profile', icon: <UserOutlined />, label: '个人中心' });
+
   const userMenu = {
     items: [
       {
@@ -653,7 +658,6 @@ const Home: React.FC = () => {
                 style={{ borderRight: 0 }}
                 items={menuItems}
                 onClick={({ key }) => {
-                  if (key === 'profile') return;
                   handleMenuChange(key);
                   setMobileMenuOpen(false);
                 }}
@@ -685,7 +689,6 @@ const Home: React.FC = () => {
                 style={{ height: '100%', borderRight: 0, padding: '16px 0' }}
                 items={menuItems}
                 onClick={({ key}) => {
-                  if (key === 'profile') return;
                   handleMenuChange(key);
                 }}
               />
