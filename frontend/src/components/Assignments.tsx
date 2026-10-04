@@ -108,8 +108,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [classes, setClasses] = useState<any[]>([]);
   const [selectedClass, setSelectedClass] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
-  const [aiTimeout, setAiTimeout] = useState<number>(300);
-  
+
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const [isDoModalVisible, setIsDoModalVisible] = useState(false);
   const [isResultModalVisible, setIsResultModalVisible] = useState(false);
@@ -173,6 +172,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const pendingEditValues = useRef<any>(null);
   
   const [generating, setGenerating] = useState(false);
+  // 出题任务进度（后端异步执行，这里轮询拿）
+  const [genProgress, setGenProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
   const [genMode, setGenMode] = useState<'topic' | 'requirements' | 'paste'>('topic');
   const [genLimit, setGenLimit] = useState<{ daily_limit: number; daily_used: number; daily_remaining: number; global_tokens_remaining: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -273,9 +274,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     }
   };
 
-  const loadAISettings = async () => {
-    setAiTimeout(300);
-  };
+  // 旧的「读 AI 设置来取客户端超时」逻辑已随异步任务改造移除：
+  // 出题不再依赖长连接，客户端超时统一按提交任务的短请求处理。
+  const loadAISettings = async () => {};
 
   const loadGenLimit = async () => {
     try {
@@ -321,6 +322,58 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     }
   };
 
+  /**
+   * 轮询出题任务进度，直到拿到结果或失败。
+   *
+   * 后端把耗时几百秒的出题放到后台执行，这里每 2 秒问一次「做到哪了」，
+   * 每次请求都在 1 秒内结束，因此不受 Nginx proxy_read_timeout 影响。
+   * 顺带解决了以前「不知道在干什么就重复点击」的问题——进度看得见。
+   */
+  const pollGenerateTask = async (taskId: string): Promise<GeneratedResult> => {
+    const POLL_INTERVAL = 2000;
+    // 兜底上限：AI 出题最慢的一批约 90s，多题型并发下 10 分钟足够跑完
+    const MAX_WAIT_MS = 10 * 60 * 1000;
+    const startedAt = Date.now();
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      if (Date.now() - startedAt > MAX_WAIT_MS) {
+        throw new Error('生成耗时过长，已停止等待。请到题库查看是否已生成，或稍后重试');
+      }
+      let data: any;
+      try {
+        const r = await assignmentAPI.getGenerateProgress(taskId);
+        data = r.data;
+      } catch (pe: any) {
+        // 404 = 任务不存在或已过期（后端重启会清空内存中的任务）
+        if (pe?.response?.status === 404) {
+          throw new Error('生成任务已失效（服务可能刚重启过），请重新点击生成');
+        }
+        // 网络抖动：下一轮继续，不打断整个流程
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+        continue;
+      }
+
+      setGenProgress({
+        percent: data.percent ?? 0,
+        done: data.done ?? 0,
+        total: data.total ?? 0,
+        current: data.current_label || 'AI 正在出题',
+      });
+
+      if (data.status === 'done') {
+        if (!data.result) {
+          throw new Error('生成完成但未返回结果，请重试');
+        }
+        return data.result as GeneratedResult;
+      }
+      if (data.status === 'failed') {
+        throw new Error(data.error || 'AI 生成失败');
+      }
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+    }
+  };
+
   const handleGenerateQuestions = async (values: any) => {
     // 粘贴模式不校验题型：题型由 AI 逐题自动判断，也不需要出题规格
     const isPaste = genMode === 'paste';
@@ -337,6 +390,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         grade_level: values.grade_level || '',
         mode: genMode
       };
+      // 出题规格，粘贴模式不用它、保持为空
+      let specs: { question_type: string; count: number; difficulty: string }[] = [];
 
       if (isPaste) {
         // 不传 question_type：后端会走「AI 自动判型」模板
@@ -344,7 +399,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       } else {
         // 按知识点 / 按详细要求出题：可以一次配置多种题型，各自指定数量与难度
         const rawSpecs: any[] = Array.isArray(values.type_specs) ? values.type_specs : [];
-        const specs = rawSpecs
+        specs = rawSpecs
           .filter((r: any) => r && r.question_type)
           .map((r: any) => ({
             question_type: r.question_type,
@@ -366,8 +421,18 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           payload.requirements = values.requirements;
         }
       }
-      const res = await assignmentAPI.generateQuestions(payload, aiTimeout);
-      setGeneratedData(res.data as GeneratedResult);
+      // 出题在后台跑（实测多题型要 250 秒以上，长连接会被 Nginx 60s 切断）。
+      // 这里改成「提交任务 + 轮询进度」：每次请求都在 1 秒内返回，永不超时。
+      setGenProgress({ percent: 0, done: 0, total: specs.length || 1, current: '正在提交任务' });
+      const submitRes = await assignmentAPI.generateQuestions(payload, 30);
+      const taskId: string | undefined = submitRes.data?.task_id;
+      if (!taskId) {
+        throw new Error('后端未返回任务号，请确认服务端已更新到最新版本');
+      }
+      const polled = await pollGenerateTask(taskId);
+      setGenProgress(null);
+      const res: { data: GeneratedResult } = { data: polled };
+      setGeneratedData(res.data);
       const nextDayMidnight = dayjs().add(1, 'day').startOf('day');
       const allClassIds = classes.map(c => c.id);
       pendingPublishDefaults.current = {
@@ -383,26 +448,34 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       if (res.data.warning) {
         message.warning(res.data.warning);
       }
-      if (res.data.shortfall > 0) {
+      if ((res.data.shortfall || 0) > 0) {
         message.warning(`AI 本次只生成了 ${res.data.question_count} 道（目标 ${res.data.requested_count} 道），可再次点击生成补齐剩余题目`);
       } else {
-        const typeSummary = (res.data.question_types || []).length > 1
-          ? `${res.data.question_types.length} 种题型`
-          : '';
+        const qTypes = res.data.question_types || [];
+        const typeSummary = qTypes.length > 1 ? `${qTypes.length} 种题型` : '';
         message.success(`成功生成 ${res.data.question_count} 道题目${typeSummary ? `（${typeSummary}）` : ''}，共${res.data.total_generated}道含变体`);
       }
       loadGenLimit();
     } catch (e: any) {
-      if (e.code === 'ECONNABORTED') {
-        message.error(`AI生成超时（${aiTimeout}秒），请稍后重试或联系管理员调整超时设置`);
-      } else {
-        const errMsg = e.response?.data?.error || 'AI生成失败';
+      const status = e.response?.status;
+      if (status === 409) {
+        // 后端拦截了重复点击：同一教师同时只允许一个生成任务
+        message.warning(e.response?.data?.error || '已有一个生成任务正在进行，请等待它完成');
+      } else if (e.code === 'ECONNABORTED') {
+        message.error('提交任务超时，请检查网络后重试');
+      } else if (e.isAxiosError) {
+        const errMsg = e.response?.data?.error
+          || (status === 429 ? '今日生成次数已达上限' : 'AI生成失败');
         message.error(errMsg);
-        if (e.response?.status === 429) {
+        if (status === 429) {
           loadGenLimit();
         }
+      } else {
+        // 轮询阶段抛出的普通 Error：额度已由后端退还，直接展示原因
+        message.error(e.message || 'AI生成失败');
       }
     } finally {
+      setGenProgress(null);
       setGenerating(false);
     }
   };
@@ -1883,6 +1956,21 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 <Button type="primary" htmlType="submit" block icon={generating ? <LoadingOutlined /> : <RobotOutlined />} loading={generating} disabled={genLimit ? genLimit.daily_remaining <= 0 : false}>
                   {generating ? 'AI正在处理中...' : genMode === 'paste' ? '🤖 AI整理题目' : genMode === 'requirements' ? '🤖 AI按要求生成题目' : '🤖 AI生成题目'}
                 </Button>
+                {/* 出题进度：多题型要跑几分钟，看得见进度才不会以为卡死而重复点击 */}
+                {generating && genProgress && (
+                  <div style={{ marginTop: 12, padding: '10px 12px', background: '#f6f8fa', borderRadius: 8 }}>
+                    <Progress
+                      percent={genProgress.percent}
+                      status="active"
+                      size="small"
+                    />
+                    <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                      {genProgress.current}
+                      {genProgress.total > 1 && `（${genProgress.done}/${genProgress.total} 种题型已完成）`}
+                      ，可以关掉弹窗，生成会在后台继续
+                    </div>
+                  </div>
+                )}
                 {genLimit && (
                   <Alert
                     style={{ marginTop: 12 }}

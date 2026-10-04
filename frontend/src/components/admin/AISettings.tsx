@@ -144,6 +144,9 @@ const AISettings: React.FC = () => {
         <Form.Item name="max_questions_per_generation" label="单次生成最大题目数" rules={[{ required: true, message: '请输入题目数' }]} extra="服务端限制每次生成作业的最大题目数量（含变体×3），防止恶意请求。默认20道。">
           <Input type="number" min={1} max={50} placeholder="20" />
         </Form.Item>
+        <Form.Item name="ai_gen_concurrency" label="多题型并发数" extra="一次配置多种题型时，同时向大模型发起几个请求。串行会累加到几百秒（易撞网关超时），并发能大幅缩短总耗时。调高可能触发服务商限流，默认3，建议 3~5。">
+          <Input type="number" min={1} max={8} placeholder="3" />
+        </Form.Item>
 
         {testResult && (
           <Alert

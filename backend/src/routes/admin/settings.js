@@ -43,7 +43,16 @@ router.get('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
       db.prepare(`INSERT INTO settings (key, value) VALUES ('ai_base_url', 'https://api.openai.com/v1')`).run();
     }
     
-    const settings = db.prepare(`SELECT key, value FROM settings WHERE key LIKE 'ai_%'`).all();
+    // AI设置页既有连接类字段（ai_*），也有「生成限制」里的数字参数
+    // （max_tokens_per_generation / daily_teacher_gen_limit 等）。
+    // 后者不以 ai_ 开头，用 `LIKE 'ai_%'` 会漏掉，导致页面上填的数又变回默认值。
+    const AI_SETTING_KEYS = [
+      'ai_model', 'ai_api_key', 'ai_base_url', 'ai_report_interval_days', 'ai_timeout', 'ai_vision_model',
+      'max_tokens_per_generation', 'daily_teacher_gen_limit', 'ai_gen_max_rounds',
+      'daily_global_token_limit', 'max_questions_per_generation', 'ai_gen_concurrency',
+    ];
+    const placeholders = AI_SETTING_KEYS.map(() => '?').join(',');
+    const settings = db.prepare(`SELECT key, value FROM settings WHERE key IN (${placeholders})`).all(...AI_SETTING_KEYS);
     const result = {};
     settings.forEach(s => result[s.key] = s.value);
     // 只写不读：不暴露 API Key 到前端
@@ -59,22 +68,47 @@ router.get('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
 
 router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
   try {
-    const { ai_model, ai_api_key, ai_base_url, ai_report_interval_days, ai_timeout, ai_vision_model } = req.body;
+    // 原先这里只解构并保存 6 个字段，而页面上有 11 个输入框——
+    // 「生成限制」那几项填了会被静默丢弃，且没有任何提示。
+    // 现按白名单逐项落库：文本类原样存，数字类校验范围后存。
+    const TEXT_KEYS = ['ai_model', 'ai_base_url', 'ai_vision_model'];
+    // key -> [最小值, 最大值]，防止手改请求体写入 0 或超大值把生成功能搞坏
+    const INT_KEYS = {
+      ai_report_interval_days: [0, 365],
+      ai_timeout: [10, 1800],
+      max_tokens_per_generation: [1000, 200000],
+      daily_teacher_gen_limit: [1, 200],
+      ai_gen_max_rounds: [1, 10],
+      daily_global_token_limit: [10000, 100000000],
+      max_questions_per_generation: [1, 100],
+      ai_gen_concurrency: [1, 8],
+    };
 
     const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
+    const rejected = [];
     db.transaction(() => {
-      if (ai_model !== undefined) stmt.run('ai_model', ai_model);
-      // API Key 只写不读：仅在用户明确提供真实值时更新
-      if (ai_api_key !== undefined && ai_api_key !== '' && ai_api_key !== '***') {
-        stmt.run('ai_api_key', ai_api_key);
+      for (const key of TEXT_KEYS) {
+        if (req.body[key] !== undefined) stmt.run(key, String(req.body[key]));
       }
-      if (ai_base_url !== undefined) stmt.run('ai_base_url', ai_base_url);
-      if (ai_report_interval_days !== undefined) stmt.run('ai_report_interval_days', String(ai_report_interval_days));
-      if (ai_timeout !== undefined) stmt.run('ai_timeout', String(ai_timeout));
-      if (ai_vision_model !== undefined) stmt.run('ai_vision_model', ai_vision_model);
+      for (const [key, [min, max]] of Object.entries(INT_KEYS)) {
+        if (req.body[key] === undefined || req.body[key] === '') continue;
+        const n = parseInt(req.body[key], 10);
+        if (!Number.isFinite(n) || n < min || n > max) {
+          rejected.push(key);
+          continue;
+        }
+        stmt.run(key, String(n));
+      }
+      // API Key 只写不读：仅在用户明确提供真实值时更新
+      if (req.body.ai_api_key !== undefined && req.body.ai_api_key !== '' && req.body.ai_api_key !== '***') {
+        stmt.run('ai_api_key', req.body.ai_api_key);
+      }
     })();
 
-    res.json({ message: '设置保存成功' });
+    res.json({
+      message: rejected.length > 0 ? `部分设置超出允许范围未保存：${rejected.join('、')}` : '设置保存成功',
+      rejected,
+    });
   } catch (error) {
     console.error('保存设置失败:', error);
     res.status(500).json({ error: '保存设置失败' });
@@ -264,6 +298,8 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
       'daily_global_token_limit', 'max_questions_per_generation',
       // AI 出题的最大轮次：题量偏多时会自动分多轮续写补齐
       'ai_gen_max_rounds',
+      // 多题型同时生成的并发数：串行时多种题型会累加到几百秒，容易撞上网关超时
+      'ai_gen_concurrency',
       // 功能开关统一由 featureFlags 提供清单，避免两处各维护一份而漏项
       ...FLAG_KEYS,
     ];

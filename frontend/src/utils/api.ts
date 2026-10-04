@@ -120,8 +120,13 @@ export const assignmentAPI = {
   
   getAssignment: (id: number) => api.get(`/assignments/${id}`),
   
-  generateQuestions: (data: { subject: string; topic?: string; difficulty?: string; question_type: string; count?: number; grade_level?: string; mode?: 'topic' | 'requirements' | 'paste'; requirements?: string; raw_text?: string }, timeout?: number) =>
-    api.post('/assignments/generate', data, { timeout: (timeout || 300) * 1000 }),
+  // 提交出题任务：立即返回 task_id，耗时由后台执行，前端轮询进度即可
+  generateQuestions: (data: { subject: string; topic?: string; difficulty?: string; question_type?: string; count?: number; grade_level?: string; mode?: 'topic' | 'requirements' | 'paste'; requirements?: string; raw_text?: string; type_specs?: Array<{ question_type: string; count: number; difficulty: string }> }, timeout?: number) =>
+    api.post('/assignments/generate', data, { timeout: (timeout || 30) * 1000 }),
+
+  // 轮询出题任务进度。请求都在 1 秒内返回，不会被网关超时切断
+  getGenerateProgress: (taskId: string) =>
+    api.get(`/assignments/generate/${taskId}`, { timeout: 15000 }),
 
   // 放弃一次「生成了但没发布」的出题：删除未使用的题目并退还本次额度
   abandonGeneration: (usageId: number) =>

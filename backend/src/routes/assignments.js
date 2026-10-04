@@ -11,6 +11,7 @@ const { getPrompt, fillTemplate } = require('../config/prompts');
 const { isAnswerCorrect } = require('../utils/answerCheck');
 const { collectQuestions, normalizeQuestion } = require('../services/aiQuestion');
 const { beginUsage, settleUsage, countBilledUsage, markFailed, countReferencedQuestions, deleteUnusedQuestions } = require('../services/aiUsage');
+const { genTaskManager } = require('../services/genTaskManager');
 const { requireFeature, isFeatureEnabled } = require('../middleware/featureFlags');
 
 /**
@@ -261,8 +262,18 @@ function calcGoldReward(totalScore, questionCount, results, maxExp) {
   return { gold: base + combo + perfect, base, combo, perfect, bestStreak, correctCount };
 }
 
-router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, async (req, res) => {
-  // 额度记录句柄提升到函数作用域：流程失败时要在 catch 里把它退还
+/**
+ * AI 出题的核心执行逻辑（同步跑完整个流程，把结果写进 res）。
+ *
+ * 独立成函数是为了让两种调用方式复用同一份逻辑：
+ *   1) 异步模式（POST /generate 走这条）：包一层「伪响应」在后台跑，前端轮询进度
+ *   2) 需要同步返回的场景
+ *
+ * hooks.onProgress 用于回报题型级进度，只在异步模式传入。
+ */
+async function runGenerateLogic(req, res, hooks = {}) {
+  const onProgress = typeof hooks.onProgress === 'function' ? hooks.onProgress : () => {};
+  // 额度记录句柄提升到函数作用域：流程失败时要在catch 里把它退还
   let usageId = 0;
   let usageStartedAt = 0;
   try {
@@ -515,21 +526,47 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     };
 
     // 逐个规格生成：某个题型失败不影响其它题型，最后统一合并入库
+    // 这里用受限并发而非逐个串行：串行时总耗时是每种题型的累加（实测 5 种题型要 250s+），
+    // 无论前端 300s 还是 Nginx 默认 60s 都扛不住。并发后总耗时约等于「最慢的那一批」。
+    // 并发数走设置项，避免一次性打满 AI 服务商触发限流。
+    const genConcurrency = Math.max(1, Math.min(8, parseInt(getSystemSetting('ai_gen_concurrency', 3), 10) || 3));
     const specResults = [];
     const failedSpecs = [];
-    for (const spec of specs) {
-      let one = null;
+
+    const runOneSpec = async (spec) => {
+      const specLabel = (spec.question_type ? (typeLabels[spec.question_type] || spec.question_type) : 'AI 自动判型');
+      const doneBefore = specResults.length + failedSpecs.length;
+      onProgress({ phase: 'spec_start', label: specLabel, done: doneBefore, total: specs.length });
       try {
-        one = await runSpecGeneration(spec);
+        const one = await runSpecGeneration(spec);
+        if (one && one.questions.length > 0) {
+          specResults.push(one);
+        } else {
+          failedSpecs.push(spec);
+        }
       } catch (specErr) {
         console.error(`❌ 题型 ${typeLabels[spec.question_type] || spec.question_type} 生成失败:`, specErr.message);
-      }
-      if (!one || one.questions.length === 0) {
         failedSpecs.push(spec);
-        continue;
       }
-      specResults.push(one);
+      onProgress({ phase: 'spec_done', label: specLabel, done: specResults.length + failedSpecs.length, total: specs.length });
+    };
+
+    if (specs.length === 1) {
+      await runOneSpec(specs[0]);
+    } else {
+      const queue = [...specs];
+      const workerCount = Math.min(genConcurrency, queue.length);
+      console.log(`\n⚙️ 共 ${specs.length} 种题型，并发 ${workerCount} 个同时生成`);
+      await Promise.all(Array.from({ length: workerCount }, async () => {
+        while (queue.length > 0) {
+          await runOneSpec(queue.shift());
+        }
+      }));
     }
+
+    // 并发下完成顺序是随机的，按用户配置的题型顺序排回去，预览里的题型顺序才稳定
+    const specOrder = new Map(specs.map((s, i) => [s.question_type, i]));
+    specResults.sort((a, b) => (specOrder.get(a.spec.question_type) ?? 0) - (specOrder.get(b.spec.question_type) ?? 0));
 
     const elapsed = ((Date.now() - usageStartedAt) / 1000).toFixed(2);
     console.log('\n⏱️ 总耗时:', elapsed, '秒 | 成功规格:', specResults.length, '/', specs.length);
@@ -683,6 +720,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
 
     console.log('\n📤 返回结果给客户端...');
     console.log('========================================\n');
+    onProgress({ phase: 'saving', label: '正在写入题库', done: specs.length, total: specs.length });
 
     settleUsage(usageId, 'ok', {
       ...usageTokens,
@@ -746,6 +784,90 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       quota_refunded: true
     });
   }
+}
+
+// ============================================================
+//异步生成：立即返回 task_id，前端轮询进度
+//
+// 为什么需要：多题型出题实测要 250 秒以上，而 Nginx 的 proxy_read_timeout
+// 默认只有 60 秒，长连接会被网关切断（504）。改成「提交 + 轮询」后，
+// 每个 HTTP 请求都在 1 秒内返回，网关永远不会介入。
+// 同一份生成逻辑通过 runGenerateLogic 复用，不存在两套代码。
+// ============================================================
+
+/**
+ * 伪响应对象：把 runGenerateLogic 里的 res.status().json() 调用收集起来，
+ * 而不是真的发给客户端。这样那400 行逻辑一行都不用改就能在后台跑。
+ */
+function createCapturedResponder() {
+  const out = { status: 200, body: null, sent: false };
+  const r = {
+    out,
+    status(code) { out.status = code; return r; },
+    json(payload) { out.sent = true; out.body = payload; return r; },
+    send(payload) { out.sent = true; out.body = payload; return r; },
+    sendStatus(code) { out.status = code; out.sent = true; return r; },
+    set() { return r; },
+    header() { return r; },
+    type() { return r; },
+  };
+  return r;
+}
+
+router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, (req, res) => {
+  // 同一用户同时只允许一个生成任务，避免重复点击并发跑导致额度与配额混乱
+  const running = genTaskManager.findRunning(req.user.userId);
+  if (running) {
+    return res.status(409).json({
+      error: '你已有一个生成任务正在进行，请等待它完成',
+      task_id: running.id,
+    });
+  }
+
+  const task = genTaskManager.create({
+    userId: req.user.userId,
+    topic: req.body.topic || String(req.body.requirements || '').slice(0, 30) || 'AI 出题',
+    subject: req.body.subject || '',
+  });
+
+  // 立即返回，前端拿到 task_id 后开始轮询
+  res.status(202).json({
+    task_id: task.id,
+    message: '已开始生成，请稍候',
+  });
+
+  // 后台执行。不阻塞响应，也就不受任何网关超时约束。
+  setImmediate(async () => {
+    const fakeRes = createCapturedResponder();
+    try {
+      genTaskManager.markRunning(task.id);
+      await runGenerateLogic(req, fakeRes, {
+        onProgress: (p) => genTaskManager.updateProgress(task.id, p),
+      });
+      if (fakeRes.out.sent) {
+        genTaskManager.complete(task.id, { status: fakeRes.out.status, body: fakeRes.out.body });
+      } else {
+        // 逻辑跑完却没写响应，属于异常情况，按失败处理
+        genTaskManager.fail(task.id, '生成流程异常结束，请重试');
+      }
+    } catch (err) {
+      console.error('异步生成任务异常:', err);
+      genTaskManager.fail(task.id, err.message || '生成失败');
+    }
+  });
+});
+
+// 轮询进度
+router.get('/generate/:taskId', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  const task = genTaskManager.get(req.params.taskId);
+  if (!task) {
+    return res.status(404).json({ error: '任务不存在或已过期，请重新发起生成' });
+  }
+  // 只能查自己的任务，防止横向读取别人的生成结果
+  if (task.userId !== req.user.userId && req.user.role !== 'admin') {
+    return res.status(403).json({ error: '无权查看该任务' });
+  }
+  res.json(task.toPublicJSON());
 });
 
 // 撤销一次「生成了但没有发布」的 AI 出题：删除未被使用的题目并把额度退还
