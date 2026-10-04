@@ -262,15 +262,23 @@ function parseJSONArray(text) {
   }
 }
 
-async function generateUsernamesByAI(names) {
+async function generateUsernamesByAI(names, onProgress = () => {}) {
   const axios = require('axios');
   const config = getAIConfig();
-  // 账号生成属于轻量任务：最多等 60 秒，避免用户长时间干等
+  // 账号生成属于轻量任务：单批最多等 60 秒，避免单次请求挂太久
   const timeoutMs = Math.min(getAITimeoutMs(config), 60000);
   const map = new Map(); // 姓名 → 账号
   const tokens = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  const totalBatches = Math.ceil(names.length / AI_USERNAME_BATCH_SIZE);
 
   for (let i = 0; i < names.length; i += AI_USERNAME_BATCH_SIZE) {
+    const batchNo = Math.floor(i / AI_USERNAME_BATCH_SIZE) + 1;
+    onProgress({
+      phase: 'ai',
+      label: `正在生成第 ${batchNo}/${totalBatches} 批账号（每批 ${AI_USERNAME_BATCH_SIZE} 人）`,
+      done: batchNo - 1,
+      total: totalBatches,
+    });
     const batch = names.slice(i, i + AI_USERNAME_BATCH_SIZE);
     const listText = batch.map((n, idx) => `${idx + 1}. ${n}`).join('\n');
     const prompt = fillTemplate(getPrompt('admin_student_accounts'), { list_text: listText });
@@ -298,6 +306,7 @@ async function generateUsernamesByAI(names) {
       }
     }
   }
+  onProgress({ phase: 'saving', label: '正在写入学生账号', done: totalBatches, total: totalBatches });
 
   return { map, tokens };
 }

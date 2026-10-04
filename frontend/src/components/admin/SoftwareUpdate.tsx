@@ -48,7 +48,7 @@ const SoftwareUpdate: React.FC = () => {
 
   useEffect(() => { loadInfo(); loadBackups(); loadLogs(); }, [loadInfo, loadBackups, loadLogs]);
 
-  // 升级过程中轮询进度
+  // 升级/回滚过程中轮询进度
   useEffect(() => {
     if (!applying) return;
     const timer = setInterval(async () => {
@@ -58,10 +58,18 @@ const SoftwareUpdate: React.FC = () => {
         if (!res.data.running && (res.data.phase === 'done' || res.data.phase === 'failed')) {
           clearInterval(timer);
           setApplying(false);
+          if (res.data.lastResult) setLastResult(res.data.lastResult);
           if (res.data.phase === 'done') {
-            message.success('升级完成');
-            loadInfo(); loadBackups(); loadLogs();
+            message.success(res.data.message || '升级完成');
+          } else {
+            message.error(res.data.lastError || '升级失败，请查看日志');
           }
+          loadInfo(); loadBackups(); loadLogs();
+        } else if (res.data.phase === 'lost') {
+          // 进程在升级途中重启了：内存里的状态已丢失，若不收尾就会永久转圈
+          clearInterval(timer);
+          setApplying(false);
+          message.warning(res.data.message || '上次升级在完成前中断，请重新执行一次升级');
         }
       } catch { /* 网络抖动忽略 */ }
     }, 1500);
@@ -97,28 +105,27 @@ const SoftwareUpdate: React.FC = () => {
     setApplying(true);
     setProgress({ phase: 'starting', message: '正在启动升级...', progress: 1 });
     try {
-      const res = await adminAPI.applyUpdate(check.latest);
-      setProgress({ phase: 'done', message: '升级完成', progress: 100 });
-      setLastResult(res.data);
-      message.success(res.data.message || '升级完成');
+      // 后端立即返回，进度由 useEffect 里的 1.5 秒轮询接管，
+      // 完成后由轮询自己收尾（setApplying(false)），这里不要提前复位。
+      await adminAPI.applyUpdate(check.latest);
       setCheck(null);
-      loadInfo(); loadBackups(); loadLogs();
     } catch (e: any) {
       setProgress({ phase: 'failed', message: e?.response?.data?.error || '升级失败', progress: 100 });
       message.error(e?.response?.data?.error || '升级失败');
       loadLogs();
-    } finally {
       setApplying(false);
     }
   };
 
   const doRollback = async (file: string) => {
+    setApplying(true);
+    setProgress({ phase: 'rolling-back', message: '正在从备份恢复...', progress: 10 });
     try {
-      const res = await adminAPI.rollbackUpdate(file);
-      message.success(res.data.message || '回滚完成，请按提示重启服务');
-      loadInfo(); loadBackups(); loadLogs();
+      // 同上：提交即返回，由轮询接管进度
+      await adminAPI.rollbackUpdate(file);
     } catch (e: any) {
       message.error(e?.response?.data?.error || '回滚失败');
+      setApplying(false);
     }
   };
 

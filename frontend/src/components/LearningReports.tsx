@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { learningReportAPI, adminAPI } from '../utils/api';
+import { pollAiTask } from '../utils/aiTask';
 import { useAuthStore } from '../store/authStore';
 import { AccuracyColumn, TrendLine, CountColumn, DistributionPie } from './charts/ChartKit';
 import { exportTableFile, ExportFormat } from './admin/_common';
@@ -39,6 +40,8 @@ const LearningReports: React.FC = () => {
 
   // AI 报告
   const [aiLoading, setAiLoading] = useState(false);
+  // AI 分析进度（后端后台执行，这里轮询刷新）
+  const [aiProgress, setAiProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
   const [aiReport, setAiReport] = useState<any>(null);
   const [aiMeta, setAiMeta] = useState<any>(null);
   const [history, setHistory] = useState<any[]>([]);
@@ -49,6 +52,7 @@ const LearningReports: React.FC = () => {
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [stuAiLoading, setStuAiLoading] = useState(false);
+  const [stuAiProgress, setStuAiProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
   const [stuAiReport, setStuAiReport] = useState<any>(null);
 
   useEffect(() => {
@@ -108,18 +112,27 @@ const LearningReports: React.FC = () => {
   const handleGenerateAi = async () => {
     if (!classId) return;
     setAiLoading(true);
+    setAiProgress({ percent: 0, done: 0, total: 1, current: '正在提交分析任务' });
     try {
+      // 后端改为后台任务：提交只返回 task_id，分析过程靠轮询拿进度
       const res = await learningReportAPI.generateAiReport({
         class_id: classId, subject,
         date_from: query.date_from, date_to: query.date_to,
       });
-      setAiReport(res.data.report);
-      setAiMeta({ model: res.data.model, range: res.data.range, subject: res.data.subject, id: res.data.report_id });
+      const taskId: string | undefined = res.data?.task_id;
+      if (!taskId) throw new Error('后端未返回任务号，请确认服务端已更新到最新版本');
+
+      const data = await pollAiTask(taskId, '/learning-reports/ai-report/task/:taskId', setAiProgress);
+      setAiProgress(null);
+
+      setAiReport(data.report);
+      setAiMeta({ model: data.model, range: data.range, subject: data.subject, id: data.report_id });
       message.success('AI 报告已生成');
       loadHistory();
     } catch (e: any) {
-      message.error(e?.response?.data?.error || '生成失败');
+      message.error(e?.response?.data?.error || e?.message || '生成失败');
     } finally {
+      setAiProgress(null);
       setAiLoading(false);
     }
   };
@@ -141,16 +154,25 @@ const LearningReports: React.FC = () => {
 
   const handleGenerateStudentAi = async (studentId: number) => {
     setStuAiLoading(true);
+    setStuAiProgress({ percent: 0, done: 0, total: 1, current: '正在提交分析任务' });
     try {
+      // 同上：提交任务后轮询进度
       const res = await learningReportAPI.generateStudentAiReport({
         class_id: classId as number, student_id: studentId, subject,
         date_from: query.date_from, date_to: query.date_to,
       });
-      setStuAiReport(res.data.report);
+      const taskId: string | undefined = res.data?.task_id;
+      if (!taskId) throw new Error('后端未返回任务号，请确认服务端已更新到最新版本');
+
+      const data = await pollAiTask(taskId, '/learning-reports/ai-report/task/:taskId', setStuAiProgress);
+      setStuAiProgress(null);
+
+      setStuAiReport(data.report);
       message.success('已生成该生的教师视角报告');
     } catch (e: any) {
-      message.error(e?.response?.data?.error || '生成失败');
+      message.error(e?.response?.data?.error || e?.message || '生成失败');
     } finally {
+      setStuAiProgress(null);
       setStuAiLoading(false);
     }
   };
@@ -294,6 +316,13 @@ const LearningReports: React.FC = () => {
           >
             AI 生成班级学情报告
           </Button>
+          {/* 分析进度：让老师看得见在做什么，而不是一个停不下来的转圈 */}
+          {aiLoading && aiProgress && (
+            <div style={{ width: 240 }}>
+              <Progress percent={aiProgress.percent} size="small" status="active" />
+              <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{aiProgress.current}</div>
+            </div>
+          )}
         </Space>
         {overview && (
           <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
@@ -602,6 +631,13 @@ const LearningReports: React.FC = () => {
         }
       >
         <Spin spinning={detailLoading}>
+          {/* 个体报告进度：让进度可见，避免「一直转圈不知道在干嘛」 */}
+          {stuAiLoading && stuAiProgress && (
+            <div style={{ marginBottom: 12 }}>
+              <Progress percent={stuAiProgress.percent} size="small" status="active" />
+              <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{stuAiProgress.current}</div>
+            </div>
+          )}
           {detail && !detail.loading && (
             <>
               <Descriptions size="small" bordered column={2} style={{ marginBottom: 16 }}>

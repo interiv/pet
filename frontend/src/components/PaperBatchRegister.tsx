@@ -4,6 +4,7 @@ import {
 } from 'antd';
 import { PictureOutlined, RobotOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, SearchOutlined } from '@ant-design/icons';
 import { assignmentAPI, classroomQuizAPI } from '../utils/api';
+import { pollAiTask } from '../utils/aiTask';
 import { compressImage } from '../utils/imageCompress';
 
 interface Q {
@@ -62,6 +63,8 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
   const [papers, setPapers] = useState<PaperItem[]>([]);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [judging, setJudging] = useState(false);
+  // AI 识别进度（后端后台执行，这里轮询刷新）
+  const [judgeProgress, setJudgeProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [model, setModel] = useState('');
   const [query, setQuery] = useState('');
@@ -113,23 +116,32 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
       return;
     }
     setJudging(true);
+    setJudgeProgress({ percent: 0, done: 0, total: photos.length, current: '正在提交识别任务' });
     try {
+      // 后端改为后台任务：提交只返回 task_id，识别过程靠轮询拿进度
       const res = await assignmentAPI.aiPaperJudgeBatch(assignmentId, { images: photos });
-      const list: PaperItem[] = (res.data.papers || []).map((p: any, i: number) => ({
+      const taskId: string | undefined = res.data?.task_id;
+      if (!taskId) throw new Error('后端未返回任务号，请确认服务端已更新到最新版本');
+
+      const data = await pollAiTask(taskId, '/assignments/generate/:taskId', setJudgeProgress);
+      setJudgeProgress(null);
+
+      const list: PaperItem[] = (data.papers || []).map((p: any, i: number) => ({
         ...p,
         key: `p_${Date.now()}_${i}`,
       }));
       setPapers(list);
-      setModel(res.data.model || '');
-      setRegisteredIds(res.data.registered_ids || registeredIds);
+      setModel(data.model || '');
+      setRegisteredIds(data.registered_ids || registeredIds);
       setActiveKey(list.length > 0 ? list[0].key : null);
       const unmatched = list.filter(p => !p.student_id).length;
       message.success(
         `识别完成：${list.length} 份试卷${unmatched > 0 ? `，其中 ${unmatched} 份未认出姓名，请手动指派` : ''}`
       );
     } catch (e: any) {
-      message.error(e?.response?.data?.error || '批量识别失败');
+      message.error(e?.response?.data?.error || e?.message || '批量识别失败');
     } finally {
+      setJudgeProgress(null);
       setJudging(false);
     }
   };
@@ -270,6 +282,13 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
             >
               {judging ? 'AI识别中…' : `AI批量识别（${photos.length}张）`}
             </Button>
+            {/* 识别进度：让老师看得见在做什么，而不是一个停不下来的转圈 */}
+            {judging && judgeProgress && (
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <Progress percent={judgeProgress.percent} size="small" status="active" />
+                <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{judgeProgress.current}</div>
+              </div>
+            )}
             {photos.length > 0 && (
               <Popconfirm title="清空已上传的照片？" onConfirm={() => { setPhotos([]); setPapers([]); setActiveKey(null); }}>
                 <Button size="small" danger icon={<DeleteOutlined />}>清空照片</Button>

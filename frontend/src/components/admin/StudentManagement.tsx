@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, List, Descriptions, Alert, Divider, Dropdown } from 'antd';
+import { Table, Button, Tabs, Form, Input, message, Tag, Space, Modal, Select, InputNumber, Popconfirm, List, Descriptions, Alert, Divider, Dropdown, Progress } from 'antd';
 import { DeleteOutlined, EditOutlined, SafetyOutlined, UploadOutlined, DownloadOutlined, FileExcelOutlined, FileTextOutlined } from '@ant-design/icons';
 import { adminAPI } from '../../utils/api';
+import { pollAiTask } from '../../utils/aiTask';
 import { useAuthStore } from '../../store/authStore';
 import { useMobile, useTablePagination } from './hooks';
 import { parseCsvText, normalizeStudentRows, downloadExcelTemplate, ExportFormat, exportTableFile } from './_common';
@@ -31,6 +32,8 @@ const StudentManagement: React.FC = () => {
   const [pasteText, setPasteText] = useState('');
   const [pastePrefix, setPastePrefix] = useState('stu');
   const [generating, setGenerating] = useState(false);
+  // AI 生成账号进度（后端后台执行，这里轮询刷新）
+  const [genProgress, setGenProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
   const [importing, setImporting] = useState(false);
   const [generatedAccounts, setGeneratedAccounts] = useState<any[] | null>(null);
   const [pasteWarnings, setPasteWarnings] = useState<any>(null);
@@ -189,22 +192,31 @@ const StudentManagement: React.FC = () => {
     if (!pasteText.trim()) { message.warning('请先粘贴学生姓名'); return; }
     setGenerating(true);
     setAiFallbackMsg(null);
+    setGenProgress({ percent: 0, done: 0, total: 1, current: '正在提交生成任务' });
     try {
       const res = await adminAPI.generateStudentAccounts({ names: pasteText, mode, prefix: pastePrefix, class_id: classId });
-      setGeneratedAccounts(res.data.accounts || []);
+      // AI 模式已改为后台任务：提交只返回 task_id，生成过程靠轮询拿进度。
+      // 按序号生成本身是纯本地计算，接口会直接返回结果而没有 task_id。
+      const data = res.data?.task_id
+        ? await pollAiTask(res.data.task_id, '/admin/students/task/:taskId', setGenProgress)
+        : res.data;
+      setGenProgress(null);
+
+      setGeneratedAccounts(data.accounts || []);
       setPasteWarnings({
-        duplicates: res.data.duplicate_names || [],
-        aiMissing: res.data.ai_fallback_names || []
+        duplicates: data.duplicate_names || [],
+        aiMissing: data.ai_fallback_names || []
       });
-      message.success(res.data.message || `已生成 ${res.data.count} 个账号`);
+      message.success(data.message || `已生成 ${data.count} 个账号`);
     } catch (error: any) {
       const d = error?.response?.data;
       if (d?.can_fallback) {
         setAiFallbackMsg(d.error || 'AI 生成账号失败');
       } else {
-        message.error(d?.error || '生成账号失败');
+        message.error(d?.error || error?.message || '生成账号失败');
       }
     } finally {
+      setGenProgress(null);
       setGenerating(false);
     }
   };
@@ -611,6 +623,23 @@ const StudentManagement: React.FC = () => {
           )
         ]}
       >
+        {/* 生成进度：200 个账号要跑十几批 AI，让管理员看得见进度而不是干等 */}
+        {generating && genProgress && (
+          <Alert
+            style={{ marginBottom: 12 }}
+            type="info"
+            showIcon
+            message={
+              <div>
+                <Progress percent={genProgress.percent} size="small" status="active" />
+                <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                  {genProgress.current}
+                  {genProgress.total > 1 && `（${genProgress.done}/${genProgress.total} 批）`}
+                </div>
+              </div>
+            }
+          />
+        )}
         <Form form={importForm} layout="vertical">
           <Form.Item 
             name="class_id" 

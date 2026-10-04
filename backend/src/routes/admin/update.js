@@ -8,6 +8,7 @@ const { execFile } = require('child_process');
 const { authenticateToken } = require('../../middleware/auth');
 const { requireAdmin } = require('./_shared');
 const updater = require('../../services/updater');
+const { genTaskManager } = require('../../services/genTaskManager');
 const { getCurrentVersion, getGitCommit, BACKEND_DIR } = require('../../utils/version');
 const { detectRuntime } = require('../../utils/runtime');
 
@@ -58,15 +59,33 @@ router.get('/status', authenticateToken, requireAdmin, (req, res) => {
 });
 
 // 执行升级
-router.post('/apply', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const result = await updater.applyUpdate((req.body || {}).version || '');
-    updater.pruneDownloads();
-    res.json(result);
-  } catch (error) {
-    console.error('执行升级失败:', error);
-    res.status(500).json({ error: error.message });
+// 立即返回，进度靠已有的 GET /status 轮询。原先这里同步等到整个升级跑完，
+// 前端得挂一条 15 分钟的长连接——网关 60s 必然切断，用户还会误以为失败。
+router.post('/apply', authenticateToken, requireAdmin, (req, res) => {
+  // 升级会覆盖 backend/src 下正在被使用的文件。若此时有人正在出题或跑报告，
+  // 那批任务会被连带打断（内存态任务直接消失），这里提前挡住。
+  const runningAiTasks = genTaskManager.countRunning();
+  if (runningAiTasks > 0) {
+    return res.status(409).json({
+      error: `当前还有 ${runningAiTasks} 个 AI 任务在运行（出题/识别/报告），请等它们完成后再升级`,
+    });
   }
+  if (updater.getState().running) {
+    return res.status(409).json({ error: '已有升级任务在进行中，请勿重复点击' });
+  }
+
+  const version = (req.body || {}).version || '';
+  res.json({ started: true, message: '升级已开始，可在下方查看进度' });
+
+  // 后台执行，不阻塞响应
+  setImmediate(async () => {
+    try {
+      await updater.applyUpdate(version);
+      updater.pruneDownloads();
+    } catch (error) {
+      console.error('执行升级失败:', error);
+    }
+  });
 });
 
 // 备份列表
@@ -74,14 +93,28 @@ router.get('/backups', authenticateToken, requireAdmin, (req, res) => {
   res.json({ backups: updater.listBackups() });
 });
 
-// 回滚到指定备份
-router.post('/rollback', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    res.json(await updater.rollbackTo((req.body || {}).file || ''));
-  } catch (error) {
-    console.error('回滚失败:', error);
-    res.status(500).json({ error: error.message });
+// 回滚到指定备份（同升级：立即返回，进度靠 GET /status 轮询）
+router.post('/rollback', authenticateToken, requireAdmin, (req, res) => {
+  const runningAiTasks = genTaskManager.countRunning();
+  if (runningAiTasks > 0) {
+    return res.status(409).json({
+      error: `当前还有 ${runningAiTasks} 个 AI 任务在运行，请等它们完成后再回滚`,
+    });
   }
+  if (updater.getState().running) {
+    return res.status(409).json({ error: '已有升级任务在进行中，请稍后' });
+  }
+
+  const file = (req.body || {}).file || '';
+  res.json({ started: true, message: '回滚已开始，可在下方查看进度' });
+
+  setImmediate(async () => {
+    try {
+      await updater.rollbackTo(file);
+    } catch (error) {
+      console.error('回滚失败:', error);
+    }
+  });
 });
 
 // 升级日志

@@ -39,13 +39,18 @@ const tasks = new Map();
  */
 
 class GenTask {
-  constructor({ userId, topic, subject }) {
+  constructor({ userId, topic, subject, kind, total, stages }) {
     this.id = crypto.randomUUID();
     this.userId = userId;
     this.status = 'pending';
+    // kind 区分任务类型（question_gen / paper_judge / learning_report / coach），
+    // 前端按它决定怎么解析 result，也是 findRunning 做同类互斥的依据
+    this.kind = kind || 'question_gen';
     this.meta = { topic, subject };
+    // stages: 分步骤任务的阶段文案（如「正在识别第3/12 张」）
+    this.stages = Array.isArray(stages) && stages.length > 0 ? stages : null;
     this.done = 0;
-    this.total = 0;
+    this.total = Number(total) > 0 ? Number(total) : 0;
     this.currentLabel = '';
     this.phase = 'precheck';
     this.result = null;
@@ -63,19 +68,26 @@ class GenTask {
   }
 
   toPublicJSON() {
+    // 单步骤任务（一次 AI 调用）没有天然的进度，用阶段文案比假进度条更诚实
+    const hasSteps = this.total > 0;
+    const percent = this.status === 'done'
+      ? 100
+      : hasSteps
+        ? Math.min(99, Math.round((this.done / this.total) * 100))
+        : 30;
     const base = {
       task_id: this.id,
+      kind: this.kind,
       status: this.status,
       topic: this.meta.topic,
       subject: this.meta.subject,
       done: this.done,
       total: this.total,
       current_label: this.currentLabel,
-      // 由 done/total 推一个粗略百分比，只用于画进度条，不需要精确
-      percent: this.total > 0 ? Math.min(99, Math.round((this.done / this.total) * 100)) : 5,
+      percent,
     };
     if (this.status === 'done') return { ...base, percent: 100, result: this.result?.body ?? null };
-    if (this.status === 'failed') return { ...base, error: this.error || '生成失败' };
+    if (this.status === 'failed') return { ...base, error: this.error || '处理失败' };
     return base;
   }
 }
@@ -124,12 +136,27 @@ const genTaskManager = {
     t.updatedAt = Date.now();
   },
 
-  /** 找出某用户正在进行的任务（含尚未开始的），用于拦截重复点击 */
-  findRunning(userId) {
+  /**
+   * 找出某用户正在进行的任务（含尚未开始的）。
+   * kind 为可选过滤条件：只传userId 时返回该用户任意进行中任务；
+   * 传 kind 时只在该类型内互斥——否则出题和扫作业会互相把对方拦死。
+   */
+  findRunning(userId, kind) {
     for (const t of tasks.values()) {
-      if (t.userId === userId && (t.status === 'pending' || t.status === 'running')) return t;
+      if (t.userId !== userId) continue;
+      if (kind && t.kind !== kind) continue;
+      if (t.status === 'pending' || t.status === 'running') return t;
     }
     return null;
+  },
+
+  /** 全站正在进行的任务数，用于升级等危险操作前的保护 */
+  countRunning() {
+    let n = 0;
+    for (const t of tasks.values()) {
+      if (t.status === 'pending' || t.status === 'running') n += 1;
+    }
+    return n;
   },
 
   /** 清理过期任务 */

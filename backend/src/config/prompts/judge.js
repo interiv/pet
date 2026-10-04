@@ -27,6 +27,30 @@ module.exports = {
 2. 只返回JSON，不要任何其他内容`
   },
 
+  // 批量版：一次评阅整份作业的所有主观题。
+  // 相比逐题调用，耗时从「题数 × 单轮往返」降到「1 轮往返」，
+  // 且同一份评分标准横向对比，不会出现同批题标准飘移。
+  review_subjective_batch: {
+    group: '作业评阅',
+    label: '主观题AI评阅（批量）',
+    description: '一次评阅一份作业里的全部主观题。可用变量：{subject} {count} {questions_text}',
+    default: `你是一个JSON生成器和评阅老师。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
+
+任务：请一次性评阅以下{count} 道{subject}主观题。
+
+{questions_text}
+
+请严格按照以下JSON格式返回，results 的顺序与题目顺序一致，每一项的 question_id 必须原样回填：
+{"results":[{"question_id": 题目id, "score": 分数(0-100), "feedback": "具体评价和建议（50字以内）", "key_points": ["得分点1"], "improvements": ["改进建议1"]}]}
+
+要求：
+1. results 的长度必须等于 {count}，不能漏题
+2. question_id 必须使用题目里给出的 id，不要重新编号
+3. score 必须是 0-100 之间的数字
+4. 同一份答案要按统一标准评分，不要各题标准不一致
+5. 只返回 JSON，不要任何其他内容`,
+  },
+
   // ===== AI 学习教练 =====
 
   judge_classroom_answer: {

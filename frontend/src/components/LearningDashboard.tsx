@@ -12,6 +12,7 @@ import {
 } from '@ant-design/icons';
 import axios from 'axios';
 import { aiCoachAPI, knowledgePointAPI } from '../utils/api';
+import { pollAiTask } from '../utils/aiTask';
 import { MasteryRing, AccuracyColumn, CountColumn, WeakPointBar, LearningHeatmap, TrendLine } from './charts/ChartKit';
 import { API_BASE_URL } from '../utils/apiBase';
 
@@ -62,7 +63,9 @@ const LearningDashboard: React.FC = () => {
   const [learningTimeLoading, setLearningTimeLoading] = useState(false);
   const [kpTablePage, setKpTablePage] = useState(1);
   const [kpTablePageSize, setKpTablePageSize] = useState(10);
-  const [aiTimeout, setAiTimeout] = useState<number>(300);
+  // AI 分析进度（后端后台执行，这里轮询刷新）
+  const [aiPlanProgress, setAiPlanProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
+  const [diagnosisProgress, setDiagnosisProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
 
   useEffect(() => {
     loadData();
@@ -82,9 +85,9 @@ const LearningDashboard: React.FC = () => {
     loadDiagnosis();
   }, []);
 
-  const loadAISettings = async () => {
-    setAiTimeout(300);
-  };
+  // 旧的「读 AI 设置取客户端超时」已随异步任务改造移除：
+  // 分析在后台执行，前端只发短请求，不再需要放大超时
+  const loadAISettings = async () => {};
 
   const loadLearningTime = async () => {
     try {
@@ -177,26 +180,30 @@ const LearningDashboard: React.FC = () => {
   const loadAIPlan = async (force = false) => {
     try {
       setAiPlanLoading(true);
-      const res = await aiCoachAPI.getLearningPlan({ days: 14, force: force ? '1' : undefined }, aiTimeout);
-      if (res.data.empty) {
+      const res = await aiCoachAPI.getLearningPlan({ days: 14, force: force ? '1' : undefined });
+      // 命中缓存时后端同步返回；未命中会返回 task_id，转异步轮询
+      const data = res.data?.task_id
+        ? await pollAiTask(res.data.task_id, '/ai-coach/task/:taskId', setAiPlanProgress)
+        : res.data;
+      setAiPlanProgress(null);
+      if (data.empty) {
         setAiPlan(null);
-        if (force) message.info(res.data.message || '暂无数据生成规划');
+        if (force) message.info(data.message || '暂无数据生成规划');
       } else {
-        setAiPlan(res.data.plan);
-        setAiPlanGeneratedAt(res.data.generated_at);
-        setAiPlanCanRegenerateAt(res.data.can_regenerate_at || null);
-        setAiPlanIntervalDays(res.data.interval_days || 3);
-        if (!force || !res.data.can_regenerate_at) {
-          // from cache or first generation
-        } else {
+        setAiPlan(data.plan);
+        setAiPlanGeneratedAt(data.generated_at);
+        setAiPlanCanRegenerateAt(data.can_regenerate_at || null);
+        setAiPlanIntervalDays(data.interval_days || 3);
+        if (force && data.can_regenerate_at) {
           message.success('AI学习规划已重新生成');
         }
       }
     } catch (e: any) {
+      setAiPlanProgress(null);
       if (e.code === 'ECONNABORTED') {
-        message.error(`AI请求超时（${aiTimeout}秒），请稍后重试`);
+        message.error('请求超时，请稍后重试');
       } else {
-        message.error(e.response?.data?.error || '生成学习规划失败');
+        message.error(e.response?.data?.error || e?.message || '生成学习规划失败');
       }
     } finally {
       setAiPlanLoading(false);
@@ -206,27 +213,30 @@ const LearningDashboard: React.FC = () => {
   const loadDiagnosis = async (force = false) => {
     try {
       setDiagnosisLoading(true);
-      const res = await aiCoachAPI.getDiagnosis({ days: 30, force: force ? '1' : undefined }, aiTimeout);
-      if (res.data.empty) {
+      const res = await aiCoachAPI.getDiagnosis({ days: 30, force: force ? '1' : undefined });
+      const data = res.data?.task_id
+        ? await pollAiTask(res.data.task_id, '/ai-coach/task/:taskId', setDiagnosisProgress)
+        : res.data;
+      setDiagnosisProgress(null);
+      if (data.empty) {
         setDiagnosis(null);
-        if (force) message.info(res.data.message || '暂无数据生成诊断报告');
+        if (force) message.info(data.message || '暂无数据生成诊断报告');
       } else {
-        setDiagnosis(res.data.report);
-        setDiagnosisContext(res.data.context);
-        setDiagnosisGeneratedAt(res.data.generated_at);
-        setDiagnosisCanRegenerateAt(res.data.can_regenerate_at || null);
-        setDiagnosisIntervalDays(res.data.interval_days || 3);
-        if (!force || !res.data.can_regenerate_at) {
-          // from cache or first generation
-        } else {
+        setDiagnosis(data.report);
+        setDiagnosisContext(data.context);
+        setDiagnosisGeneratedAt(data.generated_at);
+        setDiagnosisCanRegenerateAt(data.can_regenerate_at || null);
+        setDiagnosisIntervalDays(data.interval_days || 3);
+        if (force && data.can_regenerate_at) {
           message.success('AI诊断报告已重新生成');
         }
       }
     } catch (e: any) {
+      setDiagnosisProgress(null);
       if (e.code === 'ECONNABORTED') {
-        message.error(`AI请求超时（${aiTimeout}秒），请稍后重试`);
+        message.error('请求超时，请稍后重试');
       } else {
-        message.error(e.response?.data?.error || '生成诊断报告失败');
+        message.error(e.response?.data?.error || e?.message || '生成诊断报告失败');
       }
     } finally {
       setDiagnosisLoading(false);
@@ -514,6 +524,13 @@ const LearningDashboard: React.FC = () => {
               </Button>
             }
           >
+            {/* 分析进度：让进度可见，避免「一直转圈不知道在干嘛」 */}
+            {aiPlanLoading && aiPlanProgress && (
+              <div style={{ marginBottom: 12 }}>
+                <Progress percent={aiPlanProgress.percent} size="small" status="active" />
+                <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{aiPlanProgress.current}</div>
+              </div>
+            )}
             {!aiPlan ? (
               <div style={{ color: '#999', padding: '12px 0' }}>
                 🤖 点击右上按钮，AI 会基于你的错题本、薄弱知识点、答题记录为你制定未来7天的学习规划。
@@ -688,6 +705,13 @@ const LearningDashboard: React.FC = () => {
               </Button>
             }
           >
+            {/* 诊断进度：让进度可见，避免「一直转圈不知道在干嘛」 */}
+            {diagnosisLoading && diagnosisProgress && (
+              <div style={{ marginBottom: 12 }}>
+                <Progress percent={diagnosisProgress.percent} size="small" status="active" />
+                <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{diagnosisProgress.current}</div>
+              </div>
+            )}
             {!diagnosis ? (
               <div style={{ color: '#999', padding: '12px 0' }}>
                 🩺 点击右上按钮，AI 将分析你最近30天的答题表现、薄弱点分布和错题轨迹，生成一份学情诊断报告，并给出有针对性的改进建议。

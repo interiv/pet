@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Input, InputNumber, Button, Tag, Avatar, Empty, Spin, message, Space, Upload } from 'antd';
+import { Modal, Input, InputNumber, Button, Tag, Avatar, Empty, Spin, message, Space, Upload, Progress } from 'antd';
 import { SearchOutlined, CheckOutlined, CloseOutlined, PictureOutlined, RobotOutlined, DeleteOutlined } from '@ant-design/icons';
 import { pinyin } from 'pinyin-pro';
 import { assignmentAPI, classroomQuizAPI } from '../utils/api';
+import { pollAiTask } from '../utils/aiTask';
 import { compressImage } from '../utils/imageCompress';
 
 interface Q {
@@ -44,6 +45,8 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
   const [saving, setSaving] = useState(false);
   const [photos, setPhotos] = useState<string[]>([]);
   const [aiJudging, setAiJudging] = useState(false);
+  // AI 识别进度（后端后台执行，这里轮询刷新）
+  const [judgeProgress, setJudgeProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
   const [recognized, setRecognized] = useState<Record<number, { answer: string; comment: string }>>({});
   const pyCache = useRef<Map<number, string>>(new Map());
 
@@ -61,9 +64,17 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
     if (photos.length === 0) { message.warning('请先添加该学生的作业照片'); return; }
     if (!currentStudent) { message.warning('请先在左侧选择这份作业属于哪位学生'); return; }
     setAiJudging(true);
+    setJudgeProgress({ percent: 0, done: 0, total: photos.length, current: '正在提交识别任务' });
     try {
+      // 后端改为后台任务：提交只返回 task_id，识别过程靠轮询拿进度
       const res = await assignmentAPI.aiPaperJudge(assignmentId, { images: photos });
-      const results: any[] = res.data.results || [];
+      const taskId: string | undefined = res.data?.task_id;
+      if (!taskId) throw new Error('后端未返回任务号，请确认服务端已更新到最新版本');
+
+      const data = await pollAiTask(taskId, '/assignments/generate/:taskId', setJudgeProgress);
+      setJudgeProgress(null);
+
+      const results: any[] = data.results || [];
       const newMarks: Record<number, { correct: boolean; score?: number }> = {};
       const rec: Record<number, { answer: string; comment: string }> = {};
       for (const r of results) {
@@ -72,10 +83,11 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
       }
       setMarks(prev => ({ ...prev, ...newMarks }));
       setRecognized(rec);
-      message.success(`AI识别完成（${results.length}题，模型：${res.data.model}），已预填对错，请逐题核对后保存`);
+      message.success(`AI识别完成（${results.length}题，模型：${data.model}），已预填对错，请逐题核对后保存`);
     } catch (e: any) {
-      message.error(e?.response?.data?.error || 'AI识别失败');
+      message.error(e?.response?.data?.error || e?.message || 'AI识别失败');
     } finally {
+      setJudgeProgress(null);
       setAiJudging(false);
     }
   };
@@ -271,6 +283,13 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                 >
                   {aiJudging ? 'AI识别中...' : 'AI识别判分'}
                 </Button>
+                {/* 识别进度：让老师看得见在做什么，而不是一个停不下来的转圈 */}
+                {aiJudging && judgeProgress && (
+                  <div style={{ width: '100%', marginTop: 8 }}>
+                    <Progress percent={judgeProgress.percent} size="small" status="active" />
+                    <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{judgeProgress.current}</div>
+                  </div>
+                )}
                 {photos.map((p, i) => (
                   <div key={i} style={{ position: 'relative' }}>
                     <img src={p} alt="" style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 4, border: '1px solid #ddd' }} />

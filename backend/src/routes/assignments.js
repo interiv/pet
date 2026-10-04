@@ -796,78 +796,26 @@ async function runGenerateLogic(req, res, hooks = {}) {
 // ============================================================
 
 /**
- * 伪响应对象：把 runGenerateLogic 里的 res.status().json() 调用收集起来，
- * 而不是真的发给客户端。这样那400 行逻辑一行都不用改就能在后台跑。
+ * 伪响应对象与异步任务提交都走公共工具，避免多处重复实现。
  */
-function createCapturedResponder() {
-  const out = { status: 200, body: null, sent: false };
-  const r = {
-    out,
-    status(code) { out.status = code; return r; },
-    json(payload) { out.sent = true; out.body = payload; return r; },
-    send(payload) { out.sent = true; out.body = payload; return r; },
-    sendStatus(code) { out.status = code; out.sent = true; return r; },
-    set() { return r; },
-    header() { return r; },
-    type() { return r; },
-  };
-  return r;
-}
+const { startAsyncTask, handleTaskQuery } = require('../utils/asyncTask');
 
 router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, (req, res) => {
-  // 同一用户同时只允许一个生成任务，避免重复点击并发跑导致额度与配额混乱
-  const running = genTaskManager.findRunning(req.user.userId);
-  if (running) {
-    return res.status(409).json({
-      error: '你已有一个生成任务正在进行，请等待它完成',
-      task_id: running.id,
-    });
-  }
-
-  const task = genTaskManager.create({
+  const title = req.body.topic || String(req.body.requirements || '').slice(0, 30) || 'AI 出题';
+  return startAsyncTask(res, {
     userId: req.user.userId,
-    topic: req.body.topic || String(req.body.requirements || '').slice(0, 30) || 'AI 出题',
+    kind: 'question_gen',
+    title,
     subject: req.body.subject || '',
-  });
-
-  // 立即返回，前端拿到 task_id 后开始轮询
-  res.status(202).json({
-    task_id: task.id,
-    message: '已开始生成，请稍候',
-  });
-
-  // 后台执行。不阻塞响应，也就不受任何网关超时约束。
-  setImmediate(async () => {
-    const fakeRes = createCapturedResponder();
-    try {
-      genTaskManager.markRunning(task.id);
-      await runGenerateLogic(req, fakeRes, {
-        onProgress: (p) => genTaskManager.updateProgress(task.id, p),
-      });
-      if (fakeRes.out.sent) {
-        genTaskManager.complete(task.id, { status: fakeRes.out.status, body: fakeRes.out.body });
-      } else {
-        // 逻辑跑完却没写响应，属于异常情况，按失败处理
-        genTaskManager.fail(task.id, '生成流程异常结束，请重试');
-      }
-    } catch (err) {
-      console.error('异步生成任务异常:', err);
-      genTaskManager.fail(task.id, err.message || '生成失败');
-    }
-  });
+    runningMsg: '已开始生成，请稍候',
+  }, (fakeRes, onProgress) =>
+    runGenerateLogic(req, fakeRes, { onProgress })
+  );
 });
 
 // 轮询进度
 router.get('/generate/:taskId', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
-  const task = genTaskManager.get(req.params.taskId);
-  if (!task) {
-    return res.status(404).json({ error: '任务不存在或已过期，请重新发起生成' });
-  }
-  // 只能查自己的任务，防止横向读取别人的生成结果
-  if (task.userId !== req.user.userId && req.user.role !== 'admin') {
-    return res.status(403).json({ error: '无权查看该任务' });
-  }
-  res.json(task.toPublicJSON());
+  handleTaskQuery(req, res);
 });
 
 // 撤销一次「生成了但没有发布」的 AI 出题：删除未被使用的题目并把额度退还
@@ -1952,62 +1900,86 @@ async function reviewSubjectiveAssignment(submissionId, assignmentId, userId) {
     const feedbackList = [];
 
     if (config.ai_api_key && config.ai_base_url && config.ai_model) {
-      for (const qa of questionAnswers) {
-        const reviewPrompt = fillTemplate(getPrompt('review_subjective'), {
-          subject: submission.subject,
-          question_content: qa.question_content,
-          reference_answer: qa.reference_answer || '无',
-          student_answer: qa.student_answer || '(未提供文字答案)'
+      // 一次 prompt 判所有主观题。
+      // 原先是「每道题调一次 AI」的串行循环，10 道题就要等 10 轮往返（可能好几分钟），
+      // 而且失败只能整批兜底。合并成一次请求后耗时降到 1 轮，判定也更一致
+      // （同一份评分标准横向对比，不会出现同批题标准飘移）。
+      const reviewPrompt = fillTemplate(getPrompt('review_subjective_batch'), {
+        subject: submission.subject || '',
+        count: String(questionAnswers.length),
+        questions_text: questionAnswers.map((qa, i) => {
+          const parts = [
+            `第 ${i + 1} 题（question_id=${qa.question_bank_id}）：`,
+            `题目：${qa.question_content || ''}`,
+            `参考答案：${qa.reference_answer || '无'}`,
+            `学生答案：${qa.student_answer || '(未提供文字答案)'}`,
+          ];
+          return parts.join('\n');
+        }).join('\n\n'),
+      });
+
+      // AI 少给一题时按 60 分兜底；单题失败不影响其它题
+      const resultsById = new Map();
+      try {
+        const resp = await axios.post(`${config.ai_base_url}/chat/completions`, {
+          model: config.ai_model,
+          messages: [{ role: 'user', content: reviewPrompt }]
+        }, {
+          headers: { 'Authorization': `Bearer ${config.ai_api_key}`, 'Content-Type': 'application/json' },
+          timeout: timeoutMs
         });
 
+        const aiContent = resp.data.choices[0].message.content;
+        let parsed;
         try {
-          const resp = await axios.post(`${config.ai_base_url}/chat/completions`, {
-            model: config.ai_model,
-            messages: [{ role: 'user', content: reviewPrompt }]
-          }, {
-            headers: { 'Authorization': `Bearer ${config.ai_api_key}`, 'Content-Type': 'application/json' },
-            timeout: timeoutMs
-          });
+          parsed = JSON.parse(aiContent);
+        } catch (parseErr) {
+          // 尝试提取 JSON 对象/数组
+          const arrMatch = aiContent.match(/\[[\s\S]*\]/);
+          const objMatch = arrMatch ? null : aiContent.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
+          const target = arrMatch || objMatch;
+          if (!target) throw new Error('AI返回格式错误');
+          parsed = JSON.parse(target[0]);
+        }
+        const list = Array.isArray(parsed) ? parsed : (parsed.results || parsed.items || []);
+        for (const item of list) {
+          const qid = parseInt(item.question_id, 10);
+          if (Number.isFinite(qid)) resultsById.set(qid, item);
+        }
+        console.log(`主观题批量评阅: 提交 ${questionAnswers.length} 题，AI 返回 ${resultsById.size} 题`);
+      } catch (e) {
+        console.error('主观题批量评阅失败，全部按 60 分兜底:', e.message);
+      }
 
-          const aiContent = resp.data.choices[0].message.content;
-          let aiResult;
-          try {
-            aiResult = JSON.parse(aiContent);
-          } catch (parseErr) {
-            // 尝试提取JSON对象
-            const jsonMatch = aiContent.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
-            if (jsonMatch) {
-              aiResult = JSON.parse(jsonMatch[0]);
-            } else {
-              throw new Error('AI返回格式错误');
-            }
-          }
-          const score = Math.max(0, Math.min(100, aiResult.score || 60));
-          totalScore += score;
-
-          // 构建完整的反馈信息
-          const feedbackData = {
-            score: score,
-            feedback: aiResult.feedback || '已评阅',
-            key_points: aiResult.key_points || [],
-            improvements: aiResult.improvements || []
-          };
-
-          db.prepare(`
-            UPDATE question_answers SET score = ?, max_score = 100, feedback = ?, reviewed_at = CURRENT_TIMESTAMP, is_correct = ? WHERE id = ?
-          `).run(score, JSON.stringify(feedbackData), score >= 60 ? 1 : 0, qa.id);
-
-          feedbackList.push({
-            question_id: qa.question_bank_id,
-            score,
-            feedback: aiResult.feedback || '已评阅',
-            is_correct: score >= 60
-          });
-        } catch (e) {
+      for (const qa of questionAnswers) {
+        const aiResult = resultsById.get(qa.question_bank_id);
+        if (!aiResult) {
           totalScore += 60;
           db.prepare(`UPDATE question_answers SET score = 60, max_score = 100, feedback = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?`)
             .run(JSON.stringify({ feedback: '自动评分', suggestions: ['继续努力'] }), qa.id);
+          feedbackList.push({ question_id: qa.question_bank_id, score: 60, feedback: '自动评分', is_correct: true });
+          continue;
         }
+        const score = Math.max(0, Math.min(100, aiResult.score || 60));
+        totalScore += score;
+
+        const feedbackData = {
+          score: score,
+          feedback: aiResult.feedback || '已评阅',
+          key_points: aiResult.key_points || [],
+          improvements: aiResult.improvements || []
+        };
+
+        db.prepare(`
+          UPDATE question_answers SET score = ?, max_score = 100, feedback = ?, reviewed_at = CURRENT_TIMESTAMP, is_correct = ? WHERE id = ?
+        `).run(score, JSON.stringify(feedbackData), score >= 60 ? 1 : 0, qa.id);
+
+        feedbackList.push({
+          question_id: qa.question_bank_id,
+          score,
+          feedback: aiResult.feedback || '已评阅',
+          is_correct: score >= 60
+        });
       }
     } else {
       totalScore = questionAnswers.length * 60;
@@ -2422,7 +2394,7 @@ router.post('/:id/paper-submit-batch', authenticateToken, authorizeRole('teacher
 });
 
 // 纸质作业照片 AI 识别判分（视觉模型，结果供教师确认后通过 paper-submit 入库）
-router.post('/:id/ai-paper-judge', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, aiJudgeOff, async (req, res) => {
+async function runPaperJudge(req, res, onProgress = () => {}) {
   try {
     const { images } = req.body;
     if (!Array.isArray(images) || images.length === 0) {
@@ -2431,6 +2403,7 @@ router.post('/:id/ai-paper-judge', authenticateToken, authorizeRole('teacher', '
     if (images.length > 6) {
       return res.status(400).json({ error: '一次最多识别6张照片' });
     }
+    onProgress({ phase: 'precheck', label: '正在准备识别', done: 0, total: images.length });
 
     const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
     if (!assignment) return res.status(404).json({ error: '作业不存在' });
@@ -2472,6 +2445,12 @@ router.post('/:id/ai-paper-judge', authenticateToken, authorizeRole('teacher', '
     const axios = require('axios');
     const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
     const startTime = Date.now();
+    onProgress({
+      phase: 'ai',
+      label: `AI 正在识别 ${images.length} 张照片（通常需 1-2 分钟）`,
+      done: 0,
+      total: images.length,
+    });
     const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
       model: visionModel,
       messages: [{ role: 'user', content }],
@@ -2483,6 +2462,7 @@ router.post('/:id/ai-paper-judge', authenticateToken, authorizeRole('teacher', '
       },
       timeout: timeoutMs
     });
+    onProgress({ phase: 'parsing', label: '正在整理识别结果', done: images.length, total: images.length });
 
     try {
       const usage = response.data?.usage || {};
@@ -2534,7 +2514,7 @@ router.post('/:id/ai-paper-judge', authenticateToken, authorizeRole('teacher', '
     }
     res.status(500).json({ error: '纸质作业AI识别失败: ' + (error.message || '未知错误') });
   }
-});
+}
 
 // 姓名匹配：AI 识别出的卷面姓名 → 班级学生。匹配不上返回 null，交由老师手动指派
 function matchStudentByName(rawName, students) {
@@ -2560,7 +2540,8 @@ function matchStudentByName(rawName, students) {
 }
 
 // 批量纸质作业识别：一次上传多张照片，AI 识别每份卷面姓名并逐题判分，返回按学生分组的结果
-router.post('/:id/ai-paper-judge-batch', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, aiJudgeOff, async (req, res) => {
+// 逻辑与 HTTP 拆开：外面套一层 startAsyncTask 后即可在后台跑，前端轮询进度。
+async function runPaperJudgeBatch(req, res, onProgress = () => {}) {
   try {
     const { images } = req.body;
     if (!Array.isArray(images) || images.length === 0) {
@@ -2569,6 +2550,7 @@ router.post('/:id/ai-paper-judge-batch', authenticateToken, authorizeRole('teach
     if (images.length > 12) {
       return res.status(400).json({ error: '一次最多识别 12 张照片' });
     }
+    onProgress({ phase: 'precheck', label: '正在准备识别', done: 0, total: images.length });
 
     const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
     if (!assignment) return res.status(404).json({ error: '作业不存在' });
@@ -2616,6 +2598,13 @@ router.post('/:id/ai-paper-judge-batch', authenticateToken, authorizeRole('teach
 
     const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
     const startTime = Date.now();
+    // 图片越多越慢，明确告诉用户在做什么，避免「卡住了」的错觉
+    onProgress({
+      phase: 'ai',
+      label: `AI 正在识别 ${images.length} 张照片（通常需 1-2 分钟）`,
+      done: 0,
+      total: images.length,
+    });
     const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
       model: visionModel,
       messages: [{ role: 'user', content }],
@@ -2627,6 +2616,7 @@ router.post('/:id/ai-paper-judge-batch', authenticateToken, authorizeRole('teach
       },
       timeout: timeoutMs
     });
+    onProgress({ phase: 'parsing', label: '正在整理识别结果', done: images.length, total: images.length });
 
     try {
       const usage = response.data?.usage || {};
@@ -2703,6 +2693,31 @@ router.post('/:id/ai-paper-judge-batch', authenticateToken, authorizeRole('teach
     }
     res.status(500).json({ error: '批量识别失败: ' + (error.message || '未知错误') });
   }
+}
+
+// 提交批量识别任务：立即返回 task_id，识别在后台跑
+router.post('/:id/ai-paper-judge-batch', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, aiJudgeOff, (req, res) => {
+  const imageCount = Array.isArray(req.body?.images) ? req.body.images.length : 0;
+  return startAsyncTask(res, {
+    userId: req.user.userId,
+    kind: 'paper_judge',
+    title: `纸质作业识别（${imageCount} 张）`,
+    subject: req.body?.subject || '',
+    total: imageCount || 1,
+    runningMsg: '已开始识别，请稍候',
+  }, (fakeRes, onProgress) => runPaperJudgeBatch(req, fakeRes, onProgress));
+});
+
+// 提交单份识别任务
+router.post('/:id/ai-paper-judge', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, aiJudgeOff, (req, res) => {
+  const imageCount = Array.isArray(req.body?.images) ? req.body.images.length : 0;
+  return startAsyncTask(res, {
+    userId: req.user.userId,
+    kind: 'paper_judge',
+    title: `纸质作业识别（${imageCount} 张）`,
+    total: imageCount || 1,
+    runningMsg: '已开始识别，请稍候',
+  }, (fakeRes, onProgress) => runPaperJudge(req, fakeRes, onProgress));
 });
 
 router.get('/wrong/my', authenticateToken, (req, res) => {

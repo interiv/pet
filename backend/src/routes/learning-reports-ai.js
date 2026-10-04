@@ -17,6 +17,7 @@ const { getPrompt, fillTemplate } = require('../config/prompts');
 const { getChinaDate, getChinaDateDaysAgo, resolveDateRange } = require('../config/timezone');
 const { accuracyPct, WEAK_ACCURACY, MASTERED_ACCURACY } = require('../utils/analytics');
 const { requireFeature } = require('../middleware/featureFlags');
+const { startAsyncTask, handleTaskQuery } = require('../utils/asyncTask');
 
 // AI 总闸：学情报告是最耗 token 的功能之一，必须能被一键停掉。
 // 只拦「生成」两个入口，历史报告的读取不受影响。
@@ -111,8 +112,10 @@ const line = (s) => `- ${s}`;
 /**
  * 生成班级学情分析报告
  * POST /api/learning-reports/ai-report  { class_id, subject?, date_from?, date_to? }
+ *
+ * 逻辑与 HTTP 拆开，外面套 startAsyncTask 后在后台跑，前端轮询进度。
  */
-router.post('/ai-report', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, async (req, res) => {
+async function runClassReport(req, res, onProgress = () => {}) {
   const startedAt = Date.now();
   try {
     const access = resolveClassAccess(req, res);
@@ -238,6 +241,7 @@ router.post('/ai-report', authenticateToken, authorizeRole('teacher', 'admin'), 
       homework_insights: homeworkInsights,
     });
 
+    onProgress({ phase: 'ai', label: 'AI 正在分析班级数据（通常需 30-90 秒）' });
     const { content, usage, model, elapsed } = await callAI(prompt, subjects[0] || '综合');
     const report = parseJSON(content);
 
@@ -296,13 +300,13 @@ router.post('/ai-report', authenticateToken, authorizeRole('teacher', 'admin'), 
     const status = error.status || (error.code === 'ECONNABORTED' ? 504 : 500);
     res.status(status).json({ error: error.message || '生成报告失败' });
   }
-});
+}
 
 /**
  * 生成单个学生的教师视角报告
  * POST /api/learning-reports/ai-report/student  { class_id, student_id, subject?, date_from?, date_to? }
  */
-router.post('/ai-report/student', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, async (req, res) => {
+async function runStudentReport(req, res, onProgress = () => {}) {
   try {
     const access = resolveClassAccess(req, res);
     if (!access) return;
@@ -398,6 +402,7 @@ router.post('/ai-report/student', authenticateToken, authorizeRole('teacher', 'a
       attendance_summary: `- 应完成作业 ${assignTotal} 份，实际完成 ${assignDone} 份（完成率 ${assignTotal > 0 ? Math.round(assignDone / assignTotal * 100) : 0}%）`,
     });
 
+    onProgress({ phase: 'ai', label: 'AI 正在分析该生数据（通常需 30-90 秒）' });
     const { content, model } = await callAI(prompt, subjects[0] || '综合');
     const report = parseJSON(content);
 
@@ -425,6 +430,31 @@ router.post('/ai-report/student', authenticateToken, authorizeRole('teacher', 'a
     const status = error.status || (error.code === 'ECONNABORTED' ? 504 : 500);
     res.status(status).json({ error: error.message || '生成报告失败' });
   }
+}
+
+// ===== 提交任务入口：立即返回 task_id，分析在后台跑 =====
+
+router.post('/ai-report', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, (req, res) => {
+  return startAsyncTask(res, {
+    userId: req.user.userId,
+    kind: 'class_report',
+    title: '班级学情报告',
+    runningMsg: '已开始分析，请稍候',
+  }, (fakeRes, onProgress) => runClassReport(req, fakeRes, onProgress));
+});
+
+router.post('/ai-report/student', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, (req, res) => {
+  return startAsyncTask(res, {
+    userId: req.user.userId,
+    kind: 'student_report',
+    title: '学生学情报告',
+    runningMsg: '已开始分析，请稍候',
+  }, (fakeRes, onProgress) => runStudentReport(req, fakeRes, onProgress));
+});
+
+// 轮询进度（与出题共用 genTaskManager，这里按 kind 区分互斥）
+router.get('/ai-report/task/:taskId', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  handleTaskQuery(req, res);
 });
 
 /** 报告历史列表 */

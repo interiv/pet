@@ -5,12 +5,12 @@ const { db } = require('../../config/database');
 const { authenticateToken } = require('../../middleware/auth');
 const { getChinaDate } = require('../../config/timezone');
 const { getAIConfig, isAIConfigured, getAITimeoutMs } = require('../../config/ai');
+const { startAsyncTask, handleTaskQuery } = require('../../utils/asyncTask');
 const { PROMPTS, SETTING_PREFIX, getPrompt, fillTemplate } = require('../../config/prompts');
 const {
   USERNAME_MAX_LEN,
   AI_USERNAME_BATCH_SIZE,
-  requireAdmin,
-  purgeUserData,
+  requireAdmin,  purgeUserData,
   applyApplicationToClass,
   approveTeacherPendingApplications,
   checkDataPermission,
@@ -408,52 +408,86 @@ router.post('/students/:id/assign-class', authenticateToken, (req, res) => {
   }
 });
 
-router.post('/students/generate-accounts', authenticateToken, async (req, res) => {
-  const startedAt = Date.now();
-  try {
-    const { names, mode = 'ai', prefix = 'stu', class_id } = req.body;
+router.post('/students/generate-accounts', authenticateToken, (req, res) => {
+  // 前置校验必须同步做完并立刻返回错误：这些是毫秒级的判断，
+  // 而 AI 生成 200 个账号要串行 10 批、可能跑好几分钟，不能占着连接等。
+  const precheck = precheckGenerateAccounts(req);
+  if (precheck.error) {
+    return res.status(precheck.status).json(precheck.body);
+  }
+  // mode=sequence 是纯本地算号，秒回；只有走 AI 才转异步任务
+  if (precheck.mode === 'sequence') {
+    return runGenerateAccounts(req, res, () => {});
+  }
+  return startAsyncTask(res, {
+    userId: req.user.userId,
+    kind: 'gen_accounts',
+    title: '学生账号生成',
+    runningMsg: '已开始生成，请稍候',
+  }, (fakeRes, onProgress) => runGenerateAccounts(req, fakeRes, onProgress, precheck));
+});
 
-    // 权限：学生禁止；教师需为班主任
-    if (req.user.role === 'student') {
-      return res.status(403).json({ error: '权限不足' });
-    }
-    if (req.user.role !== 'admin') {
-      const isHeadTeacher = class_id
-        ? db.prepare(`SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'`)
-          .get(req.user.userId, parseInt(class_id))
-        : db.prepare(`SELECT 1 FROM class_teachers WHERE teacher_id = ? AND role = 'head_teacher'`)
-          .get(req.user.userId);
-      if (!isHeadTeacher) {
-        return res.status(403).json({ error: '需要班主任或管理员权限' });
-      }
-    }
+/**
+ * 生成学生账号前的同步校验：权限、姓名清洗、AI 配置。
+ * 返回 { error } 表示要直接回给客户端；否则把清洗结果带进后续流程。
+ */
+function precheckGenerateAccounts(req) {
+  const { names, mode = 'ai', class_id } = req.body;
 
-    const { names: cleanedNames, stats } = cleanStudentNames(names);
-    if (cleanedNames.length === 0) {
-      return res.status(400).json({ error: '没有解析到有效的姓名，请检查粘贴内容', stats });
+  if (req.user.role === 'student') {
+    return { status: 403, error: true, body: { error: '权限不足' } };
+  }
+  if (req.user.role !== 'admin') {
+    const isHeadTeacher = class_id
+      ? db.prepare(`SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ? AND role = 'head_teacher'`)
+        .get(req.user.userId, parseInt(class_id))
+      : db.prepare(`SELECT 1 FROM class_teachers WHERE teacher_id = ? AND role = 'head_teacher'`)
+        .get(req.user.userId);
+    if (!isHeadTeacher) {
+      return { status: 403, error: true, body: { error: '需要班主任或管理员权限' } };
     }
-    if (cleanedNames.length > 200) {
-      return res.status(400).json({ error: '一次最多生成 200 个账号，请分批处理', stats });
-    }
+  }
 
-    const useAI = mode !== 'sequence';
-    const aiUsernames = new Map();
-    let aiConfig = null;
+  const { names: cleanedNames, stats } = cleanStudentNames(names);
+  if (cleanedNames.length === 0) {
+    return { status: 400, error: true, body: { error: '没有解析到有效的姓名，请检查粘贴内容', stats } };
+  }
+  if (cleanedNames.length > 200) {
+    return { status: 400, error: true, body: { error: '一次最多生成 200 个账号，请分批处理', stats } };
+  }
 
-    if (useAI) {
-      ensureSettingsTable(); // 确保 settings / token_usage 表存在
-      aiConfig = getAIConfig();
-      if (!isAIConfigured(aiConfig)) {
-        console.log('⚠️ AI 未配置，无法生成账号');
-        return res.status(400).json({
+  const useAI = mode !== 'sequence';
+  let aiConfig = null;
+  if (useAI) {
+    ensureSettingsTable(); // 确保 settings / token_usage 表存在
+    aiConfig = getAIConfig();
+    if (!isAIConfigured(aiConfig)) {
+      return {
+        status: 400,
+        error: true,
+        body: {
           error: 'AI 功能当前不可用：管理员尚未在「AI设置」中完成模型配置，可改用「按序号生成账号」',
           can_fallback: true,
-          stats
-        });
-      }
+          stats,
+        },
+      };
+    }
+  }
+  return { cleanedNames, stats, useAI, aiConfig, mode };
+}
 
+async function runGenerateAccounts(req, res, onProgress = () => {}, precheck = null) {
+  const startedAt = Date.now();
+  const { prefix = 'stu' } = req.body;
+  try {
+    const pc = precheck || precheckGenerateAccounts(req);
+    if (pc.error) return res.status(pc.status).json(pc.body);
+    const { cleanedNames, stats, useAI, aiConfig } = pc;
+    const aiUsernames = new Map();
+
+    if (useAI) {
       try {
-        const { map, tokens } = await generateUsernamesByAI(cleanedNames);
+        const { map, tokens } = await generateUsernamesByAI(cleanedNames, onProgress);
         for (const [name, username] of map) aiUsernames.set(name, username);
 
         // 记录 Token 用量（失败不影响主流程）
@@ -517,6 +551,11 @@ router.post('/students/generate-accounts', authenticateToken, async (req, res) =
     console.error('生成学生账号失败:', error);
     res.status(500).json({ error: '生成账号失败: ' + error.message });
   }
+}
+
+// 轮询进度（账号生成任务）
+router.get('/students/task/:taskId', authenticateToken, (req, res) => {
+  handleTaskQuery(req, res);
 });
 
 router.post('/students/import', authenticateToken, async (req, res) => {

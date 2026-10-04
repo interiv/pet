@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Button, Select, InputNumber, Input, Tag, Avatar, Empty, Spin, message, Checkbox, Space, Modal, Table, Slider
+  Button, Select, InputNumber, Input, Tag, Avatar, Empty, Spin, message, Checkbox, Space, Modal, Table, Slider, Progress
 } from 'antd';
 import {
   LeftOutlined, RightOutlined, CloseOutlined, ThunderboltOutlined,
@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons';
 import { pinyin } from 'pinyin-pro';
 import { classroomQuizAPI, itemAPI, equipmentAPI } from '../utils/api';
+import { pollAiTask } from '../utils/aiTask';
 import { getPetThumbUrl } from '../utils/petImage';
 
 const REWARD_TYPES: Record<string, string> = {
@@ -82,6 +83,8 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
   const [answerText, setAnswerText] = useState('');
   const [listening, setListening] = useState(false);
   const [judging, setJudging] = useState(false);
+  // AI 判分进度（后端后台执行，这里轮询刷新）
+  const [judgeProgress, setJudgeProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
   const [judgeSeconds, setJudgeSeconds] = useState(0);
   const [judgeResult, setJudgeResult] = useState<any>(null);
   const [perQValue, setPerQValue] = useState(10);
@@ -430,13 +433,18 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
       return;
     }
     setJudging(true);
+    setJudgeProgress({ percent: 0, done: 0, total: 1, current: 'AI 正在评判作答' });
     try {
+      // 后端改为后台任务：提交只返回 task_id，判分过程靠轮询拿进度
       const res = await classroomQuizAPI.aiJudge({
         subject: quiz.subject,
         question_text: currentQuestion.question_text,
         student_answer: answerText,
       });
-      const r = res.data;
+      const taskId: string | undefined = res.data?.task_id;
+      if (!taskId) throw new Error('后端未返回任务号，请确认服务端已更新到最新版本');
+      const r = await pollAiTask(taskId, '/classroom-quiz/task/:taskId', setJudgeProgress);
+      setJudgeProgress(null);
       setJudgeResult({ ...r, student: answerer, answer: answerText, questionIndex: index, coins: 0 });
       try {
         const saved = await classroomQuizAPI.saveAnswer(quiz.id, {
@@ -453,8 +461,9 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
       loadAnswers();
       stopSpeech();
     } catch (e: any) {
-      message.error(e?.response?.data?.error || 'AI评判失败');
+      message.error(e?.response?.data?.error || e?.message || 'AI评判失败');
     } finally {
+      setJudgeProgress(null);
       setJudging(false);
     }
   };
@@ -833,6 +842,13 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
                 >
                   {judging ? `AI评判中... 已等待${judgeSeconds}秒` : '提交AI评判'}
                 </Button>
+                {/* 判分进度：让老师看得见在做什么，而不是一个停不下来的转圈 */}
+                {judging && judgeProgress && (
+                  <div style={{ marginTop: 8 }}>
+                    <Progress percent={judgeProgress.percent} size="small" status="active" />
+                    <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{judgeProgress.current}</div>
+                  </div>
+                )}
               </div>
             )}
           </div>

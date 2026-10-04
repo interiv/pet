@@ -5,6 +5,7 @@ const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { getPrompt, fillTemplate } = require('../config/prompts');
 const { requireFeature } = require('../middleware/featureFlags');
+const { startAsyncTask, handleTaskQuery } = require('../utils/asyncTask');
 
 // AI 总闸：学习规划与诊断都是 LLM 调用，纳入统一停用范围
 const aiOff = requireFeature('ai_enabled', { message: 'AI 功能当前已关闭，请联系管理员' });
@@ -144,35 +145,55 @@ function parseJSON(text) {
   throw new Error('AI 返回的 JSON 无法解析');
 }
 
+/** 报告重新生成的冷却天数（默认 3 天） */
+function getIntervalDays() {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'ai_report_interval_days'").get();
+  return parseInt(row?.value) || 3;
+}
+
 /**
  * GET /api/ai-coach/learning-plan
  * 基于学情生成个性化学习规划
+ *
+ * 命中缓存时同步秒回；未命中要调 AI（可能几十秒），此时改为
+ * 返回 202 + task_id，由前端轮询 progress，避免长连接被网关切断。
  */
-router.get('/learning-plan', authenticateToken, aiOff, async (req, res) => {
+router.get('/learning-plan', authenticateToken, aiOff, (req, res) => {
+  const userId = req.user.userId;
+  const days = parseInt(req.query.days) || 14;
+  const force = req.query.force === '1';
+  const intervalDays = getIntervalDays();
+
+  // 命中冷却期内的缓存就直接返回，不打扰 AI
+  const cached = db.prepare('SELECT * FROM ai_reports WHERE user_id = ? AND report_type = ?').get(userId, 'learning_plan');
+  if (cached && !force) {
+    const generatedAt = new Date(cached.generated_at);
+    const daysSinceGenerated = (Date.now() - generatedAt.getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSinceGenerated < intervalDays) {
+      return res.json({
+        plan: JSON.parse(cached.content),
+        empty: false,
+        context: cached.context ? JSON.parse(cached.context) : {},
+        generated_at: cached.generated_at,
+        can_regenerate_at: new Date(generatedAt.getTime() + intervalDays * 24 * 60 * 60 * 1000).toISOString(),
+        interval_days: intervalDays,
+      });
+    }
+  }
+
+  return startAsyncTask(res, {
+    userId,
+    kind: 'coach_plan',
+    title: 'AI 学习规划',
+    runningMsg: 'AI 正在分析，请稍候',
+  }, (fakeRes, onProgress) => runLearningPlan(req, fakeRes, onProgress));
+});
+
+async function runLearningPlan(req, res, onProgress = () => {}) {
   try {
     const userId = req.user.userId;
     const days = parseInt(req.query.days) || 14;
-    const force = req.query.force === '1';
-
-    const intervalSetting = db.prepare("SELECT value FROM settings WHERE key = 'ai_report_interval_days'").get();
-    const intervalDays = parseInt(intervalSetting?.value) || 3;
-
-    const cached = db.prepare('SELECT * FROM ai_reports WHERE user_id = ? AND report_type = ?').get(userId, 'learning_plan');
-    if (cached && !force) {
-      const generatedAt = new Date(cached.generated_at);
-      const now = new Date();
-      const daysSinceGenerated = (now - generatedAt) / (1000 * 60 * 60 * 24);
-      if (daysSinceGenerated < intervalDays) {
-        return res.json({
-          plan: JSON.parse(cached.content),
-          empty: false,
-          context: cached.context ? JSON.parse(cached.context) : {},
-          generated_at: cached.generated_at,
-          can_regenerate_at: new Date(generatedAt.getTime() + intervalDays * 24 * 60 * 60 * 1000).toISOString(),
-          interval_days: intervalDays
-        });
-      }
-    }
+    const intervalDays = getIntervalDays();
 
     const ctx = collectUserContext(userId, days);
 
@@ -203,6 +224,7 @@ router.get('/learning-plan', authenticateToken, aiOff, async (req, res) => {
       wrong_summary: wrongSummary
     });
 
+    onProgress({ phase: 'ai', label: 'AI 正在分析你的学情（通常需 30-90 秒）' });
     const aiText = await callAI(prompt);
     const parsed = parseJSON(aiText);
 
@@ -234,37 +256,49 @@ router.get('/learning-plan', authenticateToken, aiOff, async (req, res) => {
     console.error('生成学习规划失败:', error.message);
     res.status(500).json({ error: error.message || '生成学习规划失败' });
   }
-});
+}
 
 /**
  * GET /api/ai-coach/diagnosis
  * AI诊断报告：综合学情分析 + 个性化建议
+ *
+ * 同 learning-plan：命中缓存同步返回，未命中转异步任务。
  */
-router.get('/diagnosis', authenticateToken, aiOff, async (req, res) => {
+router.get('/diagnosis', authenticateToken, aiOff, (req, res) => {
+  const userId = req.user.userId;
+  const days = parseInt(req.query.days) || 30;
+  const force = req.query.force === '1';
+  const intervalDays = getIntervalDays();
+
+  const cached = db.prepare('SELECT * FROM ai_reports WHERE user_id = ? AND report_type = ?').get(userId, 'diagnosis');
+  if (cached && !force) {
+    const generatedAt = new Date(cached.generated_at);
+    const daysSinceGenerated = (Date.now() - generatedAt.getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSinceGenerated < intervalDays) {
+      return res.json({
+        report: JSON.parse(cached.content),
+        empty: false,
+        context: cached.context ? JSON.parse(cached.context) : {},
+        generated_at: cached.generated_at,
+        can_regenerate_at: new Date(generatedAt.getTime() + intervalDays * 24 * 60 * 60 * 1000).toISOString(),
+        interval_days: intervalDays,
+      });
+    }
+  }
+
+  return startAsyncTask(res, {
+    userId,
+    kind: 'coach_diagnosis',
+    title: 'AI 学情诊断',
+    runningMsg: 'AI 正在分析，请稍候',
+  }, (fakeRes, onProgress) => runDiagnosis(req, fakeRes, onProgress));
+});
+
+async function runDiagnosis(req, res, onProgress = () => {}) {
   try {
     const userId = req.user.userId;
     const days = parseInt(req.query.days) || 30;
-    const force = req.query.force === '1';
-
-    const intervalSetting = db.prepare("SELECT value FROM settings WHERE key = 'ai_report_interval_days'").get();
-    const intervalDays = parseInt(intervalSetting?.value) || 3;
-
-    const cached = db.prepare('SELECT * FROM ai_reports WHERE user_id = ? AND report_type = ?').get(userId, 'diagnosis');
-    if (cached && !force) {
-      const generatedAt = new Date(cached.generated_at);
-      const now = new Date();
-      const daysSinceGenerated = (now - generatedAt) / (1000 * 60 * 60 * 24);
-      if (daysSinceGenerated < intervalDays) {
-        return res.json({
-          report: JSON.parse(cached.content),
-          empty: false,
-          context: cached.context ? JSON.parse(cached.context) : {},
-          generated_at: cached.generated_at,
-          can_regenerate_at: new Date(generatedAt.getTime() + intervalDays * 24 * 60 * 60 * 1000).toISOString(),
-          interval_days: intervalDays
-        });
-      }
-    }
+    const intervalDays = getIntervalDays();
 
     const ctx = collectUserContext(userId, days);
 
@@ -298,6 +332,7 @@ router.get('/diagnosis', authenticateToken, aiOff, async (req, res) => {
       unreviewed_total: ctx.unreviewedWrong.length
     });
 
+    onProgress({ phase: 'ai', label: 'AI 正在分析你的学情（通常需 30-90 秒）' });
     const aiText = await callAI(prompt);
     const parsed = parseJSON(aiText);
 
@@ -333,6 +368,11 @@ router.get('/diagnosis', authenticateToken, aiOff, async (req, res) => {
     console.error('生成诊断报告失败:', error.message);
     res.status(500).json({ error: error.message || '生成诊断报告失败' });
   }
+}
+
+// 轮询进度
+router.get('/task/:taskId', authenticateToken, (req, res) => {
+  handleTaskQuery(req, res);
 });
 
 module.exports = router;

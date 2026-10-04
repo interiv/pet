@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space, Radio, Checkbox, Progress, Card, Alert, Upload, Image, Divider, Empty, Statistic, Row, Col, Tabs, Badge, Popconfirm, Tooltip } from 'antd';
 import { assignmentAPI, adminAPI, classroomQuizAPI } from '../utils/api';
+import { pollAiTask } from '../utils/aiTask';
 import { useAuthStore } from '../store/authStore';
 import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
@@ -325,54 +326,12 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   /**
    * 轮询出题任务进度，直到拿到结果或失败。
    *
+   * 复用 utils/aiTask 的统一实现（全站所有 AI 长任务共用同一套轮询逻辑），
    * 后端把耗时几百秒的出题放到后台执行，这里每 2 秒问一次「做到哪了」，
    * 每次请求都在 1 秒内结束，因此不受 Nginx proxy_read_timeout 影响。
-   * 顺带解决了以前「不知道在干什么就重复点击」的问题——进度看得见。
    */
-  const pollGenerateTask = async (taskId: string): Promise<GeneratedResult> => {
-    const POLL_INTERVAL = 2000;
-    // 兜底上限：AI 出题最慢的一批约 90s，多题型并发下 10 分钟足够跑完
-    const MAX_WAIT_MS = 10 * 60 * 1000;
-    const startedAt = Date.now();
-
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      if (Date.now() - startedAt > MAX_WAIT_MS) {
-        throw new Error('生成耗时过长，已停止等待。请到题库查看是否已生成，或稍后重试');
-      }
-      let data: any;
-      try {
-        const r = await assignmentAPI.getGenerateProgress(taskId);
-        data = r.data;
-      } catch (pe: any) {
-        // 404 = 任务不存在或已过期（后端重启会清空内存中的任务）
-        if (pe?.response?.status === 404) {
-          throw new Error('生成任务已失效（服务可能刚重启过），请重新点击生成');
-        }
-        // 网络抖动：下一轮继续，不打断整个流程
-        await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-        continue;
-      }
-
-      setGenProgress({
-        percent: data.percent ?? 0,
-        done: data.done ?? 0,
-        total: data.total ?? 0,
-        current: data.current_label || 'AI 正在出题',
-      });
-
-      if (data.status === 'done') {
-        if (!data.result) {
-          throw new Error('生成完成但未返回结果，请重试');
-        }
-        return data.result as GeneratedResult;
-      }
-      if (data.status === 'failed') {
-        throw new Error(data.error || 'AI 生成失败');
-      }
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-    }
-  };
+  const pollGenerateTask = (taskId: string) =>
+    pollAiTask(taskId, '/assignments/generate/:taskId', setGenProgress);
 
   const handleGenerateQuestions = async (values: any) => {
     // 粘贴模式不校验题型：题型由 AI 逐题自动判断，也不需要出题规格

@@ -153,12 +153,17 @@ export const assignmentAPI = {
   paperSubmitBatch: (id: number, data: { submissions: { student_id: number; results: { question_id: number; is_correct: boolean; score?: number; student_answer?: string }[]; note?: string }[]; note?: string }) =>
     api.post(`/assignments/${id}/paper-submit-batch`, data),
 
+  // 以下两类都改为「提交任务 + 轮询进度」，提交请求本身很快，超时给30 秒足够
   aiPaperJudge: (id: number, data: { images: string[] }, timeout?: number) =>
-    api.post(`/assignments/${id}/ai-paper-judge`, data, { timeout: (timeout || 300) * 1000 }),
+    api.post(`/assignments/${id}/ai-paper-judge`, data, { timeout: (timeout || 30) * 1000 }),
 
   // 批量识别：多张照片 → AI 识别卷面姓名 + 逐题判分，按学生分组返回
   aiPaperJudgeBatch: (id: number, data: { images: string[] }, timeout?: number) =>
-    api.post(`/assignments/${id}/ai-paper-judge-batch`, data, { timeout: (timeout || 600) * 1000 }),
+    api.post(`/assignments/${id}/ai-paper-judge-batch`, data, { timeout: (timeout || 30) * 1000 }),
+
+  /**纸质作业识别进度（单张与批量共用） */
+  getPaperJudgeProgress: (taskId: string) =>
+    api.get(`/assignments/generate/${taskId}`, { timeout: 15000 }),
 
   getMyPersonalBank: (params?: { subject?: string; assignment_type?: string; only_wrong?: string | number; keyword?: string; page?: number; page_size?: number }) =>
     api.get('/assignments/personal-bank/my', { params }),
@@ -213,11 +218,16 @@ export const learningReportAPI = {
   getStudentReport: (params: { class_id: number; studentId: number; subject?: string; date_from?: string; date_to?: string }) =>
     api.get(`/learning-reports/student/${params.studentId}`, { params: { ...params, studentId: undefined } }),
 
+  // 提交后立即返回 task_id，实际分析在后台跑
   generateAiReport: (data: { class_id: number; subject?: string; date_from?: string; date_to?: string }, timeout?: number) =>
-    api.post('/learning-reports/ai-report', data, { timeout: (timeout || 300) * 1000 }),
+    api.post('/learning-reports/ai-report', data, { timeout: (timeout || 30) * 1000 }),
 
   generateStudentAiReport: (data: { class_id: number; student_id: number; subject?: string; date_from?: string; date_to?: string }, timeout?: number) =>
-    api.post('/learning-reports/ai-report/student', data, { timeout: (timeout || 300) * 1000 }),
+    api.post('/learning-reports/ai-report/student', data, { timeout: (timeout || 30) * 1000 }),
+
+  /** 学情报告生成进度 */
+  getReportProgress: (taskId: string) =>
+    api.get(`/learning-reports/ai-report/task/${taskId}`, { timeout: 15000 }),
 
   getAiReportHistory: (params: { class_id: number; report_type?: string; subject?: string; limit?: number }) =>
     api.get('/learning-reports/ai-report/history', { params }),
@@ -265,8 +275,8 @@ export const knowledgePointAPI = {
 
 // AI学习教练 API
 export const aiCoachAPI = {
-  getLearningPlan: (params?: { days?: number; force?: string }, timeout?: number) => api.get('/ai-coach/learning-plan', { params, timeout: (timeout || 300) * 1000 }),
-  getDiagnosis: (params?: { days?: number; force?: string }, timeout?: number) => api.get('/ai-coach/diagnosis', { params, timeout: (timeout || 300) * 1000 }),
+  getLearningPlan: (params?: { days?: number; force?: string }, timeout?: number) => api.get('/ai-coach/learning-plan', { params, timeout: (timeout || 30) * 1000 }),
+  getDiagnosis: (params?: { days?: number; force?: string }, timeout?: number) => api.get('/ai-coach/diagnosis', { params, timeout: (timeout || 30) * 1000 }),
 };
 
 // 战斗相关 API
@@ -396,8 +406,12 @@ export const adminAPI = {
   importStudents: (classId: number, students: any[]) => api.post('/admin/students/import', { class_id: classId, students }),
   getImportTemplate: (format?: 'json' | 'csv') => api.get('/admin/students/import-template', { params: { format } }),
   // 粘贴姓名 → 生成账号密码（mode: ai=AI 生成拼音账号；sequence=按前缀+序号，AI 不可用时用）
+  // AI 模式下 200 个账号要串行跑十几批 AI，已改为后台任务 + 轮询进度
   generateStudentAccounts: (data: { names: string; mode?: 'ai' | 'sequence'; prefix?: string; class_id?: number }) =>
-    api.post('/admin/students/generate-accounts', data),
+    api.post('/admin/students/generate-accounts', data, { timeout: 30 * 1000 }),
+  /** 学生账号生成进度 */
+  getStudentAccountsProgress: (taskId: string) =>
+    api.get(`/admin/students/task/${taskId}`, { timeout: 15000 }),
 
   // 班级管理
   getClasses: () => api.get('/admin/classes'),
@@ -445,7 +459,8 @@ export const adminAPI = {
   // AI设置
   getAISettings: () => api.get('/admin/settings/ai'),
   saveAISettings: (settings: any) => api.post('/admin/settings/ai', settings),
-  testAIConnection: (settings: any) => api.post('/admin/settings/ai/test', settings),
+  // 连通性测试只发一句话，正常几秒返回；30 秒足够，缺省会一直挂着
+  testAIConnection: (settings: any) => api.post('/admin/settings/ai/test', settings, { timeout: 30 * 1000 }),
 
   // 网站设置
   getSiteSettings: () => api.get('/admin/settings/site'),
@@ -467,9 +482,10 @@ export const adminAPI = {
   setUpdateSource: (url: string) => api.put('/admin/system/update/source', { url }),
   checkUpdate: () => api.post('/admin/system/update/check'),
   getUpdateStatus: () => api.get('/admin/system/update/status'),
-  applyUpdate: (version: string) => api.post('/admin/system/update/apply', { version }, { timeout: 15 * 60 * 1000 }),
+  // 提交即返回，进度靠 getUpdateStatus 轮询（原先同步等完成，会被网关 60s 切断）
+  applyUpdate: (version: string) => api.post('/admin/system/update/apply', { version }, { timeout: 30 * 1000 }),
   getUpdateBackups: () => api.get('/admin/system/update/backups'),
-  rollbackUpdate: (file: string) => api.post('/admin/system/update/rollback', { file }, { timeout: 10 * 60 * 1000 }),
+  rollbackUpdate: (file: string) => api.post('/admin/system/update/rollback', { file }, { timeout: 30 * 1000 }),
   getUpdateLog: () => api.get('/admin/system/update/log'),
   restartService: () => api.post('/admin/system/update/restart'),
 
@@ -713,10 +729,14 @@ export const classroomQuizAPI = {
   }) => api.post(`/cards/classroom-quiz/${quizId}/reward`, data),
   getClassStudents: (classId: number) =>
     api.get(`/cards/classroom-quiz/students/${classId}`),
+  // 提交后立即返回 task_id，实际出题在后台跑
   aiGenerate: (data: { subject: string; topic?: string; question_type?: string; count?: number; difficulty?: string; grade_level?: string; mode?: 'topic' | 'requirements' | 'paste'; requirements?: string; raw_text?: string; /** 多组出题：一行一条「题型 + 题目数量」，一次请求只计 1 次生成额度 */ batches?: Array<{ type: string; count: number }> }, timeout?: number) =>
-    api.post('/cards/classroom-quiz/ai-generate', data, { timeout: (timeout || 300) * 1000 }),
+    api.post('/cards/classroom-quiz/ai-generate', data, { timeout: (timeout || 30) * 1000 }),
   aiJudge: (data: { subject?: string; question_text: string; reference_answer?: string; student_answer: string }, timeout?: number) =>
-    api.post('/cards/classroom-quiz/ai-judge', data, { timeout: (timeout || 300) * 1000 }),
+    api.post('/cards/classroom-quiz/ai-judge', data, { timeout: (timeout || 30) * 1000 }),
+  /** 课堂做题出题/判分进度 */
+  getQuizTaskProgress: (taskId: string) =>
+    api.get(`/cards/classroom-quiz/task/${taskId}`, { timeout: 15000 }),
   saveAnswer: (quizId: number, data: { question_id?: number; student_id: number; answer_text?: string; judged_by_ai?: boolean; is_correct?: boolean; score?: number; coin_rewarded?: number }) =>
     api.post(`/cards/classroom-quiz/${quizId}/answers`, data),
   updateAnswerReward: (answerId: number, coin_rewarded: number) =>

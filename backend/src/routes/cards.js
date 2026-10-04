@@ -12,6 +12,7 @@ const { getAIConfig, isAIConfigured } = require('../config/ai');
 const { getPrompt, fillTemplate } = require('../config/prompts');
 const { grantReward } = require('../services/rewards');
 const { collectQuestions, normalizeQuestion } = require('../services/aiQuestion');
+const { startAsyncTask, handleTaskQuery } = require('../utils/asyncTask');
 const { beginUsage, settleUsage, countBilledUsage } = require('../services/aiUsage');
 const {
   clipText, MAX_COURSEWARE_LEN, normalizeQuestions, createClassroomQuiz,
@@ -418,6 +419,15 @@ router.get('/redemption-logs', authenticateToken, (req, res) => {
 
 // 课堂做题：AI 快速出题（返回题目供教师选择，不入题库、不计入作业）
 router.post('/classroom-quiz/ai-generate', authenticateToken, aiOff, async (req, res) => {
+  return startAsyncTask(res, {
+    userId: req.user.userId,
+    kind: 'quiz_gen',
+    title: '课堂练习出题',
+    runningMsg: '已开始出题，请稍候',
+  }, (fakeRes, onProgress) => runQuizGenerate(req, fakeRes, onProgress));
+});
+
+async function runQuizGenerate(req, res, onProgress = () => {}) {
   // 额度记录句柄提升到函数作用域：流程失败时要在 catch 里把它退还
   let usageId = 0;
   let usageStartedAt = 0;
@@ -537,6 +547,12 @@ router.post('/classroom-quiz/ai-generate', authenticateToken, aiOff, async (req,
           .map((b, idx) => `${idx + 1}. ${typeLabels[b.type] || '题目'} ${b.count} 道`)
           .join('；')}。\n本次只输出第 ${i + 1} 组：【${label}】${ask} 道，不要输出其它题型。`
         : '';
+      onProgress({
+        phase: 'spec_start',
+        label: `正在出【${label}】${ask} 道`,
+        done: i,
+        total: batchList.length,
+      });
 
       const genResult = await collectQuestions({
         config,
@@ -598,6 +614,7 @@ router.post('/classroom-quiz/ai-generate', authenticateToken, aiOff, async (req,
       });
     }
 
+    onProgress({ phase: 'saving', label: '正在整理题目', done: batchList.length, total: batchList.length });
     settleUsage(usageId, 'ok', {
       ...usageTokens,
       question_count: questions.length,
@@ -632,7 +649,7 @@ router.post('/classroom-quiz/ai-generate', authenticateToken, aiOff, async (req,
       quota_refunded: true
     });
   }
-});
+}
 
 // 创建课堂做题
 router.post('/classroom-quiz', authenticateToken, (req, res) => {
@@ -771,7 +788,16 @@ router.get('/classroom-quiz/:quizId', authenticateToken, (req, res) => {
 });
 
 // 课堂答题：AI 评判（不占每日生成次数，仅记录token用量）
-router.post('/classroom-quiz/ai-judge', authenticateToken, aiOff, async (req, res) => {
+router.post('/classroom-quiz/ai-judge', authenticateToken, aiOff, (req, res) => {
+  return startAsyncTask(res, {
+    userId: req.user.userId,
+    kind: 'quiz_judge',
+    title: 'AI 判分',
+    runningMsg: 'AI 正在判分，请稍候',
+  }, (fakeRes, onProgress) => runQuizJudge(req, fakeRes, onProgress));
+});
+
+async function runQuizJudge(req, res, onProgress = () => {}) {
   try {
     if (req.user.role === 'student') {
       return res.status(403).json({ error: '无权操作' });
@@ -787,6 +813,7 @@ router.post('/classroom-quiz/ai-judge', authenticateToken, aiOff, async (req, re
       return res.status(500).json({ error: 'AI 配置未完成，请联系管理员' });
     }
 
+    onProgress({ phase: 'ai', label: 'AI 正在评判作答（通常需 10-30 秒）' });
     const prompt = fillTemplate(getPrompt('judge_classroom_answer'), {
       subject: subject || '',
       question_text,
@@ -844,6 +871,11 @@ router.post('/classroom-quiz/ai-judge', authenticateToken, aiOff, async (req, re
     }
     res.status(500).json({ error: '课堂答题AI评判失败: ' + (error.message || '未知错误') });
   }
+}
+
+// 轮询进度（课堂出题与判分共用）
+router.get('/classroom-quiz/task/:taskId', authenticateToken, (req, res) => {
+  handleTaskQuery(req, res);
 });
 
 // 课堂答题：保存答题记录（写入学生个人档案）

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Card, Table, Button, Modal, Form, Input, Select, InputNumber,
   message, Space, Tag, Tabs, Descriptions, Row, Col, Typography,
-  List, Avatar, Popconfirm, Empty, Badge, Spin, Radio, Checkbox, Alert, Upload
+  List, Avatar, Popconfirm, Empty, Badge, Spin, Radio, Checkbox, Alert, Upload, Progress
 } from 'antd';
 import {
   PlusOutlined, GiftOutlined, CheckCircleOutlined,
@@ -12,6 +12,7 @@ import {
   KeyOutlined, ApiOutlined
 } from '@ant-design/icons';
 import { classroomQuizAPI, questionBankAPI, itemAPI, equipmentAPI, adminAPI, agentTokenAPI, agentAPI } from '../utils/api';
+import { pollAiTask } from '../utils/aiTask';
 import { useAuthStore } from '../store/authStore';
 import { getPetThumbUrl } from '../utils/petImage';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
@@ -351,6 +352,8 @@ const ClassroomQuiz: React.FC = () => {
 
   // AI 快速出题
   const [aiLoading, setAiLoading] = useState(false);
+  // AI 出题进度（后端后台执行，这里轮询刷新）
+  const [aiProgress, setAiProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
   const [aiQuestions, setAiQuestions] = useState<any[]>([]);
   const [aiSelected, setAiSelected] = useState<Set<number>>(new Set());
 
@@ -535,23 +538,28 @@ const ClassroomQuiz: React.FC = () => {
       payload.raw_text = values.ai_raw_text;
     }
     setAiLoading(true);
+    setAiProgress({ percent: 0, done: 0, total: batches.length || 1, current: '正在提交出题任务' });
     try {
-      // 多组题型会连续请求 AI，按组数放宽前端等待时间（后端仍只记 1 次额度）
-      const timeout = mode === 'paste' || batches.length <= 1
-        ? 300
-        : Math.min(1200, 300 + 240 * (batches.length - 1));
-      const res = await classroomQuizAPI.aiGenerate(payload, timeout);
-      const list = res.data.questions || [];
+      // 后端改为后台任务：提交只返回 task_id，出题过程靠轮询拿进度
+      const res = await classroomQuizAPI.aiGenerate(payload, 30);
+      const taskId: string | undefined = res.data?.task_id;
+      if (!taskId) throw new Error('后端未返回任务号，请确认服务端已更新到最新版本');
+
+      const data = await pollAiTask(taskId, '/classroom-quiz/task/:taskId', setAiProgress);
+      setAiProgress(null);
+
+      const list = data.questions || [];
       setAiQuestions(list);
       setAiSelected(new Set(list.map((_: any, i: number) => i)));
-      if (res.data.notice) {
-        message.warning(`${res.data.notice}，已生成 ${list.length} 道题`);
+      if (data.notice) {
+        message.warning(`${data.notice}，已生成 ${list.length} 道题`);
       } else {
         message.success(`AI整理出 ${list.length} 道题目，请勾选要使用的题目`);
       }
     } catch (e: any) {
-      message.error(e?.response?.data?.error || 'AI出题失败');
+      message.error(e?.response?.data?.error || e?.message || 'AI出题失败');
     } finally {
+      setAiProgress(null);
       setAiLoading(false);
       loadGenLimit();
     }
@@ -1363,6 +1371,16 @@ const ClassroomQuiz: React.FC = () => {
               >
                 {aiLoading ? 'AI正在出题中...' : aiMode === 'paste' ? '🤖 AI整理题目' : '🤖 AI生成题目'}
               </Button>
+              {/* 出题进度：让老师看得见在做什么，而不是一个停不下来的转圈 */}
+              {aiLoading && aiProgress && (
+                <div style={{ marginBottom: 12, padding: '10px 12px', background: '#f6f8fa', borderRadius: 8 }}>
+                  <Progress percent={aiProgress.percent} size="small" status="active" />
+                  <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
+                    {aiProgress.current}
+                    {aiProgress.total > 1 && `（${aiProgress.done}/${aiProgress.total} 组题型已完成）`}
+                  </div>
+                </div>
+              )}
               {aiQuestions.length > 0 && (
                 <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>
                   {aiQuestions.map((q, i) => (

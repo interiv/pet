@@ -93,7 +93,7 @@ module.exports = {
 // ============================================================================
 const state = {
   running: false,
-  phase: 'idle',      // idle | checking | downloading | backing-up | extracting | migrating | done | failed | rolling-back
+  phase: 'idle',      // idle | checking | downloading | backing-up | extracting | migrating | done | failed | rolling-back | lost
   message: '',
   progress: 0,        // 0-100
   startedAt: null,
@@ -101,6 +101,50 @@ const state = {
   lastResult: null,
   lastError: null,
 };
+
+/**
+ * 「升级进行中」的落盘标记。
+ *
+ * state 存在内存里，进程重启就归零。若升级途中进程被kill（重启服务器、
+ * 崩溃、PM2 重载），前端会看到 phase 停在 downloading 而 running 已是
+ * false —— 它只认 done/failed，于是永远转圈下去。
+ *
+ * 用一个标记文件把「上次是否在升级」持久化：进程启动时若发现标记仍在，
+ * 就说明上次是异常中断，对外报 phase='lost'，让前端能收尾并提示用户。
+ */
+const INTERRUPT_MARKER = path.join(BACKEND_DIR, '..', 'data', 'update-in-progress.json');
+
+function markUpgradeStarted() {
+  try {
+    fs.mkdirSync(path.dirname(INTERRUPT_MARKER), { recursive: true });
+    fs.writeFileSync(INTERRUPT_MARKER, JSON.stringify({ startedAt: new Date().toISOString() }));
+  } catch (e) {
+    console.warn('[升级] 写入中断标记失败（不影响升级本身）:', e.message);
+  }
+}
+
+function clearUpgradeMarker() {
+  try { fs.unlinkSync(INTERRUPT_MARKER); } catch { /* 本来就没有 */ }
+}
+
+/** 进程启动时判断：上一次升级是否异常中断 */
+function detectInterrupted() {
+  try {
+    if (!fs.existsSync(INTERRUPT_MARKER)) return null;
+    const raw = JSON.parse(fs.readFileSync(INTERRUPT_MARKER, 'utf8'));
+    return raw?.startedAt || '未知时间';
+  } catch {
+    return '未知时间';
+  }
+}
+
+const INTERRUPTED_AT = detectInterrupted();
+if (INTERRUPTED_AT) {
+  state.phase = 'lost';
+  state.message = '上次升级在完成前中断（可能是服务重启导致），建议重新执行一次升级';
+  state.lastError = state.message;
+  console.warn('[升级] 检测到上次升级中断于', INTERRUPTED_AT);
+}
 
 function setPhase(phase, message, progress) {
   state.phase = phase;
@@ -442,6 +486,8 @@ async function applyUpdate(expectVersion) {
   state.finishedAt = null;
   state.lastError = null;
   state.progress = 5;
+  // 落盘标记：进程若中途挂掉，下次启动能识别出「上次没升完」
+  markUpgradeStarted();
 
   let backupName = null;
   let targets = DEFAULT_TARGETS;
@@ -501,6 +547,8 @@ async function applyUpdate(expectVersion) {
     throw error;
   } finally {
     state.running = false;
+    // 无论成功失败都清掉中断标记：只有「进程中途挂掉」才会留下它
+    clearUpgradeMarker();
   }
 }
 
@@ -539,6 +587,7 @@ async function rollbackTo(backupFile) {
 
   state.running = true;
   setPhase('rolling-back', '正在从备份恢复...', 20);
+  markUpgradeStarted();
   try {
     const staging = path.join(UPDATE_DIR, 'rollback-' + Date.now());
     fs.mkdirSync(staging, { recursive: true });
@@ -579,6 +628,7 @@ async function rollbackTo(backupFile) {
     throw error;
   } finally {
     state.running = false;
+    clearUpgradeMarker();
   }
 }
 
