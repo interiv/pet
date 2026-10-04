@@ -1,9 +1,33 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-// 本地开发时后端地址：默认 3000（与 backend/.env 的 PORT 一致）
-// 若后端换了端口，用环境变量覆盖：$env:VITE_API_PROXY='http://127.0.0.1:3001'; npm run dev
-const API_PROXY_TARGET = process.env.VITE_API_PROXY || 'http://127.0.0.1:3000';
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+/**
+ * 自动读取 backend/.env 里的 PORT 作为代理目标。
+ *
+ * 之前这里写死 3000，而后端 .env 里PORT 常常是 3001（多套系统并行时避免端口冲突），
+ * 于是本地联调会出现「前端 5173 代理到 3000、后端却在 3001」→ 所有接口连不上，
+ * 且报错很难看出是端口不一致造成的。现在改端口只需动backend/.env 一处。
+ * 需要临时指向别处时仍可用环境变量覆盖：
+ *   $env:VITE_API_PROXY='http://127.0.0.1:3002'; npm run dev
+ */
+function resolveBackendPort() {
+  const override = process.env.VITE_API_PROXY
+  if (override) return override
+  try {
+    const raw = fs.readFileSync(path.resolve(__dirname, '../backend/.env'), 'utf8')
+    const matched = raw.match(/^\s*PORT\s*=\s*(\d+)/m)
+    return `http://127.0.0.1:${matched ? matched[1] : '3000'}`
+  } catch {
+    return 'http://127.0.0.1:3000'
+  }
+}
+
+const API_PROXY_TARGET = resolveBackendPort()
 
 export default defineConfig({
   plugins: [react()],

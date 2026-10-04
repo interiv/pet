@@ -1,423 +1,373 @@
+<div align="center">
+
 # 班级宠物养成系统
 
-一个将学习与游戏化深度结合的班级宠物养成平台，学生通过完成作业、每日任务、战斗对战等方式培养专属宠物，实现寓教于乐的学习体验。
+**让学习充满乐趣，和同学一起养育专属宠物**
+
+[![Node](https://img.shields.io/badge/Node.js-18%2B-339933?style=flat-square&logo=node.js)](https://nodejs.org)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript)](https://www.typescriptlang.org)
+[![Express](https://img.shields.io/badge/Express-4-000000?style=flat-square&logo=express)](https://expressjs.com)
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](#许可证)
+
+通过完成作业、每日任务、battle 对战等方式培养专属宠物，实现寓教于乐的学习体验
+
+[快速开始](#快速开始) · [功能特性](#功能特性) · [部署](#部署) · [技术栈](#技术栈) · [API 概览](#api-概览)
+
+</div>
+
+---
+
+## 界面预览
+
+<div align="center">
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/01-login.png" alt="登录页"></td>
+<td width="50%"><img src="docs/screenshots/02-landing.png" alt="落地页"></td>
+</tr>
+<tr>
+<td align="center"><sub>登录页</sub></td>
+<td align="center"><sub>产品落地页</sub></td>
+</tr>
+</table>
+</div>
+
+---
+
+## 这是什么
+
+一个**面向中小学课堂**的教学平台。它把作业、批改、学情分析这些日常教学环节，和宠物养成、班级社交、游戏化激励缝在一起，让学生有持续的学习动力，让老师拿到真正用得上的学情数据。
+
+**它解决的三个真实问题：**
+
+| 问题 | 做法 |
+|---|---|
+| 学生对作业没兴趣 | 学习行为直接转化为宠物成长与班级荣誉 |
+| 老师批改负担重 | AI 出题 + 客观题自动批改 + 主观题 AI 评分 |
+| 住校生没有设备 | 纸质卷打印 → 学生笔答 → 拍照上传 → AI 认姓名判分，全程不需要设备 |
+
+---
 
 ## 功能特性
 
-### 核心功能
+### 教学闭环
 
-| 模块 | 功能描述 |
-|------|----------|
-| **宠物系统** | 32种宠物选择（火焰狮、水灵龟、森林鹿、光明鸟、暗影狼、雷霆狐、冰晶熊、疾风鹰、大地象、钢铁犀、熔岩龙、深海鲸、剧毒蝎、幻影猫、荆棘蛇、圣光兽、幽冥蝠、闪电豹、极地狐、狂风熊、岩石鳄、钛金龙、赤炎凤、潮汐马、灵木猿、晨星灵、梦魇犬、雷云虎、霜冻企鹅、飓风螳螂、沙漠鸵、秘银龟），7阶段成长（宠物蛋→初生期→幼年期→成长期→成年期→完全体→究极体），属性养成（攻击、防御、速度、生命、心情、饥饿度），技能系统，进化机制 |
-| **作业系统** | AI 作业生成（GPT 大模型），客观题自动批改，主观题 AI 评分，错题本智能管理，作业提交图片上传，知识点关联 |
-| **作业类型** | 预习 / 作业 / 复习三类；预习题可整班打印成纸质卷，供住校生等无设备学生使用 |
-| **纸质闭环** | 按班级名单预填姓名批量打印 A4 试卷 → 学生笔答 → 拍照上传（最多 12 张）→ 视觉大模型识别卷面姓名自动分人 → 逐题判分 → 一键批量登记 |
-| **学情报告** | 教师/班主任按学科或全学科、按时间段分析个人/每人/全班：KPI、趋势、知识点掌握热力矩阵、需关注名单、AI 成因分析与教学建议，可导出 Excel/CSV，报告按班级存档留历史 |
-| **个人题库** | 每次作答（线上提交或纸质登记）自动沉淀做过的**全部**题目，区别于只存错题的错题本，可按学科/类型/正误筛选 |
-| **错题重做** | 错题可逐题重做（客观题自动判、主观题自评），**连续答对 2 次**才移出错题本，完整保留重做历史 |
-| **学习数据** | 知识点掌握度、薄弱点排行、复习效果环比监测、每日/周内/时段分布、**逐题作答耗时**与作答节奏提醒 |
-| **战斗系统** | 1v1 对战、BOSS 战、属性克制（火→草→水→火，光↔暗），回合制战斗，实时匹配，战斗奖励 |
-| **社交系统** | 好友系统，好友对战，礼物赠送，聊天室，班级论坛，班级动态 |
-| **装备系统** | 武器、防具、饰品装备，属性加成，装备强化 |
-| **成就系统** | 丰富的成就任务，解锁奖励，称号系统 |
-| **排行榜** | 等级排行、战斗排行、作业完成度排行、宠物排行 |
-| **每日任务** | 签到、活跃任务，经验奖励 |
-| **班级管理** | 班级创建、学生管理、教师管理、班级 BOSS 战、班级首页展示 |
-| **教师功能** | 发布作业、查看学情统计与学情报告、管理班级学生、作业模板、纸质打印与批量登记 |
-| **管理后台** | 用户管理、学校管理、班级管理、数据统计、系统设置 |
+<table>
+<tr>
+<td width="50%" valign="top">
 
-### 特色亮点
+**AI 出题**
 
-- **AI 作业批改**：集成大模型 API，智能生成作业并批改主观题
-- **住校生无设备闭环**：预习题打印成带姓名的纸质卷，笔答后拍照由 AI 认姓名、判分、归档，全程不需要学生有设备
-- **学情报告**：按学科/时间/学生三个维度出报告，AI 给出成因分析与教学建议，可导出、可存档、可发给家长
-- **属性克制系统**：火→草→水→火循环，光暗相互克制
-- **多维度成长**：经验、金币、装备、技能多维度提升宠物实力
-- **班级生态**：班级排行榜、BOSS 战，集体荣誉感
-- **数据可视化**：学习仪表盘、知识点掌握进度、掌握热力矩阵
+- 按知识点出题 / 按详细要求出题
+- 一次可配置**多种题型**（单选、多选、判断、填空、简答），各自设定数量与难度
+- 客观题自动配 2 个相似变体，学生做错时能立刻练同类题
+- 也可直接**粘贴题目原文**，由 AI 逐题自动判断题型并补全选项与答案
 
-## 技术栈
+</td>
+<td width="50%" valign="top">
 
-### 后端
+**纸质作业闭环（住校生无设备）**
 
-- Node.js + Express
-- SQLite 数据库（better-sqlite3）
-- Knex.js（数据库迁移管理）
-- Socket.IO（实时通信）
-- JWT 认证
-- AI API 集成
+1. 发布时选「预习」，列表点「打印」，按名单预填姓名生成 A4 卷
+2. 学生笔答
+3. 收齐后拍照上传（一次最多 12 张）
+4. 视觉大模型识别卷面姓名**自动归人**，逐题判分
+5. 人工校对未识别的份
+6. 一键批量登记
 
-### 前端
+</td>
+</tr>
+</table>
 
-- React + TypeScript
-- Vite
-- Ant Design
-- Zustand（状态管理）
-- Tailwind CSS
+### 学情分析
 
-## 项目结构
+- **学情报告**：按「班级 × 学科 × 时间段」组合出报告，含 KPI、趋势、知识点掌握热力矩阵、需关注名单
+- **AI 成因分析与教学建议**，可导出 Excel/CSV，按班级存档留历史
+- **数据口径严格**：正确率按答题量加权；任课教师只看自己学科，班主任看全科
 
-```
-pet/
-├── Dockerfile              # Docker 镜像构建
-├── docker-compose.yml      # 本地开发编排
-├── deploy.sh               # 一键部署脚本
-├── DOCKER.md               # 部署文档
-├── backend/
-│   ├── migrations/        # 数据库迁移文件
-│   ├── seeds/             # 种子数据文件
-│   ├── src/
-│   │   ├── config/          # 配置（database / ai / timezone / achievementConditions 等）
-│   │   │   └── prompts/     # AI 提示词模板（gen / classroom / coach / judge / admin）
-│   │   ├── middleware/      # 认证中间件
-│   │   ├── utils/           # 公共工具（判分标准化 / 属性克制 / analytics 统一分析层）
-│   │   ├── services/        # 服务
-│   │   │   └── demoData/    # 演示数据（导入 / 清除 / 统计）
-│   │   ├── routes/         # API 路由
-│   │   │   ├── admin/       # 管理后台子路由（teachers / students / classes / announcements / statistics / settings / assignments / monitor / maintenance）
-│   │   │   ├── achievements.js  # 成就系统
-│   │   │   ├── admin.js         # 管理后台
-│   │   │   ├── ai-coach.js     # AI 教练
-│   │   │   ├── assignments.js   # 作业系统（含纸质登记、个人题库、错题重做）
-│   │   │   ├── auth.js          # 认证
-│   │   │   ├── battles.js       # 战斗系统
-│   │   │   ├── boss-battles.js # BOSS 战
-│   │   │   ├── chat.js          # 聊天室
-│   │   │   ├── classes.js       # 班级管理
-│   │   │   ├── daily-tasks.js  # 每日任务
-│   │   │   ├── equipment.js     # 装备系统
-│   │   │   ├── forum.js         # 论坛
-│   │   │   ├── friends.js       # 好友系统
-│   │   │   ├── items.js         # 物品系统
-│   │   │   ├── knowledge-points.js # 知识点掌握度
-│   │   │   ├── learning-reports.js    # 学情报告（总览/知识点矩阵/学生名单/个体画像）
-│   │   │   ├── learning-reports-ai.js # 学情报告 AI 生成与存档
-│   │   │   ├── leaderboard.js   # 排行榜
-│   │   │   ├── notifications.js # 通知
-│   │   │   ├── pets.js          # 宠物系统
-│   │   │   ├── posts.js         # 帖子
-│   │   │   ├── schools.js       # 学校
-│   │   │   ├── skills.js        # 技能
-│   │   │   └── users.js         # 用户
-│   │   └── server.js            # 入口文件
-│   └── package.json
-├── frontend/
-│   ├── src/
-│   │   ├── components/     # 组件
-│   │   │   ├── AchievementCenter.tsx  # 成就中心
-│   │   │   ├── AdminHome.tsx          # 管理后台首页
-│   │   │   ├── Arena.tsx              # 竞技场
-│   │   │   ├── Assignments.tsx        # 作业
-│   │   │   ├── Battle.tsx             # 战斗
-│   │   │   ├── BossBattle.tsx         # BOSS 战
-│   │   │   ├── BossBattleManager.tsx  # BOSS 战管理
-│   │   │   ├── ChatRoom.tsx           # 聊天室
-│   │   │   ├── ClassDashboard.tsx     # 班级仪表盘
-│   │   │   ├── CreatePet.tsx          # 创建宠物
-│   │   │   ├── DailyTasks.tsx        # 每日任务
-│   │   │   ├── EquipmentPanel.tsx     # 装备面板
-│   │   │   ├── Forum.tsx              # 论坛
-│   │   │   ├── Friends.tsx            # 好友
-│   │   │   ├── LearningDashboard.tsx  # 学习仪表盘
-│   │   │   ├── LearningReports.tsx    # 学情报告（教师端）
-│   │   │   ├── Notifications.tsx      # 通知
-│   │   │   ├── PaperBatchRegister.tsx # 纸质作业批量扫描登记
-│   │   │   ├── PaperRegister.tsx      # 纸质作业单人登记
-│   │   │   ├── PersonalQuestionBank.tsx # 学生个人题库
-│   │   │   ├── PetCenter.tsx          # 宠物中心
-│   │   │   ├── PetDisplay.tsx         # 宠物展示
-│   │   │   ├── PetSkills.tsx          # 宠物技能
-│   │   │   ├── Profile.tsx            # 个人资料
-│   │   │   ├── ShopAndBackpack.tsx    # 商店和背包
-│   │   │   ├── SocialHub.tsx          # 社交中心
-│   │   │   ├── StudentDashboard.tsx   # 学生仪表盘
-│   │   │   ├── StudyCenter.tsx        # 学习中心
-│   │   │   ├── TeacherDashboard.tsx   # 教师仪表盘
-│   │   │   ├── WrongQuestions.tsx     # 错题本
-│   │   │   └── admin/                  # 管理组件
-│   │   ├── pages/            # 页面
-│   │   ├── store/            # 状态管理
-│   │   ├── utils/            # 工具函数（api 请求封装 / printPaper 纸质卷生成 / imageCompress 图片压缩）
-│   │   └── App.tsx           # 主组件
-│   └── package.json
-└── README.md
-```
+### 班级与权限
+
+系统的权限模型分三层，是整个后台设计的基础：
+
+| 角色 | 能做什么 |
+|---|---|
+| **管理员** | 全部权限：教师/学生/班级/学校管理、审批、公告、数据清理、软件升级 |
+| **班主任** | 本班全权：审批入班申请、增删本班任课教师、管理本班学生内容、终止本班 BOSS 战 |
+| **任课教师** | 教学产出：布置作业、创建本班 BOSS 战、查看自己学科的学情 |
+
+几条贯穿全系统的规则：
+
+- **入班申请只通知班主任**；班级没有班主任时，自动兜底通知管理员处理
+- **教师可自助维护任教科目**（即时生效），但**加入班级需班主任审批**——因为任教班级意味着学生名单、班级群、申请通知的可见权
+- **同班只能有一位班主任**，且教师只能任教自己所在的班级
+
+### 游戏化系统
+
+<div align="center">
+<img src="frontend/public/images/pets/火焰狮.png" width="88" alt="火焰狮">
+<img src="frontend/public/images/pets/水灵龟.png" width="88" alt="水灵龟">
+<img src="frontend/public/images/pets/森林鹿.png" width="88" alt="森林鹿">
+<img src="frontend/public/images/pets/光明鸟.png" width="88" alt="光明鸟">
+<img src="frontend/public/images/pets/暗影狼.png" width="88" alt="暗影狼">
+<img src="frontend/public/images/pets/雷霆狐.png" width="88" alt="雷霆狐">
+<br>
+<sub>32 种宠物 · 5 属性 · 火→草→水→火 循环克制，光暗互克</sub>
+</div>
+
+| 模块 | 说明 |
+|---|---|
+| **宠物养成** | 32 种宠物、7 阶段进化（宠物蛋→究极体）、属性/心情/饥饿度、技能培养 |
+| **战斗** | 1v1 对战、好友对战、班级 BOSS 战；克制方 ×1.25、被克方 ×0.8 |
+| **错题本** | 错题可重做，**连续答对 2 次**才移出；完整保留重做历史 |
+| **个人题库** | 每次作答自动沉淀做过的**全部**题目（不只错题） |
+| **社交** | 班级群聊、班级动态、论坛、好友、礼物 |
+| **成长激励** | 成就、排行榜、每日任务、卡兑换 |
+
+### 运营开关
+
+管理后台内置功能开关，**同时作用于前端界面与后端接口**（关掉后接口会真正拒绝请求，而不是只隐藏入口）：
+
+| 分组 | 开关 |
+|---|---|
+| 注册与对外访问 | 开放注册、班级公开主页 |
+| AI 能力 | **AI 总闸**、AI 批改纸质作业、纸质作业拍照上传 |
+| 游戏化玩法 | PVP 对战、BOSS 战、道具商店、装备商店 |
+| 教学协作 | 跨教师作业可见（默认关闭） |
+
+> AI 总闸是唯一的「一键止血阀」：LLM 出故障、异常刷量或只想省 Token 时，可在此停掉全部 AI 能力。
+
+---
 
 ## 快速开始
 
 ### 方式一：Docker 一键部署（推荐）
 
-#### 国内用户（Gitee）
 ```bash
 curl -L -O https://gitee.com/interim/pet/raw/main/deploy.sh
 chmod +x deploy.sh
 ./deploy.sh
 ```
 
-#### 海外用户（GitHub）
-```bash
-curl -O https://raw.githubusercontent.com/interiv/pet/main/deploy.sh
-chmod +x deploy.sh
-./deploy.sh
-```
+脚本会引导你输入域名、API Key，自动完成：安装 Docker → 拉取镜像 → 启动服务 → 配置 HTTPS。
 
-脚本会引导你输入域名、API Key 等信息，自动完成安装 Docker → 拉取镜像 → 启动服务 → 配置 HTTPS。
-
-详细说明见 [DOCKER.md](./DOCKER.md)
-
-### 已有站点的版本升级（发新版给使用方）
-
-站点内置「管理后台 → 系统设置 → 软件升级」页签：填一次更新源地址，之后管理员点「检查更新 → 立即升级」即可完成
-**程序文件 + 数据库结构** 的升级（自动备份、校验 sha256、失败可一键回滚）。
-
-制作升级包与发布的完整流程见 **[发布指南.md](./发布指南.md)**。
+详见 [部署指南.md](./部署指南.md)。
 
 ### 方式二：本地开发
 
-#### 环境要求
-
-- Node.js >= 18.x
-- npm >= 9.x
-
-#### 后端
+**环境要求**：Node.js >= 18、npm >= 9
 
 ```bash
+# 后端
 cd backend
 npm install
-cp .env.example .env
-# 编辑 .env 填入 AI_API_KEY 等配置
+cp .env.example .env      # 填入 AI_API_KEY 等
+npm run migrate           # 建表 + 种子数据（首次必做）
+npm run dev                # http://localhost:3000
 
-# 初始化数据库（创建表结构 + 填充种子数据）
-npm run db:reset
-
-# 启动开发服务器
-npm run dev        # http://localhost:3000
-```
-
-#### 前端
-
-```bash
+# 前端（另开一个终端）
 cd frontend
 npm install
-npm run dev        # http://localhost:5173
+npm run dev                   # http://localhost:5173
 ```
 
-## 数据库管理
+> ⚠️ `npm start` **只启动服务、不建表**。新服务器直接启动会出现「服务能开但所有接口报 `no such table`」。
 
-项目使用 **Knex.js** 管理数据库迁移，确保数据库结构变更时不会丢失已有数据。
+**预置账号**（密码均为 `111111`）：
 
-### 迁移 vs 种子数据
-
-| 概念 | 作用 | 执行时机 |
-|------|------|----------|
-| **迁移（Migration）** | 创建/修改表结构（建表、加列、加索引等） | 每次部署自动执行，只运行未执行过的迁移 |
-| **种子（Seed）** | 填充初始数据（默认用户、宠物种类、道具等） | 仅在数据库为空时执行一次 |
-
-### 常用命令
-
-```bash
-npm run migrate           # 执行所有待处理的迁移
-npm run migrate:rollback  # 回滚最近一批迁移
-npm run seed              # 运行种子数据填充
-npm run db:reset          # 回滚全部 → 重新迁移 → 重新填充种子（重置数据库）
-npm run migrate:make -- 迁移名称   # 创建新的迁移文件
-npm run seed:make -- 种子名称      # 创建新的种子文件
-```
-
-### 新增表或字段（开发流程）
-
-当你需要新增表或修改表结构时，**不要直接改原来的迁移文件**，而是创建新的迁移：
-
-```bash
-# 1. 创建新迁移文件
-npm run migrate:make -- add_new_feature_table
-
-# 2. 编辑生成的 migrations/002_add_new_feature_table.js
-#    exports.up   → 写 CREATE TABLE / ALTER TABLE
-#    exports.down → 写 DROP TABLE / ALTER TABLE 回滚
-
-# 3. 执行迁移
-npm run migrate
-```
-
-这样已有数据不会丢失，只有新结构会被应用。
-
-### Docker 部署时的数据库更新
-
-Docker 容器启动时会自动执行 `knex migrate:latest`，所以更新镜像后只需：
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-新的迁移会自动执行，已有数据完整保留。
-
-## 环境变量
-
-```bash
-# 服务器配置
-PORT=3000
-NODE_ENV=production
-
-# JWT 配置
-JWT_SECRET=your-secret-key
-JWT_EXPIRES_IN=7d
-
-# AI 服务配置
-# 注意：数据库 settings 表里的 ai_* 优先级更高，环境变量仅作 fallback
-AI_API_KEY=your-api-key
-AI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
-AI_MODEL=doubao-seed-2-0-pro-260215
-
-# 前端地址（用于 CORS 和邀请链接）
-FRONTEND_URL=https://your-domain.com
-```
-
-### AI 配置在后台管理
-
-`AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL` 均可在**管理后台 → AI设置**中修改，存于数据库 `settings` 表，**优先级高于 `.env`**。
-
-其中 **「视觉模型」** 单独配置，用于批量扫描纸质作业时识别照片上的题目与姓名。
-需填一个支持图片输入的模型（视觉模型留空时会回退到 `AI_MODEL`）。
-
-| 配置项 | 用途 | 缺失时表现 |
-|---|---|---|
-| `ai_model` | 出题、批改、教练、学情报告 | 相关接口报「AI 配置未完成」 |
-| `ai_vision_model` | 纸质作业照片识别（批量扫描） | 批量扫描报错，其余功能不受影响 |
-| `ai_timeout` | 单次 AI 调用超时秒数（默认 300） | 大批量识别易超时，建议调大 |
-| `ai_report_interval_days` | AI 报告缓存天数（默认 3） | 改小可让报告更"新鲜" |
-
-## 游戏说明
-
-### 宠物属性
-
-| 属性 | 说明 |
-|------|------|
-| 攻击力 | 影响物理伤害 |
-| 防御力 | 减少受到的伤害 |
-| 速度 | 决定出手顺序 |
-| 健康值 | 归零时无法战斗 |
-| 心情值 | 影响战斗表现 |
-| 饥饿度 | 需要定期喂食 |
-
-### 成长阶段
-
-判定逻辑见 `backend/src/routes/pets.js` 的 `checkLevelUp`，实际等级区间如下：
-
-| 阶段 | 等级区间 |
-|------|----------|
-| 宠物蛋 | 1-4 级 |
-| 初生期 | 5-9 级（满 5 级进化） |
-| 幼年期 | 10-19 级（满 10 级进化） |
-| 成长期 | 20-34 级（满 20 级进化） |
-| 成年期 | 35-54 级（满 35 级进化） |
-| 完全体 | 55-79 级（满 55 级进化） |
-| 究极体 | 80 级及以上（满 80 级进化） |
-
-升级所需经验：`100 × 当前等级^1.5`，支持一次发放经验后连续升多级。
-
-### 宠物类型与克制
-
-| 属性 | 宠物 |
-|------|------|
-| 火 | 火焰狮、熔岩龙、赤炎凤、沙漠鸵 |
-| 水 | 水灵龟、冰晶熊、深海鲸、极地狐、潮汐马、霜冻企鹅 |
-| 草 | 森林鹿、疾风鹰、大地象、荆棘蛇、狂风熊、岩石鳄、灵木猿、飓风螳螂 |
-| 光 | 光明鸟、雷霆狐、圣光兽、闪电豹、晨星灵、雷云虎、秘银龟 |
-| 暗 | 暗影狼、钢铁犀、剧毒蝎、幻影猫、幽冥蝠、钛金龙、梦魇犬 |
-
-### 属性克制
-
-- **火 → 草 → 水 → 火**：火克草，草克水，水克火
-- **光 ↔ 暗**：光暗互相克制
-- 无克制关系时，伤害正常计算
-
-克制方伤害 **×1.25**，被克方 **×0.8**。宠物属性由物种决定（`pet_species.element_type`）。
-
-### 战斗伤害计算
-
-一次攻击的伤害按以下顺序结算：
-
-```
-攻击力 → 暴击(基础 10%，心情>80 时 +5%，暴击 ×1.5) → 属性克制倍率 → 目标防御减伤
-```
-
-防御减伤公式：`实际伤害 × 100 / (100 + 防御)`，因此堆防御是有效的。
-
-### 作业重做规则
-
-- 客观题作业答错后进入「可重做」状态，**重做次数上限默认 3 次**（教师发布时可在 1-10 间设置）
-- 重做时只能作答上次答错的题目（含其变体题），且必须覆盖全部错题
-- 重做成绩提高会补发金币差额，成绩下降则会**扣回**多发的金币
-- 生涯累计金币（`total_gold_earned`）只增不减，扣回不影响它，也不影响已解锁的成就
-
-### 获取经验
-
-- 完成作业（主要来源）
-- 每日签到
-- 战斗胜利
-- 完成任务
-- 成就奖励
-
-## 住校生（无设备）学习闭环
-
-面向住校生、学生手上没有手机/平板/电脑的场景设计的完整闭环，教师侧操作：
-
-1. **发布预习题** — 作业发布第 3 步「作业类型」选 `预习`
-2. **打印** — 作业列表点「打印」，选「按名单预填姓名」，可勾选"仅未提交"的学生；
-   系统为每位学生生成一份 A4 卷（页眉已填好姓名/学号），每人一页自动分页，打开即弹出打印对话框
-3. **学生笔答** — 纸质卷发给学生，学生用笔在纸上作答
-4. **批量扫描** — 收齐后逐张拍照上传（一次最多 12 张），点「AI批量识别」：
-   视觉大模型识别每张卷面的**姓名**并自动归到对应学生，逐题判分
-5. **人工校对** — 未认出姓名的标红「待指派」，下拉手动指定；逐题核对 AI 判分（主观题可给部分分）
-6. **一键登记** — 批量写入成绩、发放金币、记入个人题库与错题本，学生端即时可见
-
-> 单份补录可用「纸质登记」（选学生 → 拍照 → 识别 → 保存），适合个别学生。
-> 批量识别的准确率取决于卷面姓名是否清晰写在卷首，以及视觉模型能力。
-
-## 学情报告使用说明
-
-教师端「学习中心 → 学情报告」，支持按 **班级 / 学科（单科或全部）/ 时间段** 组合分析：
-
-| 区块 | 内容 |
+| 角色 | 账号 |
 |---|---|
-| 总览 | 答题数、正确率、参与率、平均分、每日正确率趋势、学科对比、作业类型分布、作业完成率 |
-| 知识点掌握矩阵 | 学生 × 知识点热力表，一眼看出「哪些人栽在同一题上」，可导出 Excel/CSV |
-| 学生名单 | 正确率、掌握度、错题积压、需关注名单（低正确率 / 无作答 / 错题积压多） |
-| AI 班级报告 | 班级薄弱环节成因分析、教学建议、需关注学生清单，并生成可直接发家长的说明 |
-| AI 个体报告 | 针对单个学生的辅导计划与知识点补救措施 |
+| 管理员 | `admin` |
+| 教师 | `demo_teacher1` ~ `demo_teacher4` |
+| 学生 | `demo_student1` ~ `demo_student30` |
 
-报告按「班级 + 学科 + 时间段 + 类型」存档，可回看历史（`learning_reports` 表）。
+需要更多演示数据：管理后台 → 系统数据 → 导入演示数据（可一键清除，不影响真实账号）。
 
-**数据口径说明**（避免误读）：
-- 任课老师只能看到自己所授学科的数据，班主任可看全科
-- 正确率按**答题量加权**（非各知识点算术平均），与「知识点平均正确率」不同
-- 知识点需累计练习 ≥ 1 次才纳入统计；掌握/薄弱判定需 ≥ 2 次
-- 纸质登记与线上提交数据同源，都会计入
+---
+
+## 部署
+
+生产环境跑 Docker，编排文件用 `image:` 而非 `build:`，从阿里云 ACR 拉取预构建镜像。
+
+```bash
+# 开发机：构建并推送
+docker build -t registry.cn-hangzhou.aliyuncs.com/myfdocker/pet:latest .
+docker push registry.cn-hangzhou.aliyuncs.com/myfdocker/pet:latest
+
+# 服务器：拉取并重启
+cd /opt/pet
+docker compose pull && docker compose up -d
+```
+
+| 事项 | 说明 |
+|---|---|
+| 数据库 | 挂在宿主机 `./data:/app/data`，**重建容器不丢数据** |
+| 迁移 | 容器启动自动跑 `knex migrate:latest`，无需手动执行 |
+| 密钥 | 由 `docker-compose.yml` 的 `environment` 传入，不要打进镜像 |
+| CORS | `FRONTEND_URL` 必须与浏览器地址栏的**协议+域名+端口**完全一致，否则接口会被拒 |
+
+站点内置「管理后台 → 系统设置 → 软件升级」，填一次更新源地址后，管理员点「检查更新 → 立即升级」即可完成**程序 + 数据库结构**升级（自动备份、校验 sha256、失败可回滚）。流程见 [发布指南.md](./发布指南.md)。
+
+---
+
+## 技术栈
+
+<table>
+<tr><td width="50%" valign="top">
+
+**后端**
+
+- Node.js + Express 4
+- SQLite（better-sqlite3，单文件，零运维）
+- Knex.js（数据库迁移）
+- Socket.IO（实时通信）
+- JWT 鉴权
+- AI 大模型接入（火山方舟 / OpenAI 兼容网关）
+
+</td>
+<td width="50%" valign="top">
+
+**前端**
+
+- React 18 + TypeScript
+- Vite（构建 / 分包）
+- Ant Design 5
+- Zustand（状态管理）
+- 图表：AntV Charts
+
+</td>
+</tr>
+</table>
+
+### 项目结构
+
+```
+pet/
+├── backend/
+│   ├── migrations/        # 数据库迁移（001 ~ 017）
+│   ├── seeds/             # 种子数据
+│   └── src/
+│       ├── config/        # 配置（database / ai / timezone / prompts）
+│       ├── middleware/    # 鉴权、班级权限、功能开关、Agent 鉴权
+│       ├── services/      # 业务服务（奖励 / AI 额度 / 出题 / 演示数据 / 入班通知）
+│       ├── routes/        # API 路由
+│       │   └── admin/     # 管理后台子路由
+│       └── server.js      # 入口
+├── frontend/
+│   └── src/
+│       ├── components/    # 组件（含 admin/ 管理后台组件）
+│       ├── pages/         # 页面
+│       ├── store/         # 状态管理
+│       └── utils/         # 工具（api 封装 / 权限判定 / 试卷生成）
+├── scripts/e2e/           # 端到端探针脚本
+├── deploy.sh              # 一键部署
+└── docs/screenshots/      # README 配图
+```
+
+---
+
+## 关键设计说明
+
+### 为什么用 SQLite
+
+整个系统所有数据都在**一个文件**里，备份就是复制这个文件。对校园网 / 单机部署来说，这比装一套 MySQL 简单得多。代价是并发写入上限，但教学场景的写入量远达不到瓶颈。
+
+### AI 能力是可插拔的
+
+所有 AI 提示词都放在 `backend/src/config/prompts/`，**可在管理后台直接改并热生效**，不需要改代码重新部署。出题、批改、教练、学情报告各有独立模板。
+
+同时所有 AI 入口都做了**额度 + 开关**双重管控：每日生成次数、全站 Token 上限、单次最大题量，都能在后台调整。
+
+### 纸质作业的姓名识别
+
+批量扫描时，视觉大模型先识别每张卷面的姓名，再归到对应学生。姓名识别失败的不丢弃，而是标红「待指派」，由老师下拉手动指定——避免因为字迹潦草导致整份成绩丢失。
+
+### 功能开关是真开关
+
+很多系统的「开关」只是前端隐藏入口，直接调接口照样能用。这里的开关在**后端路由层**拦截，关掉后接口返回 403，开关清单统一由 `middleware/featureFlags.js` 管理，不存在两处维护而漏项的问题。
+
+### 角色分层
+
+班主任与任课教师的区分不是 `user.role`，而是 `class_teachers.role = head_teacher`——同一个人可能既是A 班班主任又是 B 班任课教师。所有权限判定都以「在某个班是否任教」为基准，而不是给用户贴一个全局标签。
+
+```
+管理员        → 全局
+班主任        → 本班（任教 + 班主任标记）
+任课教师      → 自己任教的班（可多班）
+```
+
+---
 
 ## API 概览
 
 | 模块 | 端点 |
-|------|------|
-| 认证 | `/api/auth/register`, `/api/auth/login`, `/api/auth/me` |
-| 宠物 | `/api/pets/my-pet`, `/api/pets/create`, `/api/pets/feed` |
-| 作业 | `/api/assignments`, `/api/assignments/:id/submit` |
-| 作业类型 | `/api/assignments?assignment_type=preview\|homework\|review`, `/api/assignments/stats/type-summary` |
-| 纸质作业 | `/api/assignments/:id/paper-submit`, `/api/assignments/:id/paper-submit-batch`, `/api/assignments/:id/ai-paper-judge`, `/api/assignments/:id/ai-paper-judge-batch` |
-| 个人题库 | `/api/assignments/personal-bank/my`, `/api/assignments/personal-bank/stats` |
-| 错题本 | `/api/assignments/wrong/my`, `/api/assignments/wrong/:id/review`, `/api/assignments/wrong/retry`, `/api/assignments/wrong/mastery` |
-| 学情报告 | `/api/learning-reports/overview`, `/knowledge-matrix`, `/students`, `/student/:id`, `POST /ai-report`, `POST /ai-report/student`, `/ai-report/history` |
-| 知识点 | `/api/knowledge-points/`, `/weak-points`, `/heatmap`, `/review-effectiveness`, `/learning-time`, `/class/:id/overview`, `/class/:id/student/:sid` |
-| 战斗 | `/api/battles/start`, `/api/battles/history` |
-| BOSS 战 | `/api/boss-battles/*` |
-| 排行榜 | `/api/leaderboard/level`, `/api/leaderboard/battle` |
-| 好友 | `/api/friends/*` |
-| 装备 | `/api/equipment/*` |
-| 成就 | `/api/achievements/*` |
+|---|---|
+| 认证 | `/api/auth/register`、`/login`、`/me` |
+| 宠物 | `/api/pets/my-pet`、`/create`、`/feed` |
+| 作业 | `/api/assignments`、`/:id/submit` |
+| 作业统计 | `/api/assignments/stats/type-summary` |
+| 纸质作业 | `/:id/paper-submit`、`/ai-paper-judge`、`/ai-paper-judge-batch` |
+| 个人题库 | `/api/assignments/personal-bank/my`、`/stats` |
+| 错题本 | `/api/assignments/wrong/my`、`/:id/review`、`/retry` |
+| 学情报告 | `/api/learning-reports/overview`、`/knowledge-matrix`、`/students`、`POST /ai-report` |
+| 知识点 | `/api/knowledge-points/heatmap`、`/weak-points`、`/review-effectiveness` |
+| 课堂做题 | `/api/cards/classroom-quizzes/*` |
+| AI 直连 | `/api/agent/*`、`/api/skills/install/:slug` |
+| 战斗 / BOSS | `/api/battles/*`、`/api/boss-battles/*` |
+| 管理后台 | `/api/admin/*` |
 
-> 学情报告接口按角色隔离：班主任看全科，任课老师仅看自己所授学科，学生访问返回 403。
+> 学情类接口按角色隔离：班主任看全科，任课教师仅看自己所授学科，学生访问返回 403。
+
+---
+
+## 环境变量
+
+```bash
+PORT=3000
+NODE_ENV=production
+JWT_SECRET=your-secret-key
+JWT_EXPIRES_IN=7d
+
+# AI 服务（数据库 settings 表里的 ai_* 优先级更高，此处仅作 fallback）
+AI_API_KEY=your-api-key
+AI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+AI_MODEL=doubao-seed-2-0-pro-260215
+
+# 前端地址（CORS + 邀请链接），多个用逗号分隔
+FRONTEND_URL=https://your-domain.com
+```
+
+AI 配置均可在**管理后台 → AI 设置**中修改，存于数据库，**优先级高于 `.env`**。其中「视觉模型」单独配置，用于纸质作业照片识别。
+
+---
+
+## 常见问题
+
+| 现象 | 原因与解决 |
+|---|---|
+| 服务能开但接口报 `no such table` | 数据库没初始化。跑 `npm run migrate` 后重启 |
+| 页面白屏 | 前端 `dist` 未更新。重新 `npm run build` 并覆盖，浏览器 `Ctrl+F5` |
+| 接口报「不允许的跨域请求」 | `FRONTEND_URL` 与浏览器地址栏不一致（协议 / 域名 / 端口任一处不同都会被拒） |
+| 登录后过一会要重新登录 | 多实例共用 `JWT_SECRET`，每个实例要配不同值 |
+| AI 相关功能报错 | 后台 → AI 设置里检查模型和 Key；批量扫描还需配「视觉模型」 |
+| 错题本显示 `Invalid Date` | 迁移未执行，`npm run migrate` 后重启 |
+| build 后某些页面白屏 | 用 `npm ci --omit=dev` 会缺 devDependencies 导致类型检查失败，改用完整 `npm install` |
+
+更多见 [部署指南.md](./部署指南.md)。
+
+---
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [部署指南.md](./部署指南.md) | 部署方式选择、速查表、故障对照表、数据库迁移 |
+| [手动部署指南.md](./手动部署指南.md) | 不用 Docker 的部署方式（Windows + 宝塔） |
+| [发布指南.md](./发布指南.md) | 制作升级包与发布流程 |
+| [docs/冒烟清单.md](./docs/冒烟清单.md) | 上线前逐项验证清单 |
+
+---
 
 ## 许可证
 
-MIT License
+[MIT](./LICENSE)
