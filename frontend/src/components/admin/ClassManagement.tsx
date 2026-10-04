@@ -194,14 +194,19 @@ const ClassManagement: React.FC = () => {
       title: '教师',
       key: 'teachers',
       render: (_: any, record: any) => {
+        // 分级规则（与后端 classes.js 的校验保持一致）：
+        //   普通教师  —— 无权参与任教关系管理，姓名纯文本、无笔无叉
+        //   班主任    —— 可增删本班任课教师，但不能改动任何人的身份
+        //   管理员    —— 全部权限，含改身份（任课教师 ↔ 班主任）
         const canManage = isAdmin || isHeadTeacherOf(record);
         return (
           <div>
             {(record.teachers || []).map((t: any) => {
-              // 班主任不能直接移除，必须先换成任课教师（后端也有同样校验）
-              const removable = canManage && t.role !== 'head_teacher';
               const nameText = t.real_name || t.username;
               const subText = t.real_name ? t.username : '未填真实姓名';
+              const canChangeRole = isAdmin;
+              // 班主任不能被直接移除：必须先由管理员改回任课教师，否则班级会失去唯一班主任
+              const removable = canManage && t.role !== 'head_teacher';
               return (
                 // 姓名 + 笔 + 叉 全部放进同一个 Tag 里，视觉上是一体
                 <Tag
@@ -210,19 +215,24 @@ const ClassManagement: React.FC = () => {
                   style={{ marginBottom: 4 }}
                 >
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                    {/* 姓名本身即可点击编辑身份 */}
-                    <a onClick={() => openEditTeacherModal(record, t)}>{nameText}</a>
+                    {canChangeRole ? (
+                      <a onClick={() => openEditTeacherModal(record, t)}>{nameText}</a>
+                    ) : (
+                      <span>{nameText}</span>
+                    )}
                     <span style={{ color: '#999', fontSize: 12 }}>· {subText}</span>
-                    <Tooltip title="修改身份（任课教师 / 班主任）">
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<EditOutlined />}
-                        onClick={() => openEditTeacherModal(record, t)}
-                        style={{ width: 20, height: 20, padding: 0 }}
-                      />
-                    </Tooltip>
-                    {removable ? (
+                    {canChangeRole && (
+                      <Tooltip title="修改身份（任课教师 / 班主任）">
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<EditOutlined />}
+                          onClick={() => openEditTeacherModal(record, t)}
+                          style={{ width: 20, height: 20, padding: 0 }}
+                        />
+                      </Tooltip>
+                    )}
+                    {removable && (
                       <Popconfirm
                         title={`确定把「${nameText}」从本班移除？`}
                         onConfirm={() => handleRemoveTeacher(record.id, t.teacher_id)}
@@ -239,8 +249,10 @@ const ClassManagement: React.FC = () => {
                           />
                         </Tooltip>
                       </Popconfirm>
-                    ) : (
-                      <Tooltip title="班主任不能直接移除，请先将其改为任课教师">
+                    )}
+                    {/* 灰色叉号只在「有管理权但对方是班主任」时提示，普通教师完全看不到任何叉号 */}
+                    {canManage && t.role === 'head_teacher' && (
+                      <Tooltip title="班主任不能直接移除，请先由管理员将其改为任课教师">
                         <span style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center', color: '#bfbfbf' }}>
                           <CloseOutlined />
                         </span>

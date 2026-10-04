@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { canManageClassContent } = require('../middleware/classAccess');
 const { checkAndAwardAchievement } = require('./achievements');
 
 // ==================== 动态/留言板 ====================
@@ -121,9 +122,11 @@ router.delete('/posts/:id', authenticateToken, (req, res) => {
 
     if (!post) return res.status(404).json({ error: '动态不存在' });
 
-    const isAdmin = req.user.role === 'admin';
-    if (!isAdmin && post.user_id !== req.user.userId) {
-      return res.status(403).json({ error: '只能删除自己的动态' });
+    // 作者本人、管理员、或本班班主任可删；任课教师无权限
+    const isOwner = post.user_id === req.user.userId;
+    const canManage = canManageClassContent(req.user.userId, req.user.role, post.class_id);
+    if (!isOwner && !canManage) {
+      return res.status(403).json({ error: '只能删除自己的动态或本班学生的动态' });
     }
 
     db.prepare('DELETE FROM post_likes WHERE post_id = ?').run(id);
@@ -236,12 +239,13 @@ router.delete('/comments/:id', authenticateToken, (req, res) => {
 
     if (!comment) return res.status(404).json({ error: '评论不存在' });
 
-    const isAdmin = req.user.role === 'admin';
     const isOwner = comment.user_id === req.user.userId;
-    const post = db.prepare('SELECT user_id FROM posts WHERE id = ?').get(comment.post_id);
+    const post = db.prepare('SELECT user_id, class_id FROM posts WHERE id = ?').get(comment.post_id);
     const isPostOwner = post && post.user_id === req.user.userId;
+    // 本班班主任也可清理本班学生的评论
+    const canManage = post ? canManageClassContent(req.user.userId, req.user.role, post.class_id) : false;
 
-    if (!isAdmin && !isOwner && !isPostOwner) {
+    if (!isOwner && !isPostOwner && !canManage) {
       return res.status(403).json({ error: '无权删除此评论' });
     }
 
@@ -272,16 +276,11 @@ router.put('/posts/:id/pin', authenticateToken, (req, res) => {
     if (!post) return res.status(404).json({ error: '动态不存在' });
 
     const userId = req.user.userId;
-    const isAdmin = req.user.role === 'admin';
 
-    if (!isAdmin) {
-      // 检查是否是班主任
-      const isHeadTeacher = db.prepare(`
-        SELECT id FROM class_teachers WHERE teacher_id = ? AND role = 'head_teacher'
-      `).get(userId);
-      if (!isHeadTeacher) {
-        return res.status(403).json({ error: '只有管理员或班主任才能置顶' });
-      }
+    // 原先只校验「是不是某个班的班主任」，漏了 class_id，导致任何班主任都能置顶任意班级的动态。
+    // 现在按「该动态所属班的班主任」判定，管理员仍可置顶任意动态。
+    if (!canManageClassContent(userId, req.user.role, post.class_id)) {
+      return res.status(403).json({ error: '只有管理员或本班班主任才能置顶' });
     }
 
     db.prepare('UPDATE posts SET is_top = ? WHERE id = ?').run(is_top ? 1 : 0, id);

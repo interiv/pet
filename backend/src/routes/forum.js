@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { canManageClassContent } = require('../middleware/classAccess');
 const { checkAndAwardAchievement } = require('./achievements');
 
 // ==================== 论坛系统 ====================
@@ -366,7 +367,7 @@ router.get('/favorites', authenticateToken, (req, res) => {
   }
 });
 
-// 删除帖子（管理员或作者）
+// 删除帖子（管理员、作者本人、或该帖所属班的班主任）
 router.delete('/threads/:id', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
@@ -374,8 +375,9 @@ router.delete('/threads/:id', authenticateToken, (req, res) => {
 
     if (!thread) return res.status(404).json({ error: '帖子不存在' });
 
-    const isAdmin = req.user.role === 'admin';
-    if (!isAdmin && thread.user_id !== req.user.userId) {
+    const isOwner = thread.user_id === req.user.userId;
+    const canManage = canManageClassContent(req.user.userId, req.user.role, thread.class_id);
+    if (!isOwner && !canManage) {
       return res.status(403).json({ error: '无权删除此帖子' });
     }
 

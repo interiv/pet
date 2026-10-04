@@ -3,6 +3,7 @@ import { Card, List, Avatar, Button, Input, message, Space, Tag, Modal, Empty, S
 import { LikeOutlined, LikeFilled, MessageOutlined, DeleteOutlined, SendOutlined, PlusOutlined, StarOutlined, StarFilled, EyeOutlined, ClockCircleOutlined, SearchOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { forumAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+import { canDeletePost } from '../utils/permissions';
 
 const { TextArea } = Input;
 
@@ -474,7 +475,7 @@ const Forum: React.FC = () => {
                     >
                       {viewingThread.is_favorited ? '已收藏' : '收藏'}
                     </Button>
-                    {(user?.id === viewingThread.user_id || user?.role === 'admin') && (
+                    {(canDeletePost(user, viewingThread)) && (
                       <Popconfirm title="确定删除此帖子？" onConfirm={() => handleDeleteThread(viewingThread.id)} okText="确定" cancelText="取消">
                         <Button danger icon={<DeleteOutlined />} size={isMobile ? 'small' : 'middle'}>删除</Button>
                       </Popconfirm>

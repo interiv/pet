@@ -14,11 +14,13 @@ import {
   TeamOutlined,
 } from '@ant-design/icons';
 import { notificationAPI } from '../utils/api';
+import { visibleNotificationTypes } from '../utils/notificationTypes';
 import { useAuthStore } from '../store/authStore';
 
-const adminVisibleTypes = ['system', 'forum_reply', 'forum_like', 'forum_quote', 'answer_changed'];
-const teacherVisibleTypes = ['system', 'forum_reply', 'forum_like', 'forum_quote', 'friend_request', 'friend_accepted', 'class_join_request', 'post_like', 'post_comment'];
-const studentVisibleTypes = ['friend_request', 'friend_accepted', 'gift_received', 'achievement', 'post_like', 'post_comment', 'forum_reply', 'forum_like', 'answer_changed'];
+// 各角色可见的通知类型统一放在 utils/notificationTypes，避免和左侧红点的白名单各写一份而漂移
+const adminVisibleTypes = visibleNotificationTypes('admin');
+const teacherVisibleTypes = visibleNotificationTypes('teacher');
+const studentVisibleTypes = visibleNotificationTypes('student');
 
 const useMobile = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);

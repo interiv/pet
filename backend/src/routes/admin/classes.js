@@ -194,7 +194,6 @@ router.put('/classes/:id/teachers/:teacherId', authenticateToken, (req, res) => 
     const { role, subject } = req.body || {};
     const classId = parseInt(id, 10);
     const targetTeacherId = parseInt(teacherId, 10);
-    const userId = req.user.userId;
     const userRole = req.user.role;
 
     const cls = db.prepare(`SELECT id, name, head_teacher_id FROM classes WHERE id = ?`).get(classId);
@@ -205,13 +204,10 @@ router.put('/classes/:id/teachers/:teacherId', authenticateToken, (req, res) => 
       return res.status(400).json({ error: '教师 ID 无效' });
     }
 
+    // 改身份（含把教师升为班主任）是全局敏感操作，只有管理员能做。
+    // 班主任只能增删本班任课教师，不能改动任何人的身份——否则可以把别人提成班主任来架空自己。
     if (userRole !== 'admin') {
-      const isHeadTeacher = db.prepare(
-        `SELECT 1 FROM class_teachers WHERE class_id = ? AND teacher_id = ? AND role = 'head_teacher'`
-      ).get(classId, userId);
-      if (!isHeadTeacher) {
-        return res.status(403).json({ error: '只有班主任或管理员可以修改教师身份' });
-      }
+      return res.status(403).json({ error: '只有管理员可以修改教师身份' });
     }
 
     const targetRole = role === 'head_teacher' ? 'head_teacher' : 'teacher';

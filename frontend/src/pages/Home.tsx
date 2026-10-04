@@ -19,6 +19,7 @@ import {
 } from '@ant-design/icons';
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { notificationAPI } from '../utils/api';
+import { visibleNotificationTypes } from '../utils/notificationTypes';
 import { useAuthStore, usePetStore } from '../store/authStore';
 import CreatePet from '../components/CreatePet';
 import Achievements from '../components/Achievements';
@@ -109,11 +110,8 @@ const Home: React.FC = () => {
       try {
         const res = await notificationAPI.getUnreadCount();
         const byType = res.data.by_type || {};
-        const visibleTypes = user?.role === 'admin'
-          ? ['system', 'forum_reply', 'forum_like', 'forum_quote']
-          : user?.role === 'teacher'
-          ? ['system', 'forum_reply', 'forum_like', 'forum_quote', 'friend_request', 'friend_accepted', 'class_join_request', 'post_like', 'post_comment']
-          : ['friend_request', 'friend_accepted', 'gift_received', 'achievement', 'post_like', 'post_comment', 'forum_reply', 'forum_like'];
+        // 与通知中心共用同一份白名单，避免红点数和实际列表对不上
+        const visibleTypes = visibleNotificationTypes(user?.role);
         const total = visibleTypes.reduce((sum, t) => sum + (byType[t] || 0), 0);
         setUnreadCount(total);
       } catch (e) {

@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { checkAndAwardAchievement } = require('./achievements');
+const { notifyClassApplication } = require('../services/joinNotify');
 const { getChinaDate } = require('../config/timezone');
 
 // 用户注册
@@ -132,31 +133,17 @@ router.post('/register', async (req, res) => {
 
     const userId = createUserWithApplications();
 
-    // 给对应班级的教师发送申请通知（通知失败不影响注册结果）
+    // 通知收件人已按分级处理：只通知该班班主任；无班主任时通知管理员兜底
     for (const { classId, role: rowRole, subject } of applyRows) {
       try {
-        const classTeachers = db.prepare(`
-          SELECT teacher_id FROM class_teachers WHERE class_id = ?
-        `).all(classId);
-
-        const className = db.prepare('SELECT name FROM classes WHERE id = ?').get(classId)?.name || '未知班级';
-
-        for (const teacher of classTeachers) {
-          const isHeadRow = rowRole === 'head_teacher';
-          const title = isHeadRow ? '新教师申请担任班主任'
-            : isTeacher ? '新教师申请加入班级'
-            : '新学生申请加入班级';
-          const subjectText = subject ? `（科目：${subject}）` : '';
-          const content = isHeadRow
-            ? `${uname} 申请担任班级「${className}」的班主任${subjectText}，请前往审批。`
-            : isTeacher
-              ? `${uname} 申请以任课教师身份加入你的班级「${className}」${subjectText}，请前往审批。`
-              : `${uname} 申请加入你的班级「${className}」，请前往审批。`;
-          db.prepare(`
-            INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
-            VALUES (?, 'class_join_request', ?, ?, 'class_application', ?)
-          `).run(teacher.teacher_id, title, content, userId);
-        }
+        notifyClassApplication({
+          classId,
+          applicantId: userId,
+          applicantName: uname,
+          role: isTeacher ? 'teacher' : 'student',
+          teacherType: isTeacher ? rowRole : undefined,
+          subject,
+        });
       } catch (e) {
         console.error('发送申请通知失败:', e);
       }

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { isClassMember, listMemberClassIds } = require('../middleware/classAccess');
 const { checkAndAwardAchievement } = require('./achievements');
 
 // ==================== 聊天系统 ====================
@@ -11,14 +12,16 @@ router.get('/conversations', authenticateToken, (req, res) => {
   try {
     const userId = req.user.userId;
 
-    // 获取用户所在班级
-    const user = db.prepare('SELECT class_id FROM users WHERE id = ?').get(userId);
-
-    // 班级群聊
+    // 班级群聊：教师的多班归属记在 class_teachers，其 users.class_id 通常为空，
+    // 原先只认 users.class_id，导致任课教师/班主任完全看不到自己带的班群。
     const classChats = [];
-    if (user && user.class_id) {
-      const cls = db.prepare('SELECT id, name FROM classes WHERE id = ?').get(user.class_id);
-      if (cls) {
+    const myClassIds = listMemberClassIds(userId);
+    if (myClassIds.length > 0) {
+      const clsRows = db.prepare(
+        `SELECT id, name FROM classes WHERE id IN (${myClassIds.map(() => '?').join(',')}) ORDER BY id`
+      ).all(...myClassIds);
+
+      for (const cls of clsRows) {
         // 获取最后一条消息
         const lastMsg = db.prepare(`
           SELECT * FROM chat_messages
@@ -111,9 +114,8 @@ router.get('/messages', authenticateToken, (req, res) => {
     let messages;
 
     if (room_type === 'class') {
-      // 权限检查：是否在该班级
-      const userClassId = db.prepare('SELECT class_id FROM users WHERE id = ?').get(userId)?.class_id;
-      if (!userClassId || parseInt(userClassId) !== parseInt(room_id)) {
+      // 权限检查：是否在该班级（学生看 users.class_id，教师看 class_teachers）
+      if (req.user.role !== 'admin' && !isClassMember(userId, parseInt(room_id, 10))) {
         return res.status(403).json({ error: '无权访问该班级群聊' });
       }
 
@@ -181,9 +183,8 @@ router.post('/messages', authenticateToken, (req, res) => {
     let result;
 
     if (room_type === 'class') {
-      // 检查是否在班级中
-      const userClassId = db.prepare('SELECT class_id FROM users WHERE id = ?').get(userId)?.class_id;
-      if (!userClassId || parseInt(userClassId) !== parseInt(room_id)) {
+      // 检查是否在班级中（学生看 users.class_id，教师看 class_teachers）
+      if (req.user.role !== 'admin' && !isClassMember(userId, parseInt(room_id, 10))) {
         return res.status(403).json({ error: '不在该班级中，无法发送消息' });
       }
 

@@ -8,6 +8,7 @@ const compression = require('compression');
 const morgan = require('morgan');
 const http = require('http');
 const { Server } = require('socket.io');
+const jwt = require('jsonwebtoken');
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
@@ -52,6 +53,7 @@ initDatabase();
 const STARTED_AT = new Date().toISOString();
 
 const { db } = require('./config/database');
+const { isClassMember } = require('./middleware/classAccess');
 
 // 未配置 FRONTEND_URL 时（本地开发 / 首次部署）默认为空数组会拒绝所有跨域请求，
 // 这里回退到本地常用开发地址，避免出现「接口通但前端全被 CORS 拦掉」的假故障。
@@ -205,6 +207,27 @@ app.use((err, req, res, next) => {
 io.on('connection', (socket) => {
   console.log('客户端连接:', socket.id);
 
+  // 尽力解析握手 token 把身份挂到 socket.data 上，供聊天类事件做权限校验。
+  // 这里不强制拒绝连接：宠物互动、战斗等匿名用法也走同一条连接。
+  try {
+    const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+    if (token) {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+      socket.data.userId = decoded.userId;
+      socket.data.role = decoded.role;
+      socket.data.username = decoded.username || '';
+    }
+  } catch (e) {
+    // token 缺失或过期：聊天事件会被下面的校验挡掉，不影响其它功能
+  }
+
+  // 是否有权访问该班级群：管理员直通；学生看 users.class_id；教师看 class_teachers
+  const canAccessClassRoom = (classId) => {
+    if (!socket.data.userId) return false;
+    if (socket.data.role === 'admin') return true;
+    return isClassMember(socket.data.userId, parseInt(classId, 10));
+  };
+
   // 加入战斗房间
   socket.on('join-battle', (battleId) => {
     socket.join(`battle:${battleId}`);
@@ -223,8 +246,12 @@ io.on('connection', (socket) => {
 
   // ==================== 聊天系统 ====================
 
-  // 加入班级群聊房间
+  // 加入班级群聊房间（原先任何人可加入任意班群被动收消息）
   socket.on('join-class-chat', (classId) => {
+    if (!canAccessClassRoom(classId)) {
+      console.warn(`⛔ 用户 ${socket.data.userId || '未认证'} 无权加入班级群聊：${classId}`);
+      return;
+    }
     socket.join(`class:${classId}`);
     console.log(`用户 ${socket.id} 加入班级群聊：${classId}`);
   });
@@ -237,12 +264,22 @@ io.on('connection', (socket) => {
 
   // 班级群聊消息（实时广播）
   socket.on('send-class-message', (data) => {
-    const { classId, message } = data;
+    const { classId, message } = data || {};
+    if (!canAccessClassRoom(classId)) {
+      console.warn(`⛔ 用户 ${socket.data.userId || '未认证'} 无权向班级群 ${classId} 发消息`);
+      return;
+    }
     io.to(`class:${classId}`).emit('new-class-message', message);
   });
 
   // 加入私聊房间（用两个用户的ID排序组合作为房间名）
-  socket.on('join-private-chat', ({ userId1, userId2 }) => {
+  // 前端历史上只传了 target_user_id，服务端却解构 userId1/userId2，导致房间名算成
+  // private:undefined-undefined，双方都收不到实时私聊。这里兼容两种入参。
+  socket.on('join-private-chat', (payload) => {
+    if (!socket.data.userId) return;
+    const userId1 = payload?.userId1 ?? socket.data.userId;
+    const userId2 = payload?.userId2 ?? payload?.target_user_id;
+    if (!userId2 || [Number(userId1), Number(userId2)].includes(Number(socket.data.userId)) === false) return;
     const roomId = `private:${[userId1, userId2].sort((a, b) => a - b).join('-')}`;
     socket.join(roomId);
     console.log(`用户 ${socket.id} 加入私聊房间：${roomId}`);
@@ -250,14 +287,18 @@ io.on('connection', (socket) => {
 
   // 私聊消息（实时推送）
   socket.on('send-private-message', (data) => {
-    const { targetUserId, message } = data;
+    if (!socket.data.userId) return;
+    const { targetUserId, message } = data || {};
+    // 只能往自己参与的私聊里发
+    if (!targetUserId || Number(message?.user_id) !== Number(socket.data.userId)) return;
     const roomId = `private:${[message.user_id, targetUserId].sort((a, b) => a - b).join('-')}`;
     io.to(roomId).emit('new-private-message', message);
   });
 
   // 用户正在输入中
   socket.on('typing-in-class', (data) => {
-    socket.to(`class:${data.classId}`).emit('user-typing', { username: data.username });
+    if (!canAccessClassRoom(data?.classId)) return;
+    socket.to(`class:${data.classId}`).emit('user-typing', { username: socket.data.username || '' });
   });
 
   socket.on('typing-in-private', (data) => {

@@ -17,7 +17,6 @@ import DataView from './admin/DataView';
 import CleanData from './admin/CleanData';
 import SystemData from './admin/SystemData';
 import SoftwareUpdate from './admin/SoftwareUpdate';
-import Profile from './Profile';
 import ClassInvitationManager from './ClassInvitationManager';
 import AchievementManagement from './admin/AchievementManagement';
 
@@ -75,8 +74,7 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
         { key: 'clean_data', label: <span><ClearOutlined /> 清理数据</span>, children: <CleanData /> },
         { key: 'system', label: <span><ThunderboltOutlined /> 系统数据</span>, children: <SystemData /> },
         { key: 'software_update', label: <span><CloudUploadOutlined /> 软件升级</span>, children: <SoftwareUpdate /> },
-        // 个人中心：管理员在工作台左侧菜单已有一份，这里再放一份避免换页后找不着
-        { key: 'profile', label: <span><UserOutlined /> 个人中心</span>, children: <Profile /> },
+        // 「个人中心」不在这里重复一份：左侧菜单和右上角头像下拉已经有了（见 Home.tsx）
       ];
     } else if (isTeacher) {
       const isHeadTeacher = (user as any).teacher_classes?.some((c: any) => c.class_role === 'head_teacher');
@@ -93,12 +91,20 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
       }
       items.push(
         { key: 'dataview', label: <span><DatabaseOutlined /> 数据查看</span>, children: <DataView /> },
-        { key: 'profile', label: <span><UserOutlined /> 个人中心</span>, children: <Profile /> },
+        // 同上：个人中心统一走左侧菜单，工作台不再重复挂一份
       );
       return items;
     }
     return [];
   };
+
+  // URL 里可能带着早已删除的页签（如旧书签 tab=profile），回退到第一个可用页签，避免白屏
+  const tabItems = getTabItems();
+  useEffect(() => {
+    if (tabItems.length > 0 && !tabItems.some((t: any) => t.key === activeTab)) {
+      setActiveTab(tabItems[0].key);
+    }
+  }, [activeTab, tabItems.map((t: any) => t.key).join(',')]);
 
   const getTitle = () => {
     if (isAdmin) return '管理控制台';
@@ -110,7 +116,7 @@ const Admin: React.FC<AdminProps> = ({ defaultTab }) => {
     <div style={{ padding: isMobile ? 12 : 24 }}>
       <h2 style={{ marginBottom: isMobile ? 16 : 24 }}>{getTitle()}</h2>
       {/* destroyOnHidden：切换页签时重新挂载，确保每次进入都拉取最新数据（避免跨页签数据不更新的问题） */}
-      <Tabs activeKey={activeTab} onChange={handleTabChange} items={getTabItems()} destroyOnHidden />
+      <Tabs activeKey={activeTab} onChange={handleTabChange} items={tabItems} destroyOnHidden />
     </div>
   );
 };

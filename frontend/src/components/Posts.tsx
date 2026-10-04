@@ -3,6 +3,7 @@ import { Card, List, Avatar, Button, Input, message, Space, Tag, Modal, Popconfi
 import { LikeOutlined, LikeFilled, MessageOutlined, DeleteOutlined, SendOutlined, PlusOutlined } from '@ant-design/icons';
 import { postAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+import { canDeletePost } from '../utils/permissions';
 
 const { TextArea } = Input;
 
@@ -211,7 +212,7 @@ const Posts: React.FC = () => {
                     </Button>
                     <Button type="text" size={isMobile ? 'small' : 'middle'} icon={<MessageOutlined />}>{(post.comment_count || 0)}</Button>
                   </Space>
-                  {(user?.id === post.user_id || user?.role === 'admin') && (
+                  {(canDeletePost(user, post)) && (
                     <Popconfirm title="确定删除此动态？" onConfirm={() => handleDeletePost(post.id)} okText="确定" cancelText="取消">
                       <Button type="text" danger size="small" icon={<DeleteOutlined />}>{isMobile ? '' : '删除'}</Button>
                     </Popconfirm>

@@ -41,9 +41,12 @@ const ClassDashboard: React.FC = () => {
   const [studentTablePageSize, setStudentTablePageSize] = useState(10);
 
   useEffect(() => {
+    // 必须带上 token：服务端要对 join-class-chat 做班级成员校验，未认证会被拒绝加入
+    const token = localStorage.getItem('token');
+    if (!token) return;
     const s = io(
       (import.meta as any).env.VITE_API_URL?.replace('/api', '') || window.location.origin,
-      { transports: ['websocket', 'polling'] }
+      { transports: ['websocket', 'polling'], auth: { token } }
     );
     setSocket(s);
     return () => { s.disconnect(); };
