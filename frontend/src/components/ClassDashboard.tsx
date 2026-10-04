@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons';
 import { io, Socket } from 'socket.io-client';
 import { knowledgePointAPI, adminAPI } from '../utils/api';
+import { SOCKET_URL } from '../utils/apiBase';
 import {
   MasteryRing, AccuracyColumn, WeakPointBar, DistributionPie
 } from './charts/ChartKit';
@@ -45,7 +46,7 @@ const ClassDashboard: React.FC = () => {
     const token = localStorage.getItem('token');
     if (!token) return;
     const s = io(
-      (import.meta as any).env.VITE_API_URL?.replace('/api', '') || window.location.origin,
+      SOCKET_URL,
       { transports: ['websocket', 'polling'], auth: { token } }
     );
     setSocket(s);

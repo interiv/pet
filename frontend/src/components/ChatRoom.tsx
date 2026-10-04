@@ -4,6 +4,7 @@ import { SendOutlined, SearchOutlined, TeamOutlined, UserOutlined, PlusOutlined,
 import { io, Socket } from 'socket.io-client';
 import { chatAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+import { SOCKET_URL } from '../utils/apiBase';
 
 const { TextArea } = Input;
 
@@ -85,7 +86,7 @@ const ChatRoom: React.FC = () => {
     const token = localStorage.getItem('token');
     if (!token || !user?.id) return;
 
-    const socket = io((import.meta as any).env.VITE_API_URL?.replace('/api', '') || window.location.origin, {
+    const socket = io(SOCKET_URL, {
       auth: { token },
       transports: ['websocket'],
     });

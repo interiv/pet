@@ -15,6 +15,7 @@ import { classroomQuizAPI, questionBankAPI, itemAPI, equipmentAPI, adminAPI, age
 import { useAuthStore } from '../store/authStore';
 import { getPetThumbUrl } from '../utils/petImage';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
+import { SOCKET_URL } from '../utils/apiBase';
 import ClassroomConsole from './ClassroomConsole';
 
 const { Title, Text, Paragraph } = Typography;
@@ -336,11 +337,8 @@ const ClassroomQuiz: React.FC = () => {
   const [agentInfo, setAgentInfo] = useState<any>(null);
   const [agentCreating, setAgentCreating] = useState(false);
   const [agentTesting, setAgentTesting] = useState(false);
-  // 接口根地址：优先用后端配置的地址，本地开发时就是当前站点 + /api
-  const [agentBaseUrl] = useState<string>(() => {
-    const configured = (import.meta as any).env?.VITE_API_URL || '/api';
-    return `${window.location.origin}${configured.startsWith('http') ? '' : configured}/agent`;
-  });
+  // AI 直连接口地址：同源部署就是 当前站点 + /api/agent（配置了独立后端域名时才带域名）
+  const [agentBaseUrl] = useState<string>(() => `${SOCKET_URL}/api/agent`);
 
   // 题库选题
   const [bankQuestions, setBankQuestions] = useState<any[]>([]);
