@@ -14,7 +14,7 @@ import {
 import { classroomQuizAPI, questionBankAPI, itemAPI, equipmentAPI, adminAPI, agentTokenAPI, agentAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import { getPetThumbUrl } from '../utils/petImage';
-import { getMySubject } from '../utils/subjects';
+import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
 import ClassroomConsole from './ClassroomConsole';
 
 const { Title, Text, Paragraph } = Typography;
@@ -26,7 +26,7 @@ const REWARD_TYPES: Record<string, { label: string; color: string }> = {
   exp: { label: '经验', color: 'orange' },
 };
 
-const subjectOptions = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治', '其他'];
+const subjectOptions = SUBJECT_OPTIONS;
 const aiTypeOptions = [
   { value: 'choice_single', label: '单选题' },
   { value: 'choice_multi', label: '多选题' },
@@ -289,7 +289,7 @@ const ClassroomQuiz: React.FC = () => {
   const manualRows: any[] = Form.useWatch('manual_questions', createForm) || [];
 
   // 教师自己的任教科目：创建时默认带出，可手动改
-  const mySubject = getMySubject((user as any)?.teacher_classes, currentClass?.id);
+  const mySubject = getMySubject(user?.teacher_classes, currentClass?.id);
 
   // 题目课件编辑
   const [coursewareIndex, setCoursewareIndex] = useState<number | null>(null);
@@ -1029,6 +1029,16 @@ const ClassroomQuiz: React.FC = () => {
         }}
         onOk={() => createForm.submit()}
         width={880}
+        destroyOnHidden
+        // 每次打开都重新带出任教科目/所在班级：Form.Item 的 initialValue 只在首次挂载时被消费一次，
+        // 而 user 是异步从 store 取的，若不在打开时用 setFieldsValue 兜一次，默认值会永远为空
+        afterOpenChange={(open) => {
+          if (!open) return;
+          const preset: any = {};
+          if (mySubject) preset.subject = mySubject;
+          if (currentClass?.id) preset.class_id = currentClass.id;
+          if (Object.keys(preset).length > 0) createForm.setFieldsValue(preset);
+        }}
       >
         <Form form={createForm} layout="vertical" onFinish={handleCreate}>
           <Row gutter={16}>

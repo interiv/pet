@@ -32,6 +32,11 @@ const DEFAULT_FLAGS = {
   boss_battle_enabled: 'true',     // BOSS 战（教师组织的全班活动，性质与 PVP 不同）
   shop_enabled: 'true',            // 道具商店
   equipment_shop_enabled: 'true',  // 装备商店
+
+  // 教学协作
+  // 开启后，任课教师除自己布置的作业外，还能看到同班其他老师布置的作业（列表 + 题目详情）。
+  // 默认关闭：题目设计属于教师原创劳动，是否愿意共享应由各校自行决定。
+  cross_teacher_homework_visible: 'false',
 };
 
 const FLAG_KEYS = Object.keys(DEFAULT_FLAGS);

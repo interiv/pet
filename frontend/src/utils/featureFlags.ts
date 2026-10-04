@@ -69,6 +69,17 @@ export const FLAG_GROUPS: FeatureFlagGroup[] = [
       { key: 'equipment_shop_enabled', label: '装备商店', hint: '关闭装备购买与强化' },
     ],
   },
+  {
+    title: '教学协作',
+    tip: '涉及同事之间是否共享教学成果，请按本校情况决定。',
+    flags: [
+      {
+        key: 'cross_teacher_homework_visible',
+        label: '跨教师作业可见',
+        hint: '开启后，任课教师除自己布置的作业外，还能看到同班其他老师布置的作业（含题目详情）。班主任始终可见本班全部作业。默认关闭——题目设计属于教师原创劳动。',
+      },
+    ],
+  },
 ];
 
 export const FEATURE_FLAGS: FeatureFlagMeta[] = FLAG_GROUPS.reduce(

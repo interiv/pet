@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space, Radio, Checkbox, Progress, Card, Alert, Upload, Image, Divider, Empty, Statistic, Row, Col, Tabs, Badge, Popconfirm } from 'antd';
+import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space, Radio, Checkbox, Progress, Card, Alert, Upload, Image, Divider, Empty, Statistic, Row, Col, Tabs, Badge, Popconfirm, Tooltip } from 'antd';
 import { assignmentAPI, adminAPI, classroomQuizAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
-import { getMySubject } from '../utils/subjects';
+import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
 import dayjs from 'dayjs';
 import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import CelebrationAnimation from './CelebrationAnimation';
@@ -81,7 +81,9 @@ const typeOptions = [
   { value: 'essay', label: '简答题/作文' }
 ];
 
-const subjectOptions = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治', '其他'];
+// 科目统一取共享列表（utils/subjects.ts）。原先这里只有 10 项，
+// 若管理员给某教师设的是「音乐」等科目，下拉里会找不到、只能显示成一个孤立裸值
+const subjectOptions = SUBJECT_OPTIONS;
 
 const difficultyOptions = [
   { value: 'easy', label: '简单' },
@@ -138,7 +140,6 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [printMode, setPrintMode] = useState<'blank' | 'named'>('named');
   const [printShowAnswer, setPrintShowAnswer] = useState(false);
   const [printLoading, setPrintLoading] = useState(false);
-  const [typeSummary, setTypeSummary] = useState<any[]>([]);
 
   // ===== 逐题作答计时 =====
   // 记录每题「首次进入视野」的时刻，提交时算出耗时。
@@ -232,10 +233,13 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
   // 教师自己的任教科目：留作业时默认带出，老师仍可手动改成其他科目
   const mySubject = useMemo(() => {
-    const teacherClasses = (user as any)?.teacher_classes;
+    const teacherClasses = user?.teacher_classes;
     const classId = selectedClass ?? (classes.length === 1 ? classes[0].id : undefined);
     return getMySubject(teacherClasses, classId);
   }, [user, selectedClass, classes]);
+
+  // 统计卡片的时间维度卡片（今日 / 近7 天 / 近 30 天）
+  const [statRanges, setStatRanges] = useState<any[]>([]);
 
   useEffect(() => {
     if (user) {
@@ -304,7 +308,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             date_from: filterDateRange?.[0]?.format('YYYY-MM-DD'),
             date_to: filterDateRange?.[1]?.format('YYYY-MM-DD'),
           });
-          setTypeSummary(sum.data.summary || []);
+          setStatRanges(sum.data.ranges || []);
         } catch (e) {
           // 统计失败不影响列表
         }
@@ -318,6 +322,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   };
 
   const handleGenerateQuestions = async (values: any) => {
+    // 粘贴模式不校验题型：题型由 AI 逐题自动判断，也不需要出题规格
+    const isPaste = genMode === 'paste';
+
     setGenerating(true);
     try {
       // 上一次生成还没发布就又点「生成」：先撤销上一次，别让它白占次数
@@ -325,36 +332,33 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         loadGenLimit();
       }
 
-      // 按知识点 / 按详细要求出题：可以一次配置多种题型，各自指定数量与难度
-      const rawSpecs: any[] = Array.isArray(values.type_specs) ? values.type_specs : [];
-      const specs = rawSpecs
-        .filter((r: any) => r && r.question_type)
-        .map((r: any) => ({
-          question_type: r.question_type,
-          count: Math.max(1, parseInt(r.count, 10) || 5),
-          difficulty: r.difficulty || 'medium'
-        }));
-      if (specs.length === 0) {
-        message.error('请至少添加一种题型');
-        return;
-      }
-      if (new Set(specs.map((s: any) => s.question_type)).size !== specs.length) {
-        message.error('同一种题型只能添加一行，请直接调整那一行的数量');
-        return;
-      }
-
       const payload: any = {
         subject: values.subject,
         grade_level: values.grade_level || '',
         mode: genMode
       };
-      if (genMode === 'paste') {
-        // 粘贴整理模式的题量与题型由素材决定，仍走单题型
-        payload.question_type = values.question_type;
-        payload.difficulty = values.difficulty || 'medium';
-        payload.count = values.count || 10;
+
+      if (isPaste) {
+        // 不传 question_type：后端会走「AI 自动判型」模板
         payload.raw_text = values.raw_text;
       } else {
+        // 按知识点 / 按详细要求出题：可以一次配置多种题型，各自指定数量与难度
+        const rawSpecs: any[] = Array.isArray(values.type_specs) ? values.type_specs : [];
+        const specs = rawSpecs
+          .filter((r: any) => r && r.question_type)
+          .map((r: any) => ({
+            question_type: r.question_type,
+            count: Math.max(1, parseInt(r.count, 10) || 5),
+            difficulty: r.difficulty || 'medium'
+          }));
+        if (specs.length === 0) {
+          message.error('请至少添加一种题型');
+          return;
+        }
+        if (new Set(specs.map((s: any) => s.question_type)).size !== specs.length) {
+          message.error('同一种题型只能添加一行，请直接调整那一行的数量');
+          return;
+        }
         payload.type_specs = specs;
         if (genMode === 'topic') {
           payload.topic = values.topic;
@@ -1256,6 +1260,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       <div>
         <a style={{ fontWeight: 500 }}>{text}</a>
         {getTypeTag(r.assignment_type) && <span style={{ marginLeft: 6 }}>{getTypeTag(r.assignment_type)}</span>}
+        {/* 跨教师作业可见开启时，标明这条是谁布置的，避免误以为是自己的作业 */}
+        {isTeacher && r.teacher_id !== user?.id && r.teacher_name && (
+          <Tag color="cyan" style={{ marginLeft: 6, fontSize: 11 }}>{r.teacher_name} 布置</Tag>
+        )}
         {r.my_submission_id && (
           <div style={{ fontSize: 12, color: '#999' }}>
             最高得分：<span style={{ color: '#52c41a', fontWeight: 'bold' }}>{formatScore(r.my_score)}</span> 分
@@ -1439,39 +1447,76 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         </Space>
       </div>
 
-      {/* 教师端：预习 / 作业 / 复习 分组学情概览 */}
-      {isTeacher && typeSummary.length > 0 && typeSummary.some(t => t.assignment_count > 0) && (
-        <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
-          {typeSummary.filter(t => t.assignment_count > 0).map(t => (
-            <Col xs={24} sm={8} key={t.assignment_type}>
-              <Card size="small" style={{ borderRadius: 8 }}>
-                <Row align="middle" gutter={8}>
-                  <Col flex="auto">
-                    <div style={{ fontSize: 13, color: '#666' }}>
-                      <Tag color={t.assignment_type === 'preview' ? 'purple' : t.assignment_type === 'review' ? 'orange' : 'blue'}>
-                        {t.label}
-                      </Tag>
-                      {t.assignment_count} 份
+      {/* 教师端学情概览：按时间维度（今日 / 近7 天 / 近 30 天）各一张卡片，
+          每张卡片内再按预习/作业/复习拆分，便于横向对比不同时间段的完成情况。
+          口径说明写在卡片底部，避免把「人次完成率」误读成「学生完成率」。 */}
+      {isTeacher && statRanges.length > 0 && (
+        <Row gutter={[12, 12]} style={{ marginBottom: 8 }}>
+          {statRanges.map((r: any) => {
+            const hasData = r.total_count > 0;
+            return (
+              <Col xs={24} sm={8} key={r.key}>
+                <Card
+                  size="small"
+                  style={{ borderRadius: 8, height: '100%' }}
+                  title={<span style={{ fontSize: 13 }}>{r.label}</span>}
+                  extra={
+                    r.fallback ? (
+                      <Tag color="orange" style={{ fontSize: 11 }}>今日无作业</Tag>
+                    ) : (
+                      <Tooltip title={r.hint}><span style={{ color: '#bbb', fontSize: 11 }}>{r.hint}</span></Tooltip>
+                    )
+                  }
+                >
+                  {!hasData ? (
+                    <div style={{ color: '#bbb', fontSize: 12, textAlign: 'center', padding: '12px 0' }}>
+                      该时段暂无作业
                     </div>
-                    <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>
-                      平均 {t.average_score} 分
-                    </div>
-                  </Col>
-                  <Col>
-                    <Progress
-                      type="circle"
-                      size={54}
-                      percent={t.completion_rate}
-                      format={(p) => `${p}%`}
-                      strokeColor={t.completion_rate >= 80 ? '#52c41a' : t.completion_rate >= 50 ? '#1890ff' : '#faad14'}
-                    />
-                  </Col>
-                </Row>
-                <div style={{ fontSize: 12, color: '#aaa', marginTop: 2 }}>完成率（{t.submitted_count} 人次提交）</div>
-              </Card>
-            </Col>
-          ))}
+                  ) : (
+                    <>
+                      <Row align="middle" gutter={8}>
+                        <Col flex="auto">
+                          <div style={{ fontSize: 13, color: '#666' }}>{r.total_count} 份作业</div>
+                          <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>
+                            平均 {r.average_score} 分 · {r.submitted_count} 人次提交
+                          </div>
+                        </Col>
+                        <Col>
+                          <Progress
+                            type="circle"
+                            size={52}
+                            percent={r.completion_rate}
+                            format={(p) => `${p}%`}
+                            strokeColor={r.completion_rate >= 80 ? '#52c41a' : r.completion_rate >= 50 ? '#1890ff' : '#faad14'}
+                          />
+                        </Col>
+                      </Row>
+                      <div style={{ marginTop: 8 }}>
+                        {(r.by_type || []).filter((t: any) => t.assignment_count > 0).map((t: any) => (
+                          <div key={t.assignment_type} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#888', padding: '2px 0' }}>
+                            <Tag
+                              color={t.assignment_type === 'preview' ? 'purple' : t.assignment_type === 'review' ? 'orange' : 'blue'}
+                              style={{ fontSize: 11, marginInlineEnd: 0 }}
+                            >
+                              {t.label}
+                            </Tag>
+                            <span>{t.assignment_count} 份</span>
+                            <span style={{ marginLeft: 'auto' }}>完成率 {t.completion_rate}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </Card>
+              </Col>
+            );
+          })}
         </Row>
+      )}
+      {isTeacher && statRanges.length > 0 && (
+        <div style={{ color: '#bbb', fontSize: 12, marginBottom: 16, marginTop: -4 }}>
+          完成率 = 已提交人次 ÷（应交人次），同一学生做多份作业会计多次；「近 7 天 / 近 30 天」均含今天，按北京时间计算。
+        </div>
       )}
 
       {isMobile ? (
@@ -1700,12 +1745,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           generateForm.resetFields();
           // 默认带出教师自己的任教科目，仍可手动改成其他科目
           if (mySubject) generateForm.setFieldsValue({ subject: mySubject });
-          // 出题规格默认给一行，用加号再加
+          // 出题规格默认给一行，用加号再加（粘贴模式不用题型，故无需初始化）
           generateForm.setFieldsValue({
             type_specs: [defaultTypeSpec()],
-            question_type: 'choice_single',
-            difficulty: 'medium',
-            count: 10,
           });
         }}
         width={isMobile ? '95vw' : 860}
@@ -1761,27 +1803,15 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                   </Form.Item>
                 )}
 
-                {/* 粘贴整理模式的题量由素材决定，题型/难度仍需单选；其余两种模式用下面的列表一次配多种题型 */}
+                {/* 粘贴整理模式：题型由 AI 逐题自动判断，不需要老师指定；题量也由素材决定 */}
                 {genMode === 'paste' ? (
-                  <Row gutter={16}>
-                    <Col xs={24} sm={8}>
-                      <Form.Item name="question_type" label="题型" rules={[{ required: true, message: '请选择题型' }]} preserve={false}>
-                        <Select placeholder="选择题型">
-                          {typeOptions.map(t => <Option key={t.value} value={t.value}>{t.label}</Option>)}
-                        </Select>
-                      </Form.Item>
-                    </Col>
-                    <Col xs={24} sm={8}>
-                      <Form.Item name="difficulty" label="难度" initialValue="medium" preserve={false}>
-                        <Select>{difficultyOptions.map(d => <Option key={d.value} value={d.value}>{d.label}</Option>)}</Select>
-                      </Form.Item>
-                    </Col>
-                    <Col xs={24} sm={8}>
-                      <Form.Item label="题目数量">
-                        <Input disabled placeholder="由粘贴内容决定" />
-                      </Form.Item>
-                    </Col>
-                  </Row>
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="直接粘贴原文即可，题型由 AI 自动判断"
+                    description="不需要先选题型。AI 会逐题识别单选/多选/判断/填空/简答，并按各自格式补全选项与答案。识别不清的题会在预览里标出，检查一下再用。"
+                  />
                 ) : (
                   <>
                     <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>出题规格</div>
@@ -1876,7 +1906,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 )}
                 <div style={{ textAlign: 'center', color: '#999', fontSize: 12, marginTop: 8 }}>
                   {genMode === 'paste'
-                    ? '提示：AI将逐题整理粘贴的原文并补全答案/解析，题目数量以实际内容为准（不含变体）'
+                    ? '提示：AI会逐题判断题型并补全选项与答案，题目数量以实际内容为准（不含变体）'
                     : '提示：客观题（单选/多选/判断/填空）实际生成 N×3 道，每道题配 2 个相似变体；主观题按 N 道生成。'}
                 </div>
               </Form>

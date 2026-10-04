@@ -294,10 +294,12 @@ router.post('/login', async (req, res) => {
     );
 
     // 教师：获取其所在的班级列表
+    // ct.subject 必须带上：前端登录后直接用本响应的 user 填充 store（不会立刻再调 /me），
+    // 漏掉它会导致「留作业/课堂做题」的默认科目永远为空，要按 F5 刷新才恢复。
     let teacher_classes = [];
     if (user.role === 'teacher' || user.role === 'admin') {
       teacher_classes = db.prepare(`
-        SELECT c.id, c.name, c.slug, c.grade, ct.role AS class_role
+        SELECT c.id, c.name, c.slug, c.grade, ct.role AS class_role, ct.subject
         FROM class_teachers ct JOIN classes c ON ct.class_id = c.id
         WHERE ct.teacher_id = ?
         ORDER BY c.created_at DESC
@@ -411,6 +413,136 @@ router.put('/me', authenticateToken, (req, res) => {
   } catch (error) {
     console.error('更新用户信息错误:', error);
     res.status(500).json({ error: '更新失败' });
+  }
+});
+
+/**
+ * 教师自助维护「任教科目」（仅限已有任教关系的班级）。
+ *
+ * 为什么科目可以直接改、而任教班级要审批：
+ *   - 科目只是「我教什么」的自我描述，不授予任何权限，改错了不会造成越权；
+ *     而且它正是「留作业默认科目」的数据来源，不让老师填就永远是空的。
+ *   - 任教班级决定权限边界（能看到学生名单、进班级群、被通知申请等），
+ *     必须由该班班主任或管理员点头，所以走 class_applications 审批流。
+ */
+router.put('/me/teaching-subject', authenticateToken, (req, res) => {
+  try {
+    if (!['teacher', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: '仅教师可维护任教科目' });
+    }
+    const userId = req.user.userId;
+    const updates = Array.isArray(req.body.updates) ? req.body.updates : [];
+
+    const rows = db.prepare(
+      `SELECT ct.class_id, ct.role, c.name FROM class_teachers ct
+       JOIN classes c ON c.id = ct.class_id WHERE ct.teacher_id = ?`
+    ).all(userId);
+    const classMap = new Map(rows.map((r) => [Number(r.class_id), r]));
+
+    const stmt = db.prepare('UPDATE class_teachers SET subject = ? WHERE teacher_id = ? AND class_id = ?');
+    let changed = 0;
+    db.transaction(() => {
+      for (const u of updates) {
+        const classId = parseInt(u?.class_id, 10);
+        if (!classId || !classMap.has(classId)) continue; // 只能改自己已在的班
+        const subject = String(u?.subject ?? '').trim().slice(0, 20) || null;
+        stmt.run(subject, userId, classId);
+        changed += 1;
+      }
+    })();
+
+    res.json({ message: '任教科目已更新', updated: changed });
+  } catch (error) {
+    console.error('更新任教科目错误:', error);
+    res.status(500).json({ error: '更新任教科目失败' });
+  }
+});
+
+/**
+ * 教师申请加入某个班级任教（申请班主任 / 管理员审批）。
+ * 直接写入 class_applications，审批通过后由既有的 applyApplicationToClass 落地，
+ * 不新增第二套申请表。
+ */
+router.post('/me/join-class-request', authenticateToken, (req, res) => {
+  try {
+    if (!['teacher', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ error: '仅教师可提交任教申请' });
+    }
+    const userId = req.user.userId;
+    const classId = parseInt(req.body?.class_id, 10);
+    const subject = String(req.body?.subject ?? '').trim().slice(0, 20) || null;
+    const wantHeadTeacher = req.body?.teacher_type === 'head_teacher';
+
+    if (!Number.isFinite(classId)) return res.status(400).json({ error: '请选择要加入的班级' });
+
+    const cls = db.prepare('SELECT id, name FROM classes WHERE id = ?').get(classId);
+    if (!cls) return res.status(404).json({ error: '班级不存在' });
+
+    const already = db.prepare('SELECT role FROM class_teachers WHERE teacher_id = ? AND class_id = ?').get(userId, classId);
+    if (already) return res.status(400).json({ error: '你已经在该班任教了' });
+
+    const pending = db.prepare(
+      `SELECT id FROM class_applications WHERE user_id = ? AND class_id = ? AND role = 'teacher' AND status = 'pending'`
+    ).get(userId, classId);
+    if (pending) return res.status(400).json({ error: '你已提交过该班级的任教申请，请等待审批' });
+
+    // 一个班只能有一位班主任，已有人时不能申请班主任身份
+    if (wantHeadTeacher) {
+      const hasHead = db.prepare(
+        `SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`
+      ).get(classId);
+      if (hasHead) return res.status(400).json({ error: '该班已有班主任，只能以任课教师身份申请' });
+    }
+
+    const user = db.prepare('SELECT username, real_name, status FROM users WHERE id = ?').get(userId);
+    const applicantName = user?.real_name || user?.username || '某教师';
+
+    db.prepare(`
+      INSERT INTO class_applications (user_id, class_id, role, teacher_type, subject, status)
+      VALUES (?, ?, 'teacher', ?, ?, 'pending')
+    `).run(userId, classId, wantHeadTeacher ? 'head_teacher' : 'teacher', subject);
+
+    // 通知该班班主任；没有班主任时兜底通知管理员（与注册申请同一套规则）
+    try {
+      notifyClassApplication({
+        classId,
+        applicantId: userId,
+        applicantName,
+        role: 'teacher',
+        teacherType: wantHeadTeacher ? 'head_teacher' : 'teacher',
+        subject,
+      });
+    } catch (e) {
+      console.error('发送任教申请通知失败:', e);
+    }
+
+    res.json({ message: `已提交加入「${cls.name}」的任教申请，等待班主任审批` });
+  } catch (error) {
+    console.error('提交任教申请错误:', error);
+    res.status(500).json({ error: '提交申请失败' });
+  }
+});
+
+/** 教师可申请加入的班级列表（公开班级 + 自己尚未加入的） */
+router.get('/me/teachable-classes', authenticateToken, (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const rows = db.prepare(`
+      SELECT c.id, c.name, c.grade,
+        (SELECT ct2.role FROM class_teachers ct2 WHERE ct2.class_id = c.id AND ct2.teacher_id = ?) AS my_role,
+        EXISTS(SELECT 1 FROM class_teachers ct3 WHERE ct3.class_id = c.id AND ct3.role = 'head_teacher') AS has_head_teacher
+      FROM classes c
+      WHERE COALESCE(c.is_public, 1) = 1
+      ORDER BY c.created_at DESC
+    `).all(userId);
+    res.json({
+      classes: rows
+        .filter((r) => r.my_role !== 'head_teacher')
+        .map((r) => ({ id: r.id, name: r.name, grade: r.grade, joined: !!r.my_role, has_head_teacher: !!r.has_head_teacher })),
+    });
+  } catch (error) {
+    console.error('获取可申请班级失败:', error);
+    res.status(500).json({ error: '获取班级列表失败' });
   }
 });
 

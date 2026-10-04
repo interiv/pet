@@ -74,6 +74,16 @@ export const authAPI = {
   
   changePassword: (data: { currentPassword: string; newPassword: string }) => 
     api.put('/auth/change-password', data),
+  
+  // ===== 教师自助维护任教信息 =====
+  /** 修改自己已有任教关系中的科目（即时生效，无需审批） */
+  updateMyTeachingSubjects: (updates: Array<{ class_id: number; subject: string | null }>) =>
+    api.put('/auth/me/teaching-subject', { updates }),
+  /** 可申请加入的班级列表 */
+  getTeachableClasses: () => api.get('/auth/me/teachable-classes'),
+  /** 申请加入班级任教（需班主任/管理员审批） */
+  requestJoinClass: (data: { class_id: number; subject?: string; teacher_type?: 'teacher' | 'head_teacher' }) =>
+    api.post('/auth/me/join-class-request', data),
 
   getApprovalStatus: (username: string) =>
     api.get('/auth/approval-status', { params: { username } }),

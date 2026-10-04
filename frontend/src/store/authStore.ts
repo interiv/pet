@@ -15,7 +15,15 @@ interface User {
   school_theme?: string;
   avatar?: string;
   gold?: number;
-  teacher_classes?: Array<{ id: number; name: string; slug: string; grade?: string; class_role?: string }>;
+  teacher_classes?: Array<{
+    id: number;
+    name: string;
+    slug: string;
+    grade?: string;
+    class_role?: string;
+    /** 任教科目（class_teachers.subject）。历史数据可能为 null，前端需容错 */
+    subject?: string | null;
+  }>;
 }
 
 interface CurrentClass {

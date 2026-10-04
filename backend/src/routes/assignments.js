@@ -9,9 +9,9 @@ const { checkAndAwardAchievement } = require('./achievements');
 const { getChinaDate } = require('../config/timezone');
 const { getPrompt, fillTemplate } = require('../config/prompts');
 const { isAnswerCorrect } = require('../utils/answerCheck');
-const { collectQuestions } = require('../services/aiQuestion');
+const { collectQuestions, normalizeQuestion } = require('../services/aiQuestion');
 const { beginUsage, settleUsage, countBilledUsage, markFailed, countReferencedQuestions, deleteUnusedQuestions } = require('../services/aiUsage');
-const { requireFeature } = require('../middleware/featureFlags');
+const { requireFeature, isFeatureEnabled } = require('../middleware/featureFlags');
 
 /**
  * 功能开关守卫：
@@ -295,13 +295,19 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     /**
      * 出题规格：前端可以用加号一次配置多行「题型 + 数量 + 难度」，
      * 逐行生成后合并成一份作业（一次点击只扣一次生成额度）。
-     * 粘贴整理模式的题量由素材决定，仍只支持单题型，这里直接回落到老的单题型参数。
+     * 粘贴整理模式的题量与题型都由素材决定：
+     *   - 指定了题型 → 按该题型整理（保留原有行为）
+     *   - 没指定题型 → 交给 AI 逐题自动判断（老师通常只是把现成题目粘进来）
      */
+    const allowAutoDetect = isPasteMode && !question_type;
     const rawSpecs = (!isPasteMode && Array.isArray(type_specs) && type_specs.length > 0)
       ? type_specs
       : [{ question_type, count, difficulty }];
 
     const specs = [];
+    if (allowAutoDetect) {
+      specs.push({ question_type: null, count: 0, difficulty: 'medium' });
+    } else {
     for (const raw of rawSpecs) {
       const t = raw && (raw.question_type || raw.type);
       // 提前挡掉没有对应提示词模板的题型，避免带着空 prompt 去打 LLM 还白扣一次额度
@@ -315,8 +321,9 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       if (specs.some((s) => s.question_type === t)) continue;
       specs.push({ question_type: t, count: specCount, difficulty: specDifficulty });
     }
+    }
     if (specs.length === 0) {
-      return res.status(400).json({ error: '请至少选择一种支持的题型' });
+      return res.status(400).json({ error: allowAutoDetect ? '请先粘贴题目内容' : '请至少选择一种支持的题型' });
     }
 
     const maxQuestionsPerGen = getSystemSetting('max_questions_per_generation', 20);
@@ -383,7 +390,8 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       const specType = spec.question_type;
       const specCount = spec.count;
       const specDifficulty = spec.difficulty;
-      const specTypeLabel = typeLabels[specType] || specType;
+      // 自动判型模式下没有预设题型，标签只用于日志与标题兜底
+      const specTypeLabel = specType ? (typeLabels[specType] || specType) : '混合题型';
       // 每组变体数：客观题 3 道一组（学生做错时给相似新题），主观题/粘贴整理不做变体
       const specVariantStep = isPasteMode || !isObjectiveType(specType) ? 1 : 3;
       // 目标题量（含变体）。粘贴整理模式由素材决定，传 0 表示不限制。
@@ -400,7 +408,14 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       if (isPasteMode) {
         let formatSample = '';
         let typeRules = '';
-        if (specType === 'choice_single') {
+        if (!specType) {
+          // ===== 自动判型 =====
+          // 老师只是把现成题目粘进来，并不事先归类；这里让 AI 逐题判断题型，
+          // 校验阶段再按每题自带的 type 分派到对应口径（见 specNormalize）。
+          specPasteKey = 'gen_paste_auto';
+          formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"type":"choice_single","content":"题目内容","options":["选项A内容","选项B内容","选项C内容","选项D内容"],"answer":"A","explanation":"详细解析","analysis":"解题步骤/思路","knowledge_point":"细粒度知识点"}]}`;
+          typeRules = '每道题都必须给出 type 字段，且 type 与 answer/options 的格式严格对应';
+        } else if (specType === 'choice_single') {
           formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"题目内容","options":["选项A内容","选项B内容","选项C内容","选项D内容"],"answer":"A","explanation":"详细解析","analysis":"解题步骤/思路","knowledge_point":"细粒度知识点"}]}`;
           typeRules = 'answer为单个正确选项字母（如"A"）；若原题缺少选项，请根据题意补全A/B/C/D四个选项；若选项数量不足四个，保持原有选项数量即可';
         } else if (specType === 'choice_multi') {
@@ -416,9 +431,30 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
           formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"题目要求","answer":"参考答案要点","explanation":"评分标准和解析","analysis":"答题思路指导","knowledge_point":"细粒度知识点"}]}`;
           typeRules = 'answer为参考答案要点，主观题不需要options字段';
         }
-        specPasteVars = { subject, typeLabel: specTypeLabel, question_type: specType, raw_text, formatSample, typeRules };
-        specPasteKey = PASTE_PROMPT_KEYS[specType] || 'gen_paste_essay';
+        specPasteVars = { subject, typeLabel: specTypeLabel, question_type: specType || 'auto', raw_text, formatSample, typeRules };
+        if (!specType) {
+          specPasteKey = 'gen_paste_auto';
+        } else {
+          specPasteKey = PASTE_PROMPT_KEYS[specType] || 'gen_paste_essay';
+        }
       }
+
+      /**
+       * 自动判型模式的逐题校验：模型会给每道题带 type 字段，
+       * 这里按它判定的题型分派到标准校验口径，答案格式不对照样剔除。
+       */
+      const specNormalize = specType
+        ? null
+        : (raw) => {
+            const judged = String(raw?.type || raw?.question_type || '').trim();
+            if (!GEN_PROMPT_KEYS[judged]) {
+              return { ok: false, reason: `AI 未能判断题型（收到：${judged || '空'}）` };
+            }
+            const res = normalizeQuestion(raw, judged);
+            if (!res.ok) return res;
+            // 把判定结果带出去，入库时按真实题型写 question_bank.type
+            return { ok: true, question: { ...res.question, type: judged } };
+          };
 
       /**
        * 按本轮实际要生成的题量拼提示词。
@@ -441,7 +477,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
         return note ? `${base}\n\n${note}` : base;
       };
 
-      console.log(`\n📤 [${specTypeLabel} × ${specCount} 道 · 难度 ${specDifficulty}] 发送请求到 LLM 服务器...`);
+      console.log(`\n📤 [${specTypeLabel}${specType ? ` × ${specCount} 道` : ''} · 难度 ${specDifficulty}] 发送请求到 LLM 服务器...`);
       console.log('🎯 目标地址:', `${config.ai_base_url}/chat/completions`);
       console.log('🤖 使用模型:', config.ai_model);
       console.log('📝 首轮 Prompt 长度:', specBuildPrompt(specTargetCount || 0, '').length, '字符');
@@ -452,6 +488,7 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
         timeoutMs,
         maxTokens: maxTokensPerGen,
         type: specType,
+        normalize: specNormalize,
         target: specTargetCount,
         variants: specVariantStep,
         maxRounds,
@@ -535,12 +572,14 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
         // 题目已在上游完成校验与答案归一化：answer 一定是与题型匹配的字符串
         const q = r.questions[i];
         const answerStr = String(q.answer ?? '');
+        // 自动判型模式下，题型由 AI 逐题判定并带在 q.type 上
+        const rowType = specType || q.type;
 
         processedQuestions.push({
           subject,
           topic: r.effectiveTopic,
           difficulty: r.spec.difficulty,
-          type: specType,
+          type: rowType,
           content: q.content,
           options: q.options ? JSON.stringify(q.options) : null,
           answer: answerStr,
@@ -604,7 +643,8 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
         options: r.questions[idx].options ? (typeof r.questions[idx].options === 'string' ? JSON.parse(r.questions[idx].options) : r.questions[idx].options) : null,
         answer: r.questions[idx].answer !== undefined ? (Array.isArray(r.questions[idx].answer) ? r.questions[idx].answer.join(',') : String(r.questions[idx].answer)) : '',
         explanation: r.questions[idx].explanation || '',
-        type: r.spec.question_type,
+        // 自动判型模式下用 AI 判定的真实题型，否则回落到该规格的题型
+        type: r.spec.question_type || r.questions[idx].type,
         knowledge_point: processedQuestions[r.startIdx + idx]?.knowledge_point || r.effectiveTopic
       });
 
@@ -662,8 +702,14 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       subject,
       // 多题型混合时用 mixed 占位：提交接口会把它当主观题处理，整份走AI 评阅，
       // 避免客观题被按单一题型的口径判分。作业详情里按题型标签展示。
-      question_type: specResults.length === 1 ? primary.spec.question_type : 'mixed',
-      question_types: specResults.map((r) => r.spec.question_type),
+      // 自动判型模式下同样记为 mixed（题目本身已按各自真实题型入库）。
+      question_type: specResults.length === 1 && primary.spec.question_type
+        ? primary.spec.question_type
+        : 'mixed',
+      // 自动判型时把AI 实际判定的题型分布回传，便于前端展示
+      question_types: allowAutoDetect
+        ? [...new Set(specResults.flatMap((r) => r.questions.map((q) => q.type)).filter(Boolean))]
+        : specResults.map((r) => r.spec.question_type),
       spec_summary: specResults.map((r) => ({ question_type: r.spec.question_type, type_label: r.typeLabel, difficulty: r.spec.difficulty, requested: isPasteMode ? r.questions.length : r.spec.count, generated: r.questions.length })),
       question_count: resultCount,
       requested_count: requestedCount,
@@ -990,6 +1036,8 @@ router.get('/', authenticateToken, (req, res) => {
       const headTeacherClassIds = teacherClasses.filter(tc => tc.role === 'head_teacher').map(tc => tc.class_id);
       const allClassIds = teacherClasses.map(tc => tc.class_id);
       if (allClassIds.length === 0) return res.json({ assignments: [] });
+      // 跨教师作业可见性由后台开关控制，默认关闭
+      const crossTeacherVisible = isFeatureEnabled('cross_teacher_homework_visible');
 
       let sql = `
         SELECT a.*, COALESCE(u.real_name, u.username) as teacher_name, c.name as class_name,
@@ -1006,10 +1054,16 @@ router.get('/', authenticateToken, (req, res) => {
       if (class_id) {
         sql += ` AND a.class_id = ?`;
         params.push(class_id);
-        if (!headTeacherClassIds.includes(parseInt(class_id))) {
+        // 非班主任默认只看自己布置的；开启「跨教师作业可见」后同班全部可见。
+        // 班主任无论如何都能看本班全部（教学统筹需要）。
+        if (!headTeacherClassIds.includes(parseInt(class_id)) && !crossTeacherVisible) {
           sql += ` AND a.teacher_id = ?`;
           params.push(req.user.userId);
         }
+      } else if (crossTeacherVisible) {
+        const placeholders = allClassIds.map(() => '?').join(',');
+        sql += ` AND a.class_id IN (${placeholders})`;
+        params.push(...allClassIds);
       } else {
         const headPlaceholders = headTeacherClassIds.map(() => '?').join(',');
         const allPlaceholders = allClassIds.map(() => '?').join(',');
@@ -1089,6 +1143,14 @@ router.get('/:id', authenticateToken, (req, res) => {
       const classIds = teacherClasses.map(tc => tc.class_id);
       if (!classIds.includes(assignment.class_id)) {
         return res.status(403).json({ error: '无法访问此作业' });
+      }
+      // 该作业不是本人布置、且本人也不是该班班主任时，只有开启了
+      // 「跨教师作业可见」才允许查看题目详情（与列表接口口径保持一致，防止用直链绕过）
+      const isHeadTeacher = teacherClasses.some(
+        (tc) => tc.class_id === assignment.class_id && tc.role === 'head_teacher'
+      );
+      if (assignment.teacher_id !== req.user.userId && !isHeadTeacher && !isFeatureEnabled('cross_teacher_homework_visible')) {
+        return res.status(403).json({ error: '该作业由其他老师布置，未开启跨教师作业可见' });
       }
     }
 
@@ -2869,20 +2931,30 @@ router.get('/stats/type-summary', authenticateToken, authorizeRole('teacher', 'a
     let classFilter = '';
     const params = [];
     if (class_id) {
+      // 越权防护：原先直接按class_id 过滤，教师只要手动传任意班 id 就能拿到别班的学情。
+      // 这里先校验该班确实属于当前教师（管理员直通）。
+      const targetClass = parseInt(class_id, 10);
+      if (req.user.role !== 'admin') {
+        const owns = db.prepare(
+          `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
+        ).get(req.user.userId, targetClass);
+        if (!owns) return res.status(403).json({ error: '无权查看该班级的学情统计' });
+      }
       classFilter = ` AND a.class_id = ?`;
-      params.push(class_id);
+      params.push(targetClass);
     } else if (req.user.role === 'teacher') {
       const owned = db.prepare('SELECT class_id FROM class_teachers WHERE teacher_id = ?').all(req.user.userId).map(r => r.class_id);
-      if (owned.length === 0) return res.json({ summary: [] });
+      if (owned.length === 0) return res.json({ summary: [], ranges: [] });
       classFilter = ` AND a.class_id IN (${owned.map(() => '?').join(',')})`;
       params.push(...owned);
     }
     if (subject) { classFilter += ` AND a.subject = ?`; params.push(subject); }
-    if (date_from) { classFilter += ` AND a.created_at >= ?`; params.push(date_from); }
-    if (date_to) { classFilter += ` AND a.created_at <= ?`; params.push(date_to + ' 23:59:59'); }
+    if (date_from) { classFilter += ` AND DATE(a.created_at, '+8 hours') >= ?`; params.push(date_from); }
+    if (date_to) { classFilter += ` AND DATE(a.created_at, '+8 hours') <= ?`; params.push(date_to); }
 
     const rows = db.prepare(`
       SELECT a.id, a.assignment_type, a.subject, a.class_id, a.max_exp,
+        DATE(a.created_at, '+8 hours') AS cn_date,
         (SELECT COUNT(*) FROM users u WHERE u.class_id = a.class_id AND u.role = 'student' AND u.status = 'active') as total_students,
         (SELECT COUNT(DISTINCT user_id) FROM submissions s WHERE s.assignment_id = a.id) as submitted_count,
         (SELECT AVG(total_score) FROM (
@@ -2893,30 +2965,80 @@ router.get('/stats/type-summary', authenticateToken, authorizeRole('teacher', 'a
       WHERE a.status != 'cancelled' ${classFilter}
     `).all(...params);
 
+    const { getChinaDate, getChinaYesterday, getChinaDateDaysAgo } = require('../config/timezone');
+    const today = getChinaDate();
+    const yesterday = getChinaYesterday();
+
     const labelOf = { preview: '预习', homework: '作业', review: '复习' };
-    const acc = {};
-    for (const key of ['preview', 'homework', 'review']) {
-      acc[key] = { assignment_type: key, label: labelOf[key], assignment_count: 0, total_students: 0, submitted_count: 0, score_sum: 0, score_count: 0 };
-    }
-    for (const r of rows) {
-      const key = acc[r.assignment_type] ? r.assignment_type : 'homework';
-      const g = acc[key];
-      g.assignment_count += 1;
-      g.total_students += r.total_students || 0;
-      g.submitted_count += r.submitted_count || 0;
-      if (r.avg_score != null) { g.score_sum += r.avg_score; g.score_count += 1; }
-    }
+    const typeKeys = ['preview', 'homework', 'review'];
 
-    const summary = Object.values(acc).map(g => ({
-      assignment_type: g.assignment_type,
-      label: g.label,
-      assignment_count: g.assignment_count,
-      submitted_count: g.submitted_count,
-      completion_rate: g.total_students > 0 ? Math.round(g.submitted_count / g.total_students * 100) : 0,
-      average_score: g.score_count > 0 ? Math.round(g.score_sum / g.score_count) : 0,
-    }));
+    /** 把一批作业行按「预习/作业/复习」聚合 */
+    const aggregate = (list) => {
+      const acc = {};
+      for (const key of typeKeys) {
+        acc[key] = { assignment_type: key, label: labelOf[key], assignment_count: 0, total_students: 0, submitted_count: 0, score_sum: 0, score_count: 0 };
+      }
+      for (const r of list) {
+        const key = acc[r.assignment_type] ? r.assignment_type : 'homework';
+        const g = acc[key];
+        g.assignment_count += 1;
+        g.total_students += r.total_students || 0;
+        g.submitted_count += r.submitted_count || 0;
+        if (r.avg_score != null) { g.score_sum += r.avg_score; g.score_count += 1; }
+      }
+      const byType = typeKeys.map((k) => {
+        const g = acc[k];
+        return {
+          assignment_type: k,
+          label: g.label,
+          assignment_count: g.assignment_count,
+          submitted_count: g.submitted_count,
+          completion_rate: g.total_students > 0 ? Math.round(g.submitted_count / g.total_students * 100) : 0,
+          average_score: g.score_count > 0 ? Math.round(g.score_sum / g.score_count) : 0,
+        };
+      });
+      const totalCount = byType.reduce((s, t) => s + t.assignment_count, 0);
+      const submittedSum = byType.reduce((s, t) => s + t.submitted_count, 0);
+      // 整体完成率：人次口径（与每份作业的完成率口径一致，不用百分比再求平均）
+      const totalStudentsAll = list.reduce((s, r) => s + (r.total_students || 0), 0);
+      const scored = list.filter((r) => r.avg_score != null);
+      const avgScore = scored.length > 0
+        ? Math.round(scored.reduce((s, r) => s + r.avg_score, 0) / scored.length)
+        : 0;
+      return {
+        total_count: totalCount,
+        submitted_count: submittedSum,
+        completion_rate: totalStudentsAll > 0 ? Math.round(submittedSum / totalStudentsAll * 100) : 0,
+        average_score: avgScore,
+        by_type: byType,
+      };
+    };
 
-    res.json({ summary });
+    // ===== 时间维度卡片 =====
+    // 「近 7 天 / 近 30 天」按北京时间自然日计算（含今天），
+    // 而不是自然周或自然月 —— 教师心智里「最近一周」就是这 7 天，
+    // 用自然周边界反而会让人以为漏掉了上周五布置的作业。
+    const inRange = (list, fromDate, toDate) => list.filter((r) => r.cn_date >= fromDate && r.cn_date <= toDate);
+
+    const todayList = inRange(rows, today, today);
+    const yesterdayList = inRange(rows, yesterday, yesterday);
+    const last7List = inRange(rows, getChinaDateDaysAgo(6), today);
+    const last30List = inRange(rows, getChinaDateDaysAgo(29), today);
+
+    // 今日没布置作业时回退显示昨日，避免卡片空着让人以为系统坏了
+    const todayEffective = todayList.length > 0 ? todayList : yesterdayList;
+    const todayFallback = todayList.length === 0 && yesterdayList.length > 0;
+
+    const ranges = [
+      { key: 'today', label: todayFallback ? '昨日' : '今日', hint: todayFallback ? '今日暂无作业，显示昨日' : '北京时间今日', fallback: todayFallback, ...aggregate(todayEffective) },
+      { key: '7d', label: '近 7 天', hint: '含今天在内的最近 7 个自然日', fallback: false, ...aggregate(last7List) },
+      { key: '30d', label: '近 30 天', hint: '含今天在内的最近 30 个自然日', fallback: false, ...aggregate(last30List) },
+    ];
+
+    // summary 保持原语义（全量按类型），供需要自定义筛选的场景使用
+    const summary = aggregate(rows).by_type;
+
+    res.json({ summary, ranges, today: getChinaDate() });
   } catch (error) {
     console.error('学情分组统计失败:', error);
     res.status(500).json({ error: '获取学情分组统计失败' });
