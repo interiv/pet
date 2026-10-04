@@ -23,8 +23,8 @@
 <div align="center">
 <table>
 <tr>
-<td width="50%"><img src="docs/screenshots/01-login.png" alt="登录页"></td>
-<td width="50%"><img src="docs/screenshots/02-landing.png" alt="落地页"></td>
+<td width="50%"><img src="docs/manual/images/00-login.png" alt="登录页"></td>
+<td width="50%"><img src="docs/manual/images/02-home-guest.png" alt="落地页"></td>
 </tr>
 <tr>
 <td align="center"><sub>登录页</sub></td>
@@ -105,12 +105,12 @@
 ### 游戏化系统
 
 <div align="center">
-<img src="frontend/public/images/pets/火焰狮.png" width="88" alt="火焰狮">
-<img src="frontend/public/images/pets/水灵龟.png" width="88" alt="水灵龟">
-<img src="frontend/public/images/pets/森林鹿.png" width="88" alt="森林鹿">
-<img src="frontend/public/images/pets/光明鸟.png" width="88" alt="光明鸟">
-<img src="frontend/public/images/pets/暗影狼.png" width="88" alt="暗影狼">
-<img src="frontend/public/images/pets/雷霆狐.png" width="88" alt="雷霆狐">
+<img src="frontend/public/images/pets/火焰狮/成年期_thumb.png" width="88" alt="火焰狮">
+<img src="frontend/public/images/pets/水灵龟/成年期_thumb.png" width="88" alt="水灵龟">
+<img src="frontend/public/images/pets/森林鹿/成年期_thumb.png" width="88" alt="森林鹿">
+<img src="frontend/public/images/pets/光明鸟/成年期_thumb.png" width="88" alt="光明鸟">
+<img src="frontend/public/images/pets/暗影狼/成年期_thumb.png" width="88" alt="暗影狼">
+<img src="frontend/public/images/pets/雷霆狐/成年期_thumb.png" width="88" alt="雷霆狐">
 <br>
 <sub>32 种宠物 · 5 属性 · 火→草→水→火 循环克制，光暗互克</sub>
 </div>
@@ -261,7 +261,7 @@ pet/
 │       └── utils/         # 工具（api 封装 / 权限判定 / 试卷生成）
 ├── scripts/e2e/           # 端到端探针脚本
 ├── deploy.sh              # 一键部署
-└── docs/screenshots/      # README 配图
+└── docs/manual/            # 用户手册（教师 / 学生 / 管理员）配图
 ```
 
 ---
@@ -358,6 +358,18 @@ AI 配置均可在**管理后台 → AI 设置**中修改，存于数据库，**
 ---
 
 ## 文档
+
+### 用户手册
+
+面向最终用户，不含任何部署内容，配图取自真实运行环境，可直接发给老师和学生。
+
+| 手册 | 适合谁 | 内容 |
+|---|---|---|
+| [学生手册](./docs/manual/学生手册.md) | 学生 | 做作业、养宠物、PVP / BOSS 对战、卡兑换、成就 |
+| [教师手册](./docs/manual/教师手册.md) | 老师 / 任课教师 | 布置作业、批改与统计、学情报告、课堂做题、BOSS 战管理 |
+| [管理员手册](./docs/manual/管理员手册.md) | 校长 / 信息员 | 开账号与审批、配置 AI、数据导出、软件升级、清理数据 |
+
+### 技术文档
 
 | 文档 | 内容 |
 |---|---|
