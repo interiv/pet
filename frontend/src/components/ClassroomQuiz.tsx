@@ -192,6 +192,9 @@ const ClassroomQuiz: React.FC = () => {
   const [rewardForm] = Form.useForm();
   const rewardType = Form.useWatch('reward_type', rewardForm);
   const aiMode = Form.useWatch('ai_mode', createForm) || 'topic';
+  // AI 出题的「题型 + 题目数量」分组：一行一条，可加号添加
+  const aiBatches: any[] = Form.useWatch('ai_batches', createForm) || [];
+  const aiBatchTotal = aiBatches.reduce((sum, b) => sum + (Math.max(1, parseInt(b?.count) || 0) || 0), 0);
 
   // 创建：班级 / 题目来源
   const [classes, setClasses] = useState<any[]>([]);
@@ -298,6 +301,55 @@ const ClassroomQuiz: React.FC = () => {
     }
   };
 
+  // AI 出题的「题型 + 题目数量」分组编辑器：像填写任教关系那样一行一条，可加号添加
+  // 「按知识点」「按详细要求」两种模式共用；一次生成只计 1 次额度，合计不超过 20 道
+  const renderAiBatchEditor = () => (
+    <div style={{ border: '1px dashed #e0e0e0', borderRadius: 8, padding: 10, marginTop: 4 }}>
+      <div style={{ fontSize: 13, marginBottom: 8 }}>题型与题量（一行一组，AI 会按每组分别出题）</div>
+      <Form.List name="ai_batches" initialValue={[{ type: 'choice_single', count: 5 }]}>
+        {(fields, { add, remove }) => (
+          <>
+            {fields.map((field) => (
+              <Space key={field.key} align="center" wrap style={{ display: 'flex', marginBottom: 8 }}>
+                <span style={{ width: 58, color: '#666' }}>第 {field.name + 1} 组</span>
+                <Form.Item
+                  {...field}
+                  name={[field.name, 'type']}
+                  style={{ marginBottom: 0 }}
+                  rules={[{ required: true, message: '请选择题型' }]}
+                >
+                  <Select style={{ width: 150 }} options={aiTypeOptions} />
+                </Form.Item>
+                <Form.Item
+                  {...field}
+                  name={[field.name, 'count']}
+                  style={{ marginBottom: 0 }}
+                  rules={[{ required: true, message: '请填写数量' }]}
+                >
+                  <InputNumber min={1} max={20} style={{ width: 120 }} suffix="道" />
+                </Form.Item>
+                <Button
+                  type="text"
+                  danger
+                  size="small"
+                  icon={<DeleteOutlined />}
+                  disabled={fields.length === 1}
+                  onClick={() => remove(field.name)}
+                />
+              </Space>
+            ))}
+            <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ type: 'choice_single', count: 3 })}>
+              添加一组题型
+            </Button>
+            <div style={{ color: '#999', fontSize: 12, marginTop: 6 }}>
+              合计 {aiBatchTotal} 道（一次生成只计 1 次额度，最多 5 组、20 道）
+            </div>
+          </>
+        )}
+      </Form.List>
+    </div>
+  );
+
   const loadBank = async (page = 1) => {
     setBankLoading(true);
     try {
@@ -317,7 +369,7 @@ const ClassroomQuiz: React.FC = () => {
     }
   };
 
-  const handleSourceChange = (source: 'manual' | 'bank' | 'ai') => {
+  const handleSourceChange = (source: 'manual' | 'bank' | 'ai' | 'ai_import') => {
     setCreateSource(source);
     if (source === 'bank' && bankQuestions.length === 0) {
       loadBank(1);
@@ -325,9 +377,22 @@ const ClassroomQuiz: React.FC = () => {
   };
 
   const handleGenerateAI = async () => {
-    const values = createForm.getFieldsValue(['subject', 'ai_mode', 'ai_topic', 'ai_requirements', 'ai_raw_text', 'ai_type', 'ai_count', 'ai_difficulty']);
+    const values = createForm.getFieldsValue(['subject', 'ai_mode', 'ai_topic', 'ai_requirements', 'ai_raw_text', 'ai_type', 'ai_count', 'ai_difficulty', 'ai_batches']);
     if (!values.subject) { message.warning('请先选择科目'); return; }
     const mode = values.ai_mode || 'topic';
+
+    // 题型分组：一行一条「题型 + 题目数量」，像填写任教关系那样可加号添加
+    // （粘贴题目模式由素材决定题量，不需要分组）
+    const batches: Array<{ type: string; count: number }> = (values.ai_batches || [])
+      .map((b: any) => ({ type: b?.type || 'choice_single', count: Math.max(1, parseInt(b?.count) || 1) }))
+      .filter((b: any) => b.type);
+    if (mode !== 'paste') {
+      if (batches.length === 0) { message.warning('请至少添加一组「题型 + 题目数量」'); return; }
+      if (batches.length > 5) { message.warning('一次最多出 5 组题型'); return; }
+      const total = batches.reduce((s, b) => s + b.count, 0);
+      if (total > 20) { message.warning(`一次最多生成 20 道题，当前合计 ${total} 道，请减少数量`); return; }
+    }
+
     const payload: any = {
       subject: values.subject,
       question_type: values.ai_type || 'choice_single',
@@ -338,19 +403,30 @@ const ClassroomQuiz: React.FC = () => {
     if (mode === 'topic') {
       if (!values.ai_topic) { message.warning('请输入知识点主题'); return; }
       payload.topic = values.ai_topic;
+      payload.batches = batches;
     } else if (mode === 'requirements') {
       if (!values.ai_requirements || !values.ai_requirements.trim()) { message.warning('请填写详细的出题要求'); return; }
       payload.requirements = values.ai_requirements;
+      payload.batches = batches;
     } else {
       if (!values.ai_raw_text || !values.ai_raw_text.trim()) { message.warning('请粘贴题目内容'); return; }
       payload.raw_text = values.ai_raw_text;
     }
     setAiLoading(true);
     try {
-      const res = await classroomQuizAPI.aiGenerate(payload);
-      setAiQuestions(res.data.questions || []);
-      setAiSelected(new Set((res.data.questions || []).map((_: any, i: number) => i)));
-      message.success(`AI整理出 ${res.data.questions?.length || 0} 道题目，请勾选要使用的题目`);
+      // 多组题型会连续请求 AI，按组数放宽前端等待时间（后端仍只记 1 次额度）
+      const timeout = mode === 'paste' || batches.length <= 1
+        ? 300
+        : Math.min(1200, 300 + 240 * (batches.length - 1));
+      const res = await classroomQuizAPI.aiGenerate(payload, timeout);
+      const list = res.data.questions || [];
+      setAiQuestions(list);
+      setAiSelected(new Set(list.map((_: any, i: number) => i)));
+      if (res.data.notice) {
+        message.warning(`${res.data.notice}，已生成 ${list.length} 道题`);
+      } else {
+        message.success(`AI整理出 ${list.length} 道题目，请勾选要使用的题目`);
+      }
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'AI出题失败');
     } finally {
@@ -411,7 +487,7 @@ const ClassroomQuiz: React.FC = () => {
         }
         questions = aiQuestions
           .filter((_, i) => aiSelected.has(i))
-          .map(q => ({ question_text: q.content }));
+          .map(q => ({ question_text: q.content, answer_text: q.answer || undefined }));
       }
 
       if (questions.length === 0) {
@@ -821,7 +897,28 @@ const ClassroomQuiz: React.FC = () => {
             <>
               <Radio.Group
                 value={manualMode}
-                onChange={(e) => setManualMode(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  // 切换录入方式时把已填内容带过去，避免老师填到一半一切换全丢
+                  if (next === 'text') {
+                    const rows = createForm.getFieldValue('manual_questions') || [];
+                    const text = rows
+                      .map((r: any) => String(r?.question_text || '').trim())
+                      .filter(Boolean)
+                      .join('\n');
+                    if (text) createForm.setFieldValue('question_texts', text);
+                  } else {
+                    const rows = createForm.getFieldValue('manual_questions') || [];
+                    const text = String(createForm.getFieldValue('question_texts') || '').trim();
+                    if (text && rows.length === 0) {
+                      createForm.setFieldValue('manual_questions', text
+                        .split('\n')
+                        .filter((line: string) => line.trim())
+                        .map((line: string) => ({ question_text: line.trim(), answer_text: '', courseware_html: '' })));
+                    }
+                  }
+                  setManualMode(next);
+                }}
                 size="small"
                 style={{ marginBottom: 12 }}
               >
@@ -982,23 +1079,12 @@ const ClassroomQuiz: React.FC = () => {
               </Form.Item>
 
               {aiMode === 'topic' && (
-                <Row gutter={8}>
-                  <Col span={14}>
-                    <Form.Item name="ai_topic" label="知识点主题" rules={[{ required: true, message: '请输入知识点主题' }]} preserve={false}>
-                      <Input placeholder="如：分数加减法、古诗背诵" />
-                    </Form.Item>
-                  </Col>
-                  <Col span={5}>
-                    <Form.Item name="ai_type" label="题型" initialValue="choice_single" preserve={false}>
-                      <Select options={aiTypeOptions} />
-                    </Form.Item>
-                  </Col>
-                  <Col span={5}>
-                    <Form.Item name="ai_count" label="数量" initialValue={5} preserve={false}>
-                      <InputNumber min={1} max={20} style={{ width: '100%' }} suffix="道" />
-                    </Form.Item>
-                  </Col>
-                </Row>
+                <>
+                  <Form.Item name="ai_topic" label="知识点主题" rules={[{ required: true, message: '请输入知识点主题' }]} preserve={false}>
+                    <Input placeholder="如：分数加减法、古诗背诵" />
+                  </Form.Item>
+                  {renderAiBatchEditor()}
+                </>
               )}
 
               {aiMode === 'requirements' && (
@@ -1011,18 +1097,7 @@ const ClassroomQuiz: React.FC = () => {
                   >
                     <Input.TextArea rows={4} maxLength={2000} showCount placeholder={'用一段话描述你想出的课堂题目要求。例如：\n围绕本节课"光的折射"出抢答题，重点考查折射角与入射角的关系，题目要简短适合口头回答。'} />
                   </Form.Item>
-                  <Row gutter={8}>
-                    <Col span={10}>
-                      <Form.Item name="ai_type" label="题型" initialValue="choice_single" preserve={false}>
-                        <Select options={aiTypeOptions} />
-                      </Form.Item>
-                    </Col>
-                    <Col span={7}>
-                      <Form.Item name="ai_count" label="数量" initialValue={5} preserve={false}>
-                        <InputNumber min={1} max={20} style={{ width: '100%' }} suffix="道" />
-                      </Form.Item>
-                    </Col>
-                  </Row>
+                  {renderAiBatchEditor()}
                 </>
               )}
 
@@ -1071,6 +1146,7 @@ const ClassroomQuiz: React.FC = () => {
                         }}
                       />
                       <span style={{ marginLeft: 8 }}>{i + 1}. {q.content}</span>
+                      {q.type_label && <Tag color="blue" style={{ marginLeft: 8 }}>{q.type_label}</Tag>}
                       {q.answer && <Tag color="green" style={{ marginLeft: 8 }}>答案: {q.answer}</Tag>}
                     </div>
                   ))}

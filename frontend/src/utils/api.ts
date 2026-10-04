@@ -699,7 +699,7 @@ export const classroomQuizAPI = {
   }) => api.post(`/cards/classroom-quiz/${quizId}/reward`, data),
   getClassStudents: (classId: number) =>
     api.get(`/cards/classroom-quiz/students/${classId}`),
-  aiGenerate: (data: { subject: string; topic?: string; question_type?: string; count?: number; difficulty?: string; grade_level?: string; mode?: 'topic' | 'requirements' | 'paste'; requirements?: string; raw_text?: string }, timeout?: number) =>
+  aiGenerate: (data: { subject: string; topic?: string; question_type?: string; count?: number; difficulty?: string; grade_level?: string; mode?: 'topic' | 'requirements' | 'paste'; requirements?: string; raw_text?: string; /** 多组出题：一行一条「题型 + 题目数量」，一次请求只计 1 次生成额度 */ batches?: Array<{ type: string; count: number }> }, timeout?: number) =>
     api.post('/cards/classroom-quiz/ai-generate', data, { timeout: (timeout || 300) * 1000 }),
   aiJudge: (data: { subject?: string; question_text: string; reference_answer?: string; student_answer: string }, timeout?: number) =>
     api.post('/cards/classroom-quiz/ai-judge', data, { timeout: (timeout || 300) * 1000 }),

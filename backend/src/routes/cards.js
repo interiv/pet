@@ -428,7 +428,7 @@ router.post('/classroom-quiz/ai-generate', authenticateToken, async (req, res) =
       return res.status(403).json({ error: '无权操作' });
     }
 
-    const { subject, topic, question_type = 'choice_single', count = 5, difficulty = 'medium', grade_level = '', mode = 'topic', requirements = '', raw_text = '' } = req.body;
+    const { subject, topic, question_type = 'choice_single', count = 5, difficulty = 'medium', grade_level = '', mode = 'topic', requirements = '', raw_text = '', batches } = req.body;
 
     // 出题模式：topic=按知识点 | requirements=按详细要求 | paste=粘贴题目整理
     const genMode = ['topic', 'requirements', 'paste'].includes(mode) ? mode : 'topic';
@@ -445,6 +445,29 @@ router.post('/classroom-quiz/ai-generate', authenticateToken, async (req, res) =
       return res.status(400).json({ error: '请粘贴题目内容' });
     }
     const n = Math.min(20, Math.max(1, parseInt(count) || 5));
+
+    // 出题分组：老师可以像填写「任教关系」那样一行一条地写「题型 + 题目数量」，
+    // 例如 单选题 3 道、简答题 2 道。一次请求只记 1 次生成额度，多组题合并返回。
+    let batchList = null;
+    if (genMode !== 'paste' && Array.isArray(batches) && batches.length > 0) {
+      batchList = batches
+        .map((b) => ({
+          type: String((b && (b.type ?? b.question_type)) || question_type),
+          count: Math.min(20, Math.max(0, parseInt(b && b.count) || 0)),
+        }))
+        .filter((b) => b.count > 0);
+    }
+    if (!batchList || batchList.length === 0) {
+      // paste 模式题量由素材决定（count 传 0），其余模式退回单组
+      batchList = [{ type: question_type, count: genMode === 'paste' ? 0 : n }];
+    }
+    if (batchList.length > 5) {
+      return res.status(400).json({ error: '一次最多出 5 组题型，请把相近的题型合并后再试' });
+    }
+    const totalAsk = batchList.reduce((sum, b) => sum + b.count, 0);
+    if (totalAsk > 20) {
+      return res.status(400).json({ error: `一次最多生成 20 道题，当前各组合计 ${totalAsk} 道，请减少数量` });
+    }
 
     // 每日生成次数与全站Token额度校验（与发布作业共用额度）
     const hasUsageTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'`).get();
@@ -474,9 +497,12 @@ router.post('/classroom-quiz/ai-generate', authenticateToken, async (req, res) =
       : 'gen_classroom_paste';
     const effectiveTopic = topic || String(requirements || '').trim().slice(0, 30) || '粘贴题目';
 
-    const buildPrompt = (ask, note) => {
+    const buildPrompt = (ask, note, labelOverride) => {
       const base = fillTemplate(getPrompt(promptKey), {
-        grade_level, topic, subject, typeLabel, difficulty,
+        grade_level, topic, subject,
+        // 多组出题时用当前这组的题型标签，单组时就是 question_type 对应的标签
+        typeLabel: labelOverride || typeLabel,
+        difficulty,
         count: ask || n, requirements, raw_text
       });
       return note ? `${base}\n\n${note}` : base;
@@ -484,53 +510,90 @@ router.post('/classroom-quiz/ai-generate', authenticateToken, async (req, res) =
 
     usageStartedAt = Date.now();
     usageId = beginUsage(req.user.userId, today, {
-      model: config.ai_model, subject, topic: effectiveTopic, question_type, count: n
+      model: config.ai_model,
+      subject,
+      topic: effectiveTopic,
+      // 多组出题时把各组题型记在一起，方便后台统计
+      question_type: batchList.length > 1
+        ? batchList.map((b) => typeLabels[b.type] || b.type).join('+')
+        : question_type,
+      count: totalAsk || n
     });
     const usageTokens = { prompt: 0, completion: 0, total: 0 };
 
     const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
     const maxTokensPerGen = parseInt(db.prepare(`SELECT value FROM settings WHERE key = 'max_tokens_per_generation'`).get()?.value || '18000');
 
-    const genResult = await collectQuestions({
-      config,
-      timeoutMs,
-      maxTokens: maxTokensPerGen,
-      type: question_type,
-      // 课堂做题是学生口头/书面作答、AI 判分，只要题干能用就收，
-      // 答案格式不合规时保留原文而不是直接丢题。
-      normalize: (raw, type) => {
-        const content = String(raw?.content ?? '').trim();
-        if (content.length < 2) return { ok: false, reason: '题干为空' };
-        const strict = normalizeQuestion(raw, type);
-        return {
-          ok: true,
-          question: {
-            content,
-            answer: strict.ok ? strict.question.answer : String(raw?.answer ?? '').trim(),
-            options: strict.ok ? strict.question.options : null,
-            explanation: String(raw?.explanation ?? '').trim(),
-            analysis: String(raw?.analysis ?? '').trim(),
-            knowledge_point: String(raw?.knowledge_point ?? '').trim(),
-          }
-        };
-      },
-      // paste 模式题量由素材决定
-      target: genMode === 'paste' ? 0 : n,
-      variants: 1,
-      maxRounds: 3,
-      buildPrompt,
-      onTokens: (u) => {
-        usageTokens.prompt += u.prompt_tokens || 0;
-        usageTokens.completion += u.completion_tokens || 0;
-        usageTokens.total += u.total_tokens || 0;
-      },
-      logger: (m) => console.log(m)
-    });
+    // 逐组生成：每组按自己的题型出题，最后合并返回（所有组共用同一条额度记录，只计 1 次）
+    const questions = [];
+    const shortfalls = [];
+    const generatedPerBatch = [];
+    let lastError = '';
+    for (let i = 0; i < batchList.length; i += 1) {
+      const batch = batchList[i];
+      const label = typeLabels[batch.type] || '题目';
+      const ask = batch.count;
+      // 多组时把整份计划告诉模型，并限定这一轮只出当前这一组，避免题型串味
+      const batchNote = batchList.length > 1
+        ? `出题计划（共 ${batchList.length} 组）：${batchList
+          .map((b, idx) => `${idx + 1}. ${typeLabels[b.type] || '题目'} ${b.count} 道`)
+          .join('；')}。\n本次只输出第 ${i + 1} 组：【${label}】${ask} 道，不要输出其它题型。`
+        : '';
 
-    const questions = genResult.questions;
+      const genResult = await collectQuestions({
+        config,
+        timeoutMs,
+        maxTokens: maxTokensPerGen,
+        type: batch.type,
+        // 课堂做题是学生口头/书面作答、AI 判分，只要题干能用就收，
+        // 答案格式不合规时保留原文而不是直接丢题。
+        normalize: (raw, type) => {
+          const content = String(raw?.content ?? '').trim();
+          if (content.length < 2) return { ok: false, reason: '题干为空' };
+          const strict = normalizeQuestion(raw, type);
+          return {
+            ok: true,
+            question: {
+              content,
+              answer: strict.ok ? strict.question.answer : String(raw?.answer ?? '').trim(),
+              options: strict.ok ? strict.question.options : null,
+              explanation: String(raw?.explanation ?? '').trim(),
+              analysis: String(raw?.analysis ?? '').trim(),
+              knowledge_point: String(raw?.knowledge_point ?? '').trim(),
+            }
+          };
+        },
+        // paste 模式题量由素材决定（count 为 0）
+        target: ask,
+        variants: 1,
+        maxRounds: 3,
+        buildPrompt: (roundAsk, note) => buildPrompt(
+          roundAsk || ask,
+          [batchNote, note].filter(Boolean).join('\n\n'),
+          label
+        ),
+        onTokens: (u) => {
+          usageTokens.prompt += u.prompt_tokens || 0;
+          usageTokens.completion += u.completion_tokens || 0;
+          usageTokens.total += u.total_tokens || 0;
+        },
+        logger: (m) => console.log(m)
+      });
+
+      for (const q of genResult.questions) {
+        questions.push({ ...q, type: batch.type, type_label: label });
+      }
+      // 按组记录实际出题数：同一种题型出现多组时也不会互相串数
+      generatedPerBatch.push(genResult.questions.length);
+      if (ask > 0 && genResult.questions.length < ask) {
+        shortfalls.push(`${label}只出了 ${genResult.questions.length}/${ask} 道`);
+      }
+      if (genResult.lastError) lastError = genResult.lastError;
+    }
+
     if (questions.length === 0) {
       settleUsage(usageId, 'failed', { ...usageTokens, duration: Date.now() - usageStartedAt });
-      const detail = genResult.lastError ? `：${genResult.lastError}` : '';
+      const detail = lastError ? `：${lastError}` : '';
       return res.status(500).json({
         error: `AI 未能生成有效题目${detail}，本次未消耗生成次数，请稍后重试`,
         quota_refunded: true
@@ -547,8 +610,18 @@ router.post('/classroom-quiz/ai-generate', authenticateToken, async (req, res) =
       questions: questions.map((q) => ({
         content: q.content,
         answer: q.answer,
-        explanation: q.explanation
-      }))
+        explanation: q.explanation,
+        // 多组出题时把题型带回给前端，方便分组展示与勾选
+        type: q.type,
+        type_label: q.type_label,
+      })),
+      batch_summary: batchList.map((b, i) => ({
+        type: b.type,
+        type_label: typeLabels[b.type] || '题目',
+        asked: b.count,
+        generated: generatedPerBatch[i] || 0,
+      })),
+      notice: shortfalls.length > 0 ? `部分题型没出满：${shortfalls.join('；')}` : ''
     });
   } catch (error) {
     console.error('课堂AI出题失败:', error.message);

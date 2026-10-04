@@ -107,6 +107,13 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     setShowAnswer(false);
   }, [index]);
 
+  // 题目数量变化（重新进入课堂等）时把题号收回有效范围，避免大屏空白
+  useEffect(() => {
+    if (questions.length > 0 && index > questions.length - 1) {
+      setIndex(questions.length - 1);
+    }
+  }, [questions.length, index]);
+
   // ===== 语音朗读 =====
   const loadVoices = () => {
     const synth = window.speechSynthesis;
