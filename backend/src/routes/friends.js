@@ -6,6 +6,9 @@ const { checkAndAwardAchievement } = require('./achievements');
 const { grantReward } = require('../services/rewards');
 const { elementMultiplier } = require('../utils/elements');
 const { getChinaDate } = require('../config/timezone');
+const { requireFeature } = require('../middleware/featureFlags');
+// 好友对战也是 PVP 的一种入口，必须跟着「宠物战斗」开关一起关
+const battleOff = requireFeature('battle_enabled', { message: '宠物对战当前已关闭' });
 
 // 好友对战每日上限（不消耗体力，必须限次，否则可无限刷经验与金币）
 const DAILY_FRIEND_BATTLE_LIMIT = 5;
@@ -262,7 +265,7 @@ router.post('/gift', authenticateToken, (req, res) => {
 });
 
 // 好友对战（不消耗体力）
-router.post('/friend-battle', authenticateToken, (req, res) => {
+router.post('/friend-battle', authenticateToken, battleOff, (req, res) => {
   try {
     const { friend_id } = req.body;
 

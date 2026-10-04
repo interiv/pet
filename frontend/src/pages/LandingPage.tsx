@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons';
 import { adminAPI, petAPI, leaderboardAPI, schoolAPI, classAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+import { flagEnabled } from '../utils/featureFlags';
 
 const { Header, Content, Footer } = Layout;
 const { Title, Paragraph, Text } = Typography;
@@ -155,7 +156,9 @@ const LandingPage: React.FC = () => {
           ) : (
             <>
               <Button type="primary" ghost icon={<LoginOutlined />} size={isMobile ? 'small' : 'middle'} onClick={() => navigate('/login')}>登录</Button>
-              <Button icon={<UserAddOutlined />} size={isMobile ? 'small' : 'middle'} style={{ background: '#fff', borderColor: '#fff' }} onClick={() => navigate('/register')}>注册</Button>
+              {flagEnabled(siteSettings, 'registration_enabled') && (
+                <Button icon={<UserAddOutlined />} size={isMobile ? 'small' : 'middle'} style={{ background: '#fff', borderColor: '#fff' }} onClick={() => navigate('/register')}>注册</Button>
+              )}
             </>
           )}
         </Space>
@@ -190,9 +193,11 @@ const LandingPage: React.FC = () => {
                 </>
               ) : (
                 <>
+                  {flagEnabled(siteSettings, 'registration_enabled') && (
                   <Button type="primary" size="large" icon={<RocketOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, boxShadow: '0 4px 15px rgba(0,0,0,0.2)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={() => navigate('/register')}>
                     立即注册
                   </Button>
+                )}
                   <Button size="large" ghost icon={<ArrowDownOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, color: '#fff', borderColor: 'rgba(255,255,255,0.6)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={scrollToStats}>
                     了解更多
                   </Button>
@@ -382,9 +387,11 @@ const LandingPage: React.FC = () => {
               </>
             ) : (
               <>
+                {flagEnabled(siteSettings, 'registration_enabled') && (
                 <Button type="primary" size="large" icon={<RocketOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, background: '#fff', color: '#667eea', borderColor: '#fff', fontWeight: 600, flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={() => navigate('/register')}>
                   立即注册
                 </Button>
+              )}
                 <Button size="large" ghost icon={<LoginOutlined />} style={{ height: isMobile ? 42 : 48, padding: isMobile ? '0 20px' : '0 32px', fontSize: isMobile ? 14 : 16, borderRadius: 8, color: '#fff', borderColor: 'rgba(255,255,255,0.6)', flex: isMobile ? '1 1 40%' : undefined, minWidth: isMobile ? 120 : undefined }} onClick={() => navigate('/login')}>
                   已有账号？登录
                 </Button>

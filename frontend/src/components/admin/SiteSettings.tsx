@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Card, Button, Form, Input, message, Select, InputNumber, Row, Col, Switch, Alert } from 'antd';
 import { GlobalOutlined, SafetyOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { adminAPI } from '../../utils/api';
+import { FEATURE_FLAGS, FLAG_GROUPS } from '../../utils/featureFlags';
 
 const SiteSettings: React.FC = () => {
   const [form] = Form.useForm();
@@ -15,6 +16,8 @@ const SiteSettings: React.FC = () => {
     try {
       const res = await adminAPI.getSiteSettings();
       const data = res.data.settings || {};
+      // 开关后端已保证每个 key 都有值（缺失时补默认），这里再兜一层，避免异常数据导致界面误显示为「关闭」
+      const flagOn = (k: string) => data[k] !== 'false';
       form.setFieldsValue({
         site_name: data.site_name || '班级宠物养成系统',
         site_description: data.site_description || '寓教于乐，让学习更有趣',
@@ -22,11 +25,17 @@ const SiteSettings: React.FC = () => {
         site_footer: data.site_footer || '© 2026 班级宠物养成系统',
         site_announcement: data.site_announcement || '',
         home_notice: data.home_notice || '',
-        registration_enabled: data.registration_enabled === 'true',
-        battle_enabled: data.battle_enabled === 'true',
-        shop_enabled: data.shop_enabled === 'true',
+        registration_enabled: flagOn('registration_enabled'),
+        class_public_enabled: flagOn('class_public_enabled'),
+        ai_enabled: flagOn('ai_enabled'),
+        ai_paper_judge_enabled: flagOn('ai_paper_judge_enabled'),
+        paper_upload_enabled: flagOn('paper_upload_enabled'),
+        battle_enabled: flagOn('battle_enabled'),
+        boss_battle_enabled: flagOn('boss_battle_enabled'),
+        shop_enabled: flagOn('shop_enabled'),
+        equipment_shop_enabled: flagOn('equipment_shop_enabled'),
         max_pets_per_user: parseInt(data.max_pets_per_user) || 1,
-        daily_login_gold: parseInt(data.daily_login_gold) || 10,
+        daily_login_gold: parseInt(data.daily_login_gold) || 5,
         battle_stamina_cost: parseInt(data.battle_stamina_cost) || 20,
         perm_battle_records: data.perm_battle_records || 'head_teacher',
         perm_homework_records: data.perm_homework_records || 'subject_teacher',
@@ -40,12 +49,9 @@ const SiteSettings: React.FC = () => {
   const handleSave = async (values: any) => {
     setLoading(true);
     try {
-      const data = {
-        ...values,
-        registration_enabled: String(values.registration_enabled),
-        battle_enabled: String(values.battle_enabled),
-        shop_enabled: String(values.shop_enabled),
-      };
+      // 开关统一序列化成 'true' / 'false' 字符串，与 settings 表存储格式一致
+      const data: any = { ...values };
+      for (const f of FEATURE_FLAGS) data[f.key] = String(!!values[f.key]);
       await adminAPI.saveSiteSettings(data);
       message.success('网站设置已保存');
       loadSettings();
@@ -57,10 +63,10 @@ const SiteSettings: React.FC = () => {
   };
 
   return (
-    <div style={{ maxWidth: 800 }}>
+    <div style={{ maxWidth: 900 }}>
       <Alert
         message="网站设置"
-        description="修改网站设置后，前端页面将实时生效。请谨慎修改功能开关。"
+        description="功能开关会同时作用于前端界面与后端接口：关闭后，对应的菜单/页签不再显示，直接调用接口也会被拒绝。修改后需要刷新浏览器页面，已登录用户需重新登录以加载新的菜单。"
         type="info"
         showIcon
         style={{ marginBottom: 24 }}
@@ -93,25 +99,31 @@ const SiteSettings: React.FC = () => {
           </Form.Item>
         </Card>
 
-        <Card title={<span><SafetyOutlined /> 功能开关</span>} style={{ marginBottom: 16 }}>
-          <Row gutter={16}>
-            <Col xs={24} md={8}>
-              <Form.Item name="registration_enabled" label="开放注册" valuePropName="checked">
-                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={8}>
-              <Form.Item name="battle_enabled" label="宠物战斗" valuePropName="checked">
-                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={8}>
-              <Form.Item name="shop_enabled" label="道具商店" valuePropName="checked">
-                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-              </Form.Item>
-            </Col>
-          </Row>
-        </Card>
+        {/* 功能开关：按「注册与访问 / AI 能力 / 游戏化玩法」三组展示，每项写明关掉后的实际影响 */}
+        {FLAG_GROUPS.map((group) => (
+          <Card
+            key={group.title}
+            title={<span><SafetyOutlined /> {group.title}</span>}
+            extra={<span style={{ color: '#999', fontSize: 12 }}>{group.tip}</span>}
+            style={{ marginBottom: 16 }}
+          >
+            <Row gutter={16}>
+              {group.flags.map((f) => (
+                <Col xs={24} md={12} key={f.key}>
+                  <Form.Item
+                    name={f.key}
+                    label={f.label}
+                    valuePropName="checked"
+                    extra={f.hint}
+                    tooltip={f.hint}
+                  >
+                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                  </Form.Item>
+                </Col>
+              ))}
+            </Row>
+          </Card>
+        ))}
 
         <Card title={<span><ThunderboltOutlined /> 游戏参数</span>} style={{ marginBottom: 16 }}>
           <Row gutter={16}>

@@ -3,6 +3,10 @@ const router = express.Router();
 const crypto = require('crypto');
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { requireFeature } = require('../middleware/featureFlags');
+
+// AI 总闸：课堂做题的 AI 出题与 AI 判分都直连 LLM
+const aiOff = requireFeature('ai_enabled', { message: 'AI 功能当前已关闭，请联系管理员' });
 const { getChinaDate } = require('../config/timezone');
 const { getAIConfig, isAIConfigured } = require('../config/ai');
 const { getPrompt, fillTemplate } = require('../config/prompts');
@@ -413,7 +417,7 @@ router.get('/redemption-logs', authenticateToken, (req, res) => {
 // ==================== 课堂做题 ====================
 
 // 课堂做题：AI 快速出题（返回题目供教师选择，不入题库、不计入作业）
-router.post('/classroom-quiz/ai-generate', authenticateToken, async (req, res) => {
+router.post('/classroom-quiz/ai-generate', authenticateToken, aiOff, async (req, res) => {
   // 额度记录句柄提升到函数作用域：流程失败时要在 catch 里把它退还
   let usageId = 0;
   let usageStartedAt = 0;
@@ -767,7 +771,7 @@ router.get('/classroom-quiz/:quizId', authenticateToken, (req, res) => {
 });
 
 // 课堂答题：AI 评判（不占每日生成次数，仅记录token用量）
-router.post('/classroom-quiz/ai-judge', authenticateToken, async (req, res) => {
+router.post('/classroom-quiz/ai-judge', authenticateToken, aiOff, async (req, res) => {
   try {
     if (req.user.role === 'student') {
       return res.status(403).json({ error: '无权操作' });

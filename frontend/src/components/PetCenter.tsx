@@ -2,7 +2,8 @@ import React, { useEffect, useCallback } from 'react';
 import { Tabs } from 'antd';
 import { HomeOutlined, ThunderboltOutlined, ShoppingOutlined, GiftOutlined, SkinOutlined, TrophyOutlined, FireOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
-import { usePetStore } from '../store/authStore';
+import { usePetStore, useSiteSettingsStore } from '../store/authStore';
+import { flagEnabled } from '../utils/featureFlags';
 import { petAPI } from '../utils/api';
 import PetDisplay from './PetDisplay';
 import CreatePet from './CreatePet';
@@ -18,6 +19,8 @@ interface PetCenterProps {
 
 const PetCenter: React.FC<PetCenterProps> = ({ onNavigate: _onNavigate }) => {
   const { pet, setPet, hasPet } = usePetStore();
+  const siteSettings = useSiteSettingsStore((s) => s.settings);
+  const loadSiteSettings = useSiteSettingsStore((s) => s.loadSiteSettings);
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') || 'pet';
 
@@ -36,6 +39,11 @@ const PetCenter: React.FC<PetCenterProps> = ({ onNavigate: _onNavigate }) => {
     }
   }, [hasPet, loadPetData]);
 
+  // 功能开关（道具商店/装备商店/PVP/BOSS）需要先拿到才能决定显示哪些页签
+  useEffect(() => {
+    loadSiteSettings();
+  }, [loadSiteSettings]);
+
   const handleTabChange = (key: string) => {
     setSearchParams(prev => {
       prev.set('tab', key);
@@ -44,7 +52,9 @@ const PetCenter: React.FC<PetCenterProps> = ({ onNavigate: _onNavigate }) => {
     }, { replace: true });
   };
 
-  const items = [
+  // 页签按后台「网站设置 → 功能开关」动态隐藏；后端接口同样会被拒绝，
+  // 这里只是避免用户点进一个必然报错的空页面
+  const allItems = [
     {
       key: 'pet',
       label: '我的宠物',
@@ -65,29 +75,42 @@ const PetCenter: React.FC<PetCenterProps> = ({ onNavigate: _onNavigate }) => {
     },
     {
       key: 'shop',
+      flag: 'shop_enabled',
       label: '道具商店',
       icon: <ShoppingOutlined />,
       children: <ShopAndBackpack viewMode="shop" />,
     },
     {
       key: 'equipment',
+      flag: 'equipment_shop_enabled',
       label: '装备商店',
       icon: <SkinOutlined />,
       children: <EquipmentPanel />,
     },
     {
       key: 'pvp',
+      flag: 'battle_enabled',
       label: 'PVP 对战',
       icon: <TrophyOutlined />,
       children: <Battle />,
     },
     {
       key: 'boss',
+      flag: 'boss_battle_enabled',
       label: 'BOSS 战',
       icon: <FireOutlined />,
       children: <BossBattle />,
     },
   ];
+
+  const items = allItems.filter((it: any) => !it.flag || flagEnabled(siteSettings, it.flag));
+
+  // 关掉的页签可能正停留在 URL 上（?tab=shop），回退到第一个可用页签避免白屏
+  useEffect(() => {
+    if (items.length > 0 && !items.some((i: any) => i.key === activeTab)) {
+      handleTabChange(items[0].key);
+    }
+  }, [activeTab, items.map((i: any) => i.key).join(',')]);
 
   return (
     <Tabs

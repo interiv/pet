@@ -7,10 +7,18 @@ const { authenticateToken } = require('../middleware/auth');
 const { checkAndAwardAchievement } = require('./achievements');
 const { notifyClassApplication } = require('../services/joinNotify');
 const { getChinaDate } = require('../config/timezone');
+const { isFeatureEnabled } = require('../middleware/featureFlags');
+
+// 关闭「开放注册」后的统一提示。放在最前面判断，避免任何人
+// （包括校外人员、脚本）继续提交注册申请并触发给班主任的通知。
+const REGISTRATION_CLOSED = { error: '本站当前未开放注册，请联系班主任或管理员开通账号' };
 
 // 用户注册
 router.post('/register', async (req, res) => {
   try {
+    if (!isFeatureEnabled('registration_enabled')) {
+      return res.status(403).json(REGISTRATION_CLOSED);
+    }
     const { username, password, email, real_name, role = 'student', requested_class_id, requested_class_ids, teacher_type, assignments } = req.body;
 
     // 用户名统一去掉首尾空格，避免 " abc" 与 "abc" 被当作两个账号

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Tabs } from 'antd';
 import { BookOutlined, ExclamationCircleOutlined, FireOutlined, BarChartOutlined, EyeOutlined, CrownOutlined, TrophyOutlined, DatabaseOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
@@ -15,7 +15,8 @@ import LearningDashboard from './LearningDashboard';
 import QuestionBank from './QuestionBank';
 import PersonalQuestionBank from './PersonalQuestionBank';
 import LearningReports from './LearningReports';
-import { useAuthStore } from '../store/authStore';
+import { useAuthStore, useSiteSettingsStore } from '../store/authStore';
+import { flagEnabled } from '../utils/featureFlags';
 
 interface StudyCenterProps {
   onNavigate?: (menu: string) => void;
@@ -26,6 +27,14 @@ const StudyCenter: React.FC<StudyCenterProps> = ({ onNavigate }) => {
   const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') || (isTeacher ? 'assignments' : 'assignments');
+
+  const siteSettings = useSiteSettingsStore((s) => s.settings);
+  const loadSiteSettings = useSiteSettingsStore((s) => s.loadSiteSettings);
+  const bossBattleOn = flagEnabled(siteSettings, 'boss_battle_enabled');
+
+  useEffect(() => {
+    loadSiteSettings();
+  }, [loadSiteSettings]);
 
   const handleTabChange = (key: string) => {
     setSearchParams(prev => {
@@ -89,12 +98,12 @@ const StudyCenter: React.FC<StudyCenterProps> = ({ onNavigate }) => {
       icon: <EyeOutlined />,
       children: <ClassTeachingOverview />,
     }] : []),
-    {
+    ...(bossBattleOn ? [{
       key: 'boss',
       label: 'BOSS战管理',
       icon: <CrownOutlined />,
       children: <BossBattleManager />,
-    },
+    }] : []),
     {
       key: 'question-bank',
       label: '题库',

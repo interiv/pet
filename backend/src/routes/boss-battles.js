@@ -2,6 +2,12 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
+const { requireFeature } = require('../middleware/featureFlags');
+
+// BOSS 战开关：教师组织的全班活动，与 PVP 性质不同，故单独控制
+const bossBattleOff = requireFeature('boss_battle_enabled', { message: 'BOSS 战当前已关闭' });
+// AI 总闸：BOSS 战的题目可由 AI 自动生成
+const aiOff = requireFeature('ai_enabled', { message: 'AI 功能当前已关闭，请联系管理员' });
 const { checkAndAwardAchievement } = require('./achievements');
 const { grantReward } = require('../services/rewards');
 const { isAnswerCorrect } = require('../utils/answerCheck');
@@ -476,7 +482,7 @@ router.post('/create', authenticateToken, authorizeRole('teacher', 'admin'), (re
   }
 });
 
-router.post('/auto-generate', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+router.post('/auto-generate', authenticateToken, authorizeRole('teacher', 'admin'), bossBattleOff, aiOff, (req, res) => {
   try {
     const { class_id, duration_hours = 168, max_questions_per_user = 20 } = req.body;
     if (!class_id) {
@@ -854,7 +860,7 @@ router.get('/:bossId/question', authenticateToken, (req, res) => {
   }
 });
 
-router.post('/:bossId/attack', authenticateToken, (req, res) => {
+router.post('/:bossId/attack', authenticateToken, bossBattleOff, (req, res) => {
   try {
     const { question_id, answer } = req.body;
 

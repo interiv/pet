@@ -9,6 +9,11 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { requireFeature } = require('../middleware/featureFlags');
+
+// AI 总闸：关闭后不再发放新的 Agent 令牌。
+// 已发放的令牌不主动吊销，避免教师正在进行的课堂录入流程突然中断。
+const aiOff = requireFeature('ai_enabled', { message: 'AI 功能当前已关闭，请联系管理员' });
 const { generateToken, hashToken, TOKEN_PREFIX } = require('../middleware/agentAuth');
 
 router.use(authenticateToken);
@@ -35,7 +40,7 @@ router.get('/', authenticateToken, requireTeacher, (req, res) => {
   }
 });
 
-router.post('/', authenticateToken, requireTeacher, (req, res) => {
+router.post('/', authenticateToken, requireTeacher, aiOff, (req, res) => {
   try {
     const userId = req.user.userId;
     // 同一老师最多 5 个有效令牌，避免发一堆忘在各处

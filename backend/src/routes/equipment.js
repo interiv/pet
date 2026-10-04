@@ -2,6 +2,11 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
+const { requireFeature } = require('../middleware/featureFlags');
+
+// 装备商店与道具商店是两条独立的消费链路，分开控制。
+// upgrade 归入本开关：无法升级时装备毫无用处，留着入口只会让学生困惑。
+const equipShopOff = requireFeature('equipment_shop_enabled', { message: '装备商店当前已关闭' });
 const { recordItemChange, recordGoldChange } = require('../services/rewards');
 
 // 计算套装效果
@@ -55,7 +60,7 @@ router.get('/all', authenticateToken, authorizeRole('teacher', 'admin'), (req, r
   }
 });
 
-router.get('/shop', authenticateToken, (req, res) => {
+router.get('/shop', authenticateToken, equipShopOff, (req, res) => {
   try {
     const equipments = db.prepare('SELECT * FROM equipment ORDER BY slot, rarity, required_level').all();
     const userEquips = db.prepare('SELECT equipment_id FROM user_equipment WHERE user_id = ?').all(req.user.userId);
@@ -77,7 +82,7 @@ router.get('/shop', authenticateToken, (req, res) => {
   }
 });
 
-router.post('/buy', authenticateToken, (req, res) => {
+router.post('/buy', authenticateToken, equipShopOff, (req, res) => {
   try {
     const { equipment_id } = req.body;
 
@@ -229,7 +234,7 @@ router.post('/equip', authenticateToken, (req, res) => {
 });
 
 // 升级部件
-router.post('/upgrade', authenticateToken, (req, res) => {
+router.post('/upgrade', authenticateToken, equipShopOff, (req, res) => {
   try {
     const { user_equip_id } = req.body;
     

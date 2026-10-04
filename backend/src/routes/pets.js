@@ -189,9 +189,14 @@ router.post('/create', authenticateToken, (req, res) => {
   try {
     const { name, species_id } = req.body;
 
-    const existingPet = db.prepare('SELECT id FROM pets WHERE user_id = ?').get(req.user.userId);
-    if (existingPet) {
-      return res.status(400).json({ error: '已经拥有宠物了' });
+    // 每用户最大宠物数：原先硬编码「一人一只」，管理员改max_pets_per_user 不生效
+    const maxPetsRow = db.prepare(`SELECT value FROM settings WHERE key = 'max_pets_per_user'`).get();
+    const maxPets = Math.max(1, parseInt(maxPetsRow && maxPetsRow.value) || 1);
+    const ownedPets = db.prepare('SELECT COUNT(*) as c FROM pets WHERE user_id = ?').get(req.user.userId)?.c || 0;
+    if (ownedPets >= maxPets) {
+      return res.status(400).json({
+        error: maxPets === 1 ? '已经拥有宠物了' : `最多只能拥有 ${maxPets} 只宠物`
+      });
     }
 
     const species = db.prepare('SELECT * FROM pet_species WHERE id = ?').get(species_id);

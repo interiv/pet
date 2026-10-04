@@ -15,6 +15,11 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateAgent } = require('../middleware/agentAuth');
+const { requireFeature } = require('../middleware/featureFlags');
+
+// AI 总闸：外部 AI 助手直连接口。关掉 AI 后不应再允许外部助手往站内写题目，
+// 否则站内 AI 功能已停、题库却还在被外部数据灌入，状态不一致。
+const aiOff = requireFeature('ai_enabled', { message: 'AI 功能当前已关闭，请联系管理员' });
 const { getChinaDate } = require('../config/timezone');
 const { countBilledUsage } = require('../services/aiUsage');
 const {
@@ -190,7 +195,7 @@ function buildDryRunResult(questions) {
   };
 }
 
-router.post('/classroom-quizzes', (req, res) => {
+router.post('/classroom-quizzes', aiOff, (req, res) => {
   try {
     const user = req.agent.user;
     const { title, description, subject, class_id, questions, dry_run } = req.body || {};
@@ -249,7 +254,7 @@ router.post('/classroom-quizzes', (req, res) => {
   }
 });
 
-router.post('/classroom-quizzes/:id/questions', (req, res) => {
+router.post('/classroom-quizzes/:id/questions', aiOff, (req, res) => {
   try {
     const mine = listTeacherClasses(req.agent.user.id).map((c) => c.id);
     const quiz = getClassroomQuiz(parseInt(req.params.id, 10));

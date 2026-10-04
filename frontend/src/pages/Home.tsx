@@ -20,7 +20,7 @@ import {
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { notificationAPI } from '../utils/api';
 import { visibleNotificationTypes } from '../utils/notificationTypes';
-import { useAuthStore, usePetStore } from '../store/authStore';
+import { useAuthStore, usePetStore, useSiteSettingsStore } from '../store/authStore';
 import CreatePet from '../components/CreatePet';
 import Achievements from '../components/Achievements';
 import { getPetThumbUrl } from '../utils/petImage';
@@ -58,7 +58,9 @@ const Home: React.FC = () => {
   const { pet, setPet } = usePetStore();
   const isMobile = useMobile();
 
-  const [siteSettings, setSiteSettings] = useState<any>({});
+  // 站点设置与功能开关改为全局 store，子组件（宠物中心等）也要读同一份
+  const siteSettings = useSiteSettingsStore((s) => s.settings);
+  const loadSiteSettingsFromStore = useSiteSettingsStore((s) => s.loadSiteSettings);
   const [activeMenu, setActiveMenu] = useState(searchParams.get('menu') || 'home');
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -92,17 +94,8 @@ const Home: React.FC = () => {
   const isStudent = user?.role === 'student';
 
   useEffect(() => {
-    loadSiteSettings();
-  }, []);
-
-  const loadSiteSettings = async () => {
-    try {
-      const res = await adminAPI.getPublicSettings();
-      setSiteSettings(res.data.settings || {});
-    } catch (e) {
-      console.log('加载站点设置失败');
-    }
-  };
+    loadSiteSettingsFromStore();
+  }, [loadSiteSettingsFromStore]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

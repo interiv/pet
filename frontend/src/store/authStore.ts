@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { authAPI } from '../utils/api';
+import { authAPI, adminAPI } from '../utils/api';
 
 interface User {
   id: number;
@@ -124,5 +124,49 @@ export const usePetStore = create<PetState>((set) => ({
   clearPet: () => {
     localStorage.removeItem('pet');
     set({ pet: null, hasPet: false });
+  },
+}));
+
+// =====站点设置 / 功能开关 =====
+
+interface SiteSettingsState {
+  settings: Record<string, string>;
+  loaded: boolean;
+  loadSiteSettings: () => Promise<void>;
+}
+
+const SITE_SETTINGS_CACHE = 'site_settings';
+
+function readSiteSettingsCache(): Record<string, string> {
+  try {
+    return JSON.parse(sessionStorage.getItem(SITE_SETTINGS_CACHE) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * 站点设置（含全部功能开关）的全局状态。
+ *
+ * 原先只有 Home.tsx 用 useState 单独拉一次，PetCenter 这类子组件拿不到开关值，
+ * 菜单就没法按开关隐藏。统一放到 store 后按需订阅，并用 sessionStorage 缓存，
+ * 避免每次切页重复请求。拉取失败时不做任何隐藏，避免误伤功能。
+ */
+export const useSiteSettingsStore = create<SiteSettingsState>((set, get) => ({
+  settings: readSiteSettingsCache(),
+  loaded: Object.keys(readSiteSettingsCache()).length > 0,
+
+  loadSiteSettings: async () => {
+    if (get().loaded) return;
+    try {
+      const res = await adminAPI.getPublicSettings();
+      const data = res.data.settings || {};
+      try {
+        sessionStorage.setItem(SITE_SETTINGS_CACHE, JSON.stringify(data));
+      } catch (e) { /* 隐私模式写入失败可忽略 */ }
+      set({ settings: data, loaded: true });
+    } catch (e) {
+      set({ loaded: true });
+    }
   },
 }));

@@ -3,7 +3,8 @@ import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Form, Input, Button, Card, message, Typography, Select, Alert, AutoComplete, Divider, Space } from 'antd';
 import { UserOutlined, LockOutlined, MailOutlined, LinkOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { authAPI, classAPI, schoolAPI } from '../utils/api';
-import { useAuthStore } from '../store/authStore';
+import { useAuthStore, useSiteSettingsStore } from '../store/authStore';
+import { flagEnabled } from '../utils/featureFlags';
 import { SUBJECT_OPTIONS } from '../utils/subjects';
 
 const useMobile = () => {
@@ -32,6 +33,14 @@ const Register: React.FC = () => {
   const [inviteInfo, setInviteInfo] = useState<any>(null);
   const isMobile = useMobile();
   const [form] = Form.useForm();
+  // 「开放注册」开关：后端已拦，这里再挡一层，避免用户填完一整页表单才被告知不能注册
+  const siteSettings = useSiteSettingsStore((s) => s.settings);
+  const loadSiteSettings = useSiteSettingsStore((s) => s.loadSiteSettings);
+  const registrationOn = flagEnabled(siteSettings, 'registration_enabled');
+
+  useEffect(() => {
+    loadSiteSettings();
+  }, [loadSiteSettings]);
   // 教师注册：一行一条任教关系（班级 + 身份 + 科目）
   const teacherRows: any[] = Form.useWatch('assignments', form) || [];
 
@@ -158,12 +167,24 @@ const Register: React.FC = () => {
           <p style={{ color: '#999' }}>加入班级宠物养成系统</p>
         </div>
 
+        {/* 未开放注册时直接给出说明，不渲染表单 */}
+        {!registrationOn && (
+          <Alert
+            type="warning"
+            showIcon
+            message="本站当前未开放注册"
+            description="账号需由班主任或管理员开通。如果你是在校学生，请联系班主任；教师请联系管理员。"
+            style={{ marginBottom: 16 }}
+          />
+        )}
+
         <Form
           form={form}
           name="register"
           onFinish={onFinish}
           autoComplete="off"
           size="large"
+          hidden={!registrationOn}
         >
           <Form.Item
             name="real_name"

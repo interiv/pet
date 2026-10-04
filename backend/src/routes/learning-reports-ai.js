@@ -16,6 +16,11 @@ const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { getPrompt, fillTemplate } = require('../config/prompts');
 const { getChinaDate, getChinaDateDaysAgo, resolveDateRange } = require('../config/timezone');
 const { accuracyPct, WEAK_ACCURACY, MASTERED_ACCURACY } = require('../utils/analytics');
+const { requireFeature } = require('../middleware/featureFlags');
+
+// AI 总闸：学情报告是最耗 token 的功能之一，必须能被一键停掉。
+// 只拦「生成」两个入口，历史报告的读取不受影响。
+const aiOff = requireFeature('ai_enabled', { message: 'AI 功能当前已关闭，请联系管理员' });
 
 const ANSWER_JOIN = `
   FROM question_answers qa
@@ -107,7 +112,7 @@ const line = (s) => `- ${s}`;
  * 生成班级学情分析报告
  * POST /api/learning-reports/ai-report  { class_id, subject?, date_from?, date_to? }
  */
-router.post('/ai-report', authenticateToken, authorizeRole('teacher', 'admin'), async (req, res) => {
+router.post('/ai-report', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, async (req, res) => {
   const startedAt = Date.now();
   try {
     const access = resolveClassAccess(req, res);
@@ -297,7 +302,7 @@ router.post('/ai-report', authenticateToken, authorizeRole('teacher', 'admin'), 
  * 生成单个学生的教师视角报告
  * POST /api/learning-reports/ai-report/student  { class_id, student_id, subject?, date_from?, date_to? }
  */
-router.post('/ai-report/student', authenticateToken, authorizeRole('teacher', 'admin'), async (req, res) => {
+router.post('/ai-report/student', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, async (req, res) => {
   try {
     const access = resolveClassAccess(req, res);
     if (!access) return;

@@ -2,9 +2,20 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { requireFeature, isFeatureEnabled } = require('../middleware/featureFlags');
 const { checkLevelUp } = require('./pets');
 const { checkAndAwardAchievement } = require('./achievements');
 const { elementMultiplier } = require('../utils/elements');
+
+// 关闭「宠物战斗」时，入口和接口都要挡住
+const battleOff = requireFeature('battle_enabled', { message: '宠物对战当前已关闭' });
+
+/** 战斗体力消耗：原先硬编码 20，管理员在「网站设置 → 游戏参数」改了不生效。 */
+function battleStaminaCost() {
+  const row = db.prepare(`SELECT value FROM settings WHERE key = 'battle_stamina_cost'`).get();
+  const n = parseInt(row && row.value);
+  return Number.isFinite(n) && n >= 0 ? n : 20;
+}
 
 // 取宠物的属性（element_type 存在 pet_species 上，pets 表里没有）
 function getPetElement(petId) {
@@ -96,7 +107,7 @@ function generateBattleLog(myPet, opponentPet, myWinChance, moodCriticalBonus = 
 }
 
 // 发起战斗
-router.post('/start', authenticateToken, (req, res) => {
+router.post('/start', authenticateToken, battleOff, (req, res) => {
   try {
     const { opponent_pet_id } = req.body;
 
@@ -105,8 +116,10 @@ router.post('/start', authenticateToken, (req, res) => {
       return res.status(404).json({ error: '还没有宠物' });
     }
 
-    if (myPet.stamina < 20) {
-      return res.status(400).json({ error: '宠物体力不足，需要休息后才能战斗！' });
+    const staminaCost = battleStaminaCost();
+
+    if (myPet.stamina < staminaCost) {
+      return res.status(400).json({ error: staminaCost > 0 ? `宠物体力不足（需要 ${staminaCost} 点），请休息后再来战斗！` : '宠物体力不足，无法战斗！' });
     }
 
     if (myPet.mood < 10) {
@@ -180,11 +193,11 @@ router.post('/start', authenticateToken, (req, res) => {
 
     db.prepare(`
       UPDATE pets SET
-        stamina = stamina - 20,
+        stamina = stamina - ?,
         mood = ?,
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(newMood, myPet.id);
+    `).run(staminaCost, newMood, myPet.id);
 
     if (winner === myPet.id) {
       db.prepare(`
@@ -260,7 +273,7 @@ router.post('/start', authenticateToken, (req, res) => {
 });
 
 // 获取战斗记录
-router.get('/history', authenticateToken, (req, res) => {
+router.get('/history', authenticateToken, battleOff, (req, res) => {
   try {
     const myPet = db.prepare('SELECT id FROM pets WHERE user_id = ?').get(req.user.userId);
     if (!myPet) {

@@ -26,6 +26,7 @@ const {
   generateUsernamesByAI,
   ensureSettingsTable,
 } = require('./_shared');
+const { FLAG_KEYS, getPublicFlags, ensureFlags } = require('../../middleware/featureFlags');
 
 router.get('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
   try {
@@ -229,9 +230,12 @@ router.post('/settings/ai/test', authenticateToken, requireAdmin, async (req, re
 router.get('/settings/site', authenticateToken, requireAdmin, (req, res) => {
   try {
     ensureSettingsTable();
+    ensureFlags();
     const settings = db.prepare(`SELECT key, value FROM settings`).all();
     const result = {};
     settings.forEach(s => result[s.key] = s.value);
+    // 开关补齐默认值，避免前端把「没有这个 key」误判成关闭
+    Object.assign(result, getPublicFlags());
     // 只写不读：不暴露 API Key 到前端
     if (result.ai_api_key && result.ai_api_key.length > 0) {
       result.ai_api_key = '***';
@@ -246,11 +250,12 @@ router.get('/settings/site', authenticateToken, requireAdmin, (req, res) => {
 router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
   try {
     ensureSettingsTable();
+    ensureFlags();
     const allowedKeys = [
       'site_name', 'site_description', 'site_logo', 'site_footer',
-      'site_announcement', 'home_notice', 'registration_enabled', 'battle_enabled',
-      'shop_enabled', 'max_pets_per_user', 'daily_login_gold',
-      'battle_stamina_cost', 'ai_model', 'ai_api_key', 'ai_base_url',
+      'site_announcement', 'home_notice',
+      'max_pets_per_user', 'daily_login_gold', 'battle_stamina_cost',
+      'ai_model', 'ai_api_key', 'ai_base_url',
       'ai_report_interval_days', 'ai_timeout',
       // 视觉模型：原先不在白名单里，导致「AI设置」页填写的视觉模型被静默丢弃
       'ai_vision_model',
@@ -259,7 +264,11 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
       'daily_global_token_limit', 'max_questions_per_generation',
       // AI 出题的最大轮次：题量偏多时会自动分多轮续写补齐
       'ai_gen_max_rounds',
+      // 功能开关统一由 featureFlags 提供清单，避免两处各维护一份而漏项
+      ...FLAG_KEYS,
     ];
+    // 开关只接受 true / false，其它值一律忽略，防止手改请求体写入脏值
+    const flagSet = new Set(FLAG_KEYS);
     const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {
       Object.entries(req.body).forEach(([key, value]) => {
@@ -269,6 +278,11 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
             if (value !== undefined && value !== '' && value !== '***') {
               stmt.run(key, String(value));
             }
+            return;
+          }
+          if (flagSet.has(key)) {
+            const v = String(value);
+            if (v === 'true' || v === 'false') stmt.run(key, v);
             return;
           }
           stmt.run(key, String(value));
@@ -285,10 +299,13 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
 router.get('/settings/public', (req, res) => {
   try {
     ensureSettingsTable();
-    const publicKeys = ['site_name', 'site_description', 'site_logo', 'site_footer', 'site_announcement', 'registration_enabled', 'home_notice'];
+    const publicKeys = ['site_name', 'site_description', 'site_logo', 'site_footer', 'site_announcement', 'home_notice'];
     const settings = db.prepare(`SELECT key, value FROM settings WHERE key IN (${publicKeys.map(() => '?').join(',')})`).all(...publicKeys);
     const result = {};
     settings.forEach(s => result[s.key] = s.value);
+    // 下发全部功能开关（已按默认值补齐）：前端据此隐藏菜单/页签/注册入口。
+    // 这些都是布尔运营配置，不涉及敏感信息；真正的前后端拦截仍在后端做。
+    Object.assign(result, getPublicFlags());
     res.json({ settings: result });
   } catch (error) {
     console.error('获取公开设置失败:', error);

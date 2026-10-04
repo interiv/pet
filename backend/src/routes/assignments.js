@@ -11,6 +11,19 @@ const { getPrompt, fillTemplate } = require('../config/prompts');
 const { isAnswerCorrect } = require('../utils/answerCheck');
 const { collectQuestions } = require('../services/aiQuestion');
 const { beginUsage, settleUsage, countBilledUsage, markFailed, countReferencedQuestions, deleteUnusedQuestions } = require('../services/aiUsage');
+const { requireFeature } = require('../middleware/featureFlags');
+
+/**
+ * 功能开关守卫：
+ *   aiOff      —— AI 总闸。LLM 出故障、被滥用，或只想省 token 时，一键停掉全部 AI 能力。
+ *   aiJudgeOff —— AI 批改纸质作业（含批量扫描）。单独拆出来是因为它会把学生作业照片
+ *                 发给外部模型，属隐私敏感项，需要能独立关闭。
+ *   paperUpOff —— 纸质作业拍照上传。与 AI 判分解耦，便于关掉上传但保留手动登记。
+ */
+const aiOff = requireFeature('ai_enabled', { message: 'AI 功能当前已关闭，请联系管理员' });
+const aiJudgeOff = requireFeature('ai_paper_judge_enabled', { message: 'AI 批改当前已关闭，可改用手动登记' });
+const paperUpOff = requireFeature('paper_upload_enabled', { message: '拍照上传当前已关闭，可改用手动登记' });
+
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
@@ -248,7 +261,7 @@ function calcGoldReward(totalScore, questionCount, results, maxExp) {
   return { gold: base + combo + perfect, base, combo, perfect, bestStreak, correctCount };
 }
 
-router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), async (req, res) => {
+router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, async (req, res) => {
   // 额度记录句柄提升到函数作用域：流程失败时要在 catch 里把它退还
   let usageId = 0;
   let usageStartedAt = 0;
@@ -2225,7 +2238,7 @@ router.post('/:id/paper-submit-batch', authenticateToken, authorizeRole('teacher
 });
 
 // 纸质作业照片 AI 识别判分（视觉模型，结果供教师确认后通过 paper-submit 入库）
-router.post('/:id/ai-paper-judge', authenticateToken, authorizeRole('teacher', 'admin'), async (req, res) => {
+router.post('/:id/ai-paper-judge', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, aiJudgeOff, async (req, res) => {
   try {
     const { images } = req.body;
     if (!Array.isArray(images) || images.length === 0) {
@@ -2363,7 +2376,7 @@ function matchStudentByName(rawName, students) {
 }
 
 // 批量纸质作业识别：一次上传多张照片，AI 识别每份卷面姓名并逐题判分，返回按学生分组的结果
-router.post('/:id/ai-paper-judge-batch', authenticateToken, authorizeRole('teacher', 'admin'), async (req, res) => {
+router.post('/:id/ai-paper-judge-batch', authenticateToken, authorizeRole('teacher', 'admin'), aiOff, aiJudgeOff, async (req, res) => {
   try {
     const { images } = req.body;
     if (!Array.isArray(images) || images.length === 0) {
@@ -2910,7 +2923,7 @@ router.get('/stats/type-summary', authenticateToken, authorizeRole('teacher', 'a
   }
 });
 
-router.post('/upload/image', authenticateToken, upload.single('file'), (req, res) => {
+router.post('/upload/image', authenticateToken, paperUpOff, upload.single('file'), (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: '请选择要上传的图片' });

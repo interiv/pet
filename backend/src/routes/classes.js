@@ -7,6 +7,7 @@ const { authenticateToken } = require('../middleware/auth');
 const crypto = require('crypto');
 const { isValidSlug, generateClassSlug } = require('../utils/slug');
 const { notifyClassMemberJoined } = require('../services/joinNotify');
+const { isFeatureEnabled, requireFeature } = require('../middleware/featureFlags');
 
 // 生成推荐码
 function generateInviteCode() {
@@ -15,6 +16,8 @@ function generateInviteCode() {
 
 router.get('/public-list', (req, res) => {
   try {
+    // 关闭站点级「班级公开」后，未登录访客不应再看到任何班级名单
+    if (!isFeatureEnabled('class_public_enabled')) return res.json({ classes: [] });
     const classes = db.prepare(`
       SELECT c.id, c.name, c.grade, c.slug, c.school_id,
         s.name AS school_name,
@@ -37,6 +40,10 @@ router.get('/public-list', (req, res) => {
 // 通过 slug 获取班级公开主页信息（未登录也可访问，若 is_public=0 则 404）
 router.get('/by-slug/:slug', (req, res) => {
   try {
+    // 站点级开关关闭时，统一按「不存在」处理，不暴露班级是否真实存在
+    if (!isFeatureEnabled('class_public_enabled')) {
+      return res.status(404).json({ error: '班级不存在' });
+    }
     const { slug } = req.params;
     const cls = db.prepare(`
       SELECT c.id, c.name, c.grade, c.slug, c.description, c.cover_image,
@@ -473,6 +480,11 @@ router.post('/invitations/validate', (req, res) => {
 // 通过邀请码注册（新用户）
 router.post('/register-with-invite', async (req, res) => {
   try {
+    // 邀请码注册同样是「自助注册」，必须跟着「开放注册」开关走，
+    // 否则关掉注册后仍可凭邀请码建号
+    if (!isFeatureEnabled('registration_enabled')) {
+      return res.status(403).json({ error: '本站当前未开放注册，请联系班主任或管理员开通账号' });
+    }
     const { username, password, email, real_name, role, invitation_code } = req.body;
 
     // 用户名统一去掉首尾空格
@@ -593,6 +605,11 @@ router.post('/register-with-invite', async (req, res) => {
 // 已注册用户通过邀请码加入班级
 router.post('/join-with-invite', authenticateToken, (req, res) => {
   try {
+    // 已有账号凭邀请码入班同样受「开放注册」约束：
+    // 公开演示期间应禁止校外人员凭邀请码蹭进班级
+    if (!isFeatureEnabled('registration_enabled')) {
+      return res.status(403).json({ error: '本站当前未开放注册入班，请联系班主任或管理员' });
+    }
     const { invitation_code } = req.body;
     const userId = req.user.userId;
     const userRole = req.user.role;

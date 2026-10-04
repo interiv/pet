@@ -231,9 +231,14 @@ router.post('/claim', authenticateToken, (req, res) => {
 
     switch (task_type) {
       case 'login':
-        rewardGold = 5;
-        rewardMessage = '登录奖励';
-        break;
+            // 原先硬编码 5，管理员在「网站设置 → 游戏参数」改 daily_login_gold 不生效
+            rewardGold = (() => {
+              const row = db.prepare(`SELECT value FROM settings WHERE key = 'daily_login_gold'`).get();
+              const n = parseInt(row && row.value);
+              return Number.isFinite(n) && n >= 0 ? n : 5;
+            })();
+            rewardMessage = '登录奖励';
+            break;
       case 'complete_assignment':
         rewardGold = 10;
         rewardExp = 100;

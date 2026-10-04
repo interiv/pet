@@ -2,7 +2,12 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
+const { requireFeature } = require('../middleware/featureFlags');
 const { recordItemChange, recordGoldChange } = require('../services/rewards');
+
+// 关闭「道具商店」时，货架与购买都要挡住；否则只是前端看不到入口，
+// 直接POST /api/items/buy 依然能买。
+const shopOff = requireFeature('shop_enabled', { message: '道具商店当前已关闭' });
 
 /**
  * 有实际消费入口的道具类型。
@@ -16,7 +21,7 @@ const SELLABLE_EFFECT_TYPES = [
 ];
 
 // 获取物品列表（商店货架）
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', authenticateToken, shopOff, (req, res) => {
   try {
     const placeholders = SELLABLE_EFFECT_TYPES.map(() => '?').join(',');
     const items = db
@@ -30,7 +35,7 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 // 购买物品
-router.post('/buy', authenticateToken, (req, res) => {
+router.post('/buy', authenticateToken, shopOff, (req, res) => {
   try {
     const { item_id, quantity = 1 } = req.body;
 

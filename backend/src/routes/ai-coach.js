@@ -4,6 +4,10 @@ const axios = require('axios');
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { getPrompt, fillTemplate } = require('../config/prompts');
+const { requireFeature } = require('../middleware/featureFlags');
+
+// AI 总闸：学习规划与诊断都是 LLM 调用，纳入统一停用范围
+const aiOff = requireFeature('ai_enabled', { message: 'AI 功能当前已关闭，请联系管理员' });
 
 function getAIConfig() {
   const settings = db.prepare(`SELECT key, value FROM settings WHERE key LIKE 'ai_%'`).all();
@@ -144,7 +148,7 @@ function parseJSON(text) {
  * GET /api/ai-coach/learning-plan
  * 基于学情生成个性化学习规划
  */
-router.get('/learning-plan', authenticateToken, async (req, res) => {
+router.get('/learning-plan', authenticateToken, aiOff, async (req, res) => {
   try {
     const userId = req.user.userId;
     const days = parseInt(req.query.days) || 14;
@@ -236,7 +240,7 @@ router.get('/learning-plan', authenticateToken, async (req, res) => {
  * GET /api/ai-coach/diagnosis
  * AI诊断报告：综合学情分析 + 个性化建议
  */
-router.get('/diagnosis', authenticateToken, async (req, res) => {
+router.get('/diagnosis', authenticateToken, aiOff, async (req, res) => {
   try {
     const userId = req.user.userId;
     const days = parseInt(req.query.days) || 30;
