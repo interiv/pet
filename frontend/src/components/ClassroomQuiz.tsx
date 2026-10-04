@@ -8,9 +8,10 @@ import {
   PlusOutlined, GiftOutlined, CheckCircleOutlined,
   UserOutlined, EyeOutlined, PlayCircleOutlined, RobotOutlined,
   UserSwitchOutlined, SearchOutlined, DeleteOutlined, CodeOutlined,
-  CopyOutlined, DownloadOutlined, UploadOutlined, FileTextOutlined
+  CopyOutlined, DownloadOutlined, UploadOutlined, FileTextOutlined,
+  KeyOutlined, ApiOutlined
 } from '@ant-design/icons';
-import { classroomQuizAPI, questionBankAPI, itemAPI, equipmentAPI, adminAPI } from '../utils/api';
+import { classroomQuizAPI, questionBankAPI, itemAPI, equipmentAPI, adminAPI, agentTokenAPI, agentAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import { getPetThumbUrl } from '../utils/petImage';
 import { getMySubject } from '../utils/subjects';
@@ -92,6 +93,90 @@ const AI_IMPORT_SKILL_MD = `# 课堂做题题目生成（课堂宠物养成系�
 ## 产出后
 把 JSON 粘贴回系统「课堂做题 → 创建 → AI 工具录入」文本框，点「解析预览」即可导入。
 `;
+
+/** AI 直连接入文档：把接口地址与令牌写进 skill，AI 拿到就能直接调后端 */
+function buildAgentSkillDoc(baseUrl: string, token: string) {
+  return `# 课堂做题题目 · AI 直连接入（课堂宠物养成系统）
+
+> 你可以**直接调用后端接口提交题目**，不需要把题目以文本形式交回给用户。
+
+## 接入信息（已配好）
+- 接口根地址：\`${baseUrl}\`
+- 令牌：\`${token}\`
+- 鉴权：所有请求都要带头 \`X-Agent-Token: ${token}\`
+  （也兼容 \`Authorization: Bearer ${token}\`）
+- 请求/响应均为 \`application/json\`，UTF-8
+
+## 第一步：确认身份
+\`GET ${baseUrl}/whoami\` →
+- \`teacher\`：你当前代表的老师
+- \`classes\`：可写入的班级（\`role\`=head_teacher/teacher，\`subject\`=该班任教科目）
+- \`default_subject\`：**提交题目时 subject 默认用这个值**，除非老师明确要求换科目
+- \`default_class_id\`：老师只带一个班时直接用；带多个班必须先问老师用哪个班
+
+## 能做什么
+| 需求 | 请求 |
+| --- | --- |
+| 出题并直接创建课堂做题 | \`POST ${baseUrl}/classroom-quizzes\` |
+| 给已有课堂做题补题 | \`POST ${baseUrl}/classroom-quizzes/{quiz_id}/questions\` |
+| 只预检不落库（dry_run） | 上面两个接口体里加 \`"dry_run": true\` |
+| 查已有课堂做题 | \`GET ${baseUrl}/classroom-quizzes\` |
+| 看某场做题详情 | \`GET ${baseUrl}/classroom-quizzes/{quiz_id}\` |
+| 复用题库现成题 | \`GET ${baseUrl}/question-bank?subject=数学&keyword=分数\` |
+| 读接口自述 | \`GET ${baseUrl}/\` |
+
+## 提交格式
+\`\`\`json
+{
+  "title": "分数加减法随堂练习",
+  "subject": "数学",
+  "class_id": 7,
+  "description": "课堂抢答，答对发宠物道具",
+  "questions": [
+    { "question_text": "一个三角形有几个角？", "answer_text": "3 个" },
+    { "question_text": "计算 1/2 + 1/3 = ?", "answer_text": "5/6", "courseware_html": "<!DOCTYPE html>...</html>" }
+  ]
+}
+\`\`\`
+
+- \`question_text\` 必填，最长 2000 字
+- \`answer_text\` 可选，参考答案，只给老师看
+- \`courseware_html\` **可选**：完整独立的 HTML 文档（以 \`<!DOCTYPE html>\` 开头），上限 200KB
+  - 必须离线可用：样式与脚本写在同一个 HTML 里，不要引用外部网络资源
+  - 可以放图示、动画、可点/可拖的小实验：学生先操作课件、思考，再回到题目作答
+  - **课件不是必须的**，没有也能正常提交
+
+## 推荐工作流程
+1. \`GET /whoami\` 拿到身份、班级、任教科目
+2. 老师想先看 → 用 \`"dry_run": true\` 预检，把要提交的内容复述给老师确认
+3. 确认后正式 \`POST /classroom-quizzes\`，返回 \`quiz_id\`
+4. 继续补题 → \`POST /classroom-quizzes/{quiz_id}/questions\`
+5. 提交成功后告诉老师「已创建第 N 场课堂做题，共 X 道题，其中 Y 道带课件」
+
+## 示例（curl）
+\`\`\`bash
+curl -X POST ${baseUrl}/classroom-quizzes \\
+  -H "Content-Type: application/json" \\
+  -H "X-Agent-Token: ${token}" \\
+  -d '{
+    "title": "分数加减法随堂练习",
+    "subject": "数学",
+    "questions": [
+      { "question_text": "1/2 + 1/3 = ?", "answer_text": "5/6",
+        "courseware_html": "<!DOCTYPE html><html><body><h1>课件</h1></body></html>" }
+    ]
+  }'
+\`\`\`
+
+## 约束与注意
+- 一次最多 50 道题；建议单次不超过 20 道，超了就分批追加
+- 只能写入令牌所属老师任教的班级，写到别的班会返回 403
+- 令牌等同老师身份：**不要外传、不要提交到公开仓库**；老师吊销后立即失效
+- 令牌失效返回 401（提示 \`令牌无效或已被吊销\`），此时让老师到
+  「课堂做题 → 创建 → AI 工具录入 → 方式一」重新生成令牌
+- 提交题目**不消耗** AI 生成额度；只有系统内的「AI 出题」功能才消耗
+`;
+}
 
 // HTML 课件起手模板：教师点「插入模板」就有可改的骨架
 const COURSEWARE_TEMPLATE = `<!DOCTYPE html>
@@ -217,6 +302,18 @@ const ClassroomQuiz: React.FC = () => {
   const [formatModalOpen, setFormatModalOpen] = useState(false);
   const [previewHtml, setPreviewHtml] = useState<string>('');
   const [aiRequirement, setAiRequirement] = useState('');
+
+  // AI 直连（方式一）：教师自己发令牌，AI 带着令牌直接调后端写数据
+  const [agentTokenList, setAgentTokenList] = useState<any[]>([]);
+  const [agentTokenPlain, setAgentTokenPlain] = useState('');
+  const [agentInfo, setAgentInfo] = useState<any>(null);
+  const [agentCreating, setAgentCreating] = useState(false);
+  const [agentTesting, setAgentTesting] = useState(false);
+  // 接口根地址：优先用后端配置的地址，本地开发时就是当前站点 + /api
+  const [agentBaseUrl] = useState<string>(() => {
+    const configured = (import.meta as any).env?.VITE_API_URL || '/api';
+    return `${window.location.origin}${configured.startsWith('http') ? '' : configured}/agent`;
+  });
 
   // 题库选题
   const [bankQuestions, setBankQuestions] = useState<any[]>([]);
@@ -613,6 +710,83 @@ const ClassroomQuiz: React.FC = () => {
     }
     return false;
   };
+
+  // ===== AI 直连：令牌管理 =====
+  const loadAgentTokens = async () => {
+    try {
+      const res = await agentTokenAPI.list();
+      setAgentTokenList(res.data.tokens || []);
+    } catch (e) {
+      // 非教师身份或网络异常时静默处理
+    }
+  };
+
+  const handleCreateAgentToken = async () => {
+    setAgentCreating(true);
+    try {
+      const res = await agentTokenAPI.create('AI 助手');
+      setAgentTokenPlain(res.data.token);
+      message.success('令牌已生成，请立刻复制保存（只显示这一次）');
+      await loadAgentTokens();
+      await testAgentConnect(res.data.token);
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || '生成令牌失败');
+    } finally {
+      setAgentCreating(false);
+    }
+  };
+
+  const handleRevokeAgentToken = async (id: number) => {
+    try {
+      await agentTokenAPI.revoke(id);
+      setAgentTokenPlain('');
+      setAgentInfo(null);
+      message.success('令牌已吊销');
+      loadAgentTokens();
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || '吊销失败');
+    }
+  };
+
+  const testAgentConnect = async (token?: string) => {
+    const t = (token || agentTokenPlain || '').trim();
+    if (!t) {
+      message.warning('请先生成令牌');
+      return;
+    }
+    setAgentTesting(true);
+    try {
+      const res = await agentAPI.whoami(t);
+      setAgentInfo(res.data);
+      message.success('连接成功，AI 现在可以直接提交题目了');
+    } catch (e: any) {
+      setAgentInfo(null);
+      message.error(e?.response?.data?.error || '连接失败，请检查令牌是否正确');
+    } finally {
+      setAgentTesting(false);
+    }
+  };
+
+  const downloadAgentSkill = () => {
+    if (!agentTokenPlain) {
+      message.warning('令牌明文只在生成时显示，请先点「生成令牌」再下载');
+      return;
+    }
+    const doc = buildAgentSkillDoc(agentBaseUrl, agentTokenPlain);
+    const blob = new Blob([doc], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '课堂做题-AI直连-skill.md';
+    a.click();
+    URL.revokeObjectURL(url);
+    message.success('已下载，交给 AI 助手即可接入');
+  };
+
+  // 打开「AI 工具录入」时拉一次令牌列表
+  useEffect(() => {
+    if (createSource === 'ai_import') loadAgentTokens();
+  }, [createSource]);
 
   const handleViewDetail = async (quiz: any) => {
     setSelectedQuiz(quiz);
@@ -1160,13 +1334,93 @@ const ClassroomQuiz: React.FC = () => {
 
           {createSource === 'ai_import' && (
             <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 12, marginBottom: 16 }}>
-              <Alert
-                type="info"
-                showIcon
-                style={{ marginBottom: 12 }}
-                message="让 AI 帮你出题，再一次性导进来"
-                description="复制提示词（或下载 Skill 文件）交给 AI → AI 按格式返回题目 JSON（可带 HTML 课件）→ 粘贴回来点「解析预览」→ 勾选后创建。"
-              />
+              {/* 方式一：AI 直连（推荐）——AI 自己带着身份令牌调后端写数据，不用复制粘贴 */}
+              <div style={{ border: '1px solid #bae0ff', background: '#f0f8ff', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  方式一：让 AI 直接提交（推荐）
+                </div>
+                <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
+                  把你自己的 AI 助手（WorkBuddy / CodeBuddy 等）接入后，对它说「出 5 道题并带上课件」，
+                  它会带着下面的身份令牌直接调用后端接口写入，不需要把题目复制粘贴回来。
+                </div>
+
+                <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>接口地址</div>
+                <Space.Compact style={{ width: '100%', marginBottom: 10 }}>
+                  <Input readOnly value={agentBaseUrl} style={{ fontFamily: 'Consolas, monospace' }} />
+                  <Button icon={<CopyOutlined />} onClick={() => copyText(agentBaseUrl, '接口地址已复制')}>复制</Button>
+                </Space.Compact>
+
+                <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>身份令牌（等同你的身份，勿外传）</div>
+                {agentTokenPlain ? (
+                  <Space.Compact style={{ width: '100%', marginBottom: 6 }}>
+                    <Input readOnly value={agentTokenPlain} style={{ fontFamily: 'Consolas, monospace' }} />
+                    <Button icon={<CopyOutlined />} onClick={() => copyText(agentTokenPlain, '令牌已复制')}>复制</Button>
+                  </Space.Compact>
+                ) : (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 8 }}
+                    message="当前没有可用令牌明文"
+                    description="令牌只在生成时显示一次。若已生成过但忘了保存，请点「重新生成」后再下载 Skill 文件。"
+                  />
+                )}
+
+                <Space wrap>
+                  <Button type="primary" icon={<KeyOutlined />} loading={agentCreating} onClick={handleCreateAgentToken}>
+                    {agentTokenList.length > 0 ? '重新生成令牌' : '生成令牌'}
+                  </Button>
+                  <Button icon={<ApiOutlined />} loading={agentTesting} onClick={() => testAgentConnect()}>
+                    测试连接
+                  </Button>
+                  <Button icon={<DownloadOutlined />} onClick={downloadAgentSkill}>下载 Skill 文件（含地址与令牌）</Button>
+                  <Button icon={<FileTextOutlined />} onClick={() => setFormatModalOpen(true)}>查看接口文档</Button>
+                </Space>
+
+                {agentInfo && (
+                  <div style={{ marginTop: 10, background: '#fff', border: '1px solid #e6f4ff', borderRadius: 6, padding: 8, fontSize: 12 }}>
+                    <div>
+                      连接成功：当前身份 <b>{agentInfo.teacher?.real_name || agentInfo.teacher?.username}</b>
+                      （{agentInfo.teacher?.role === 'admin' ? '管理员' : '教师'}）
+                    </div>
+                    <div style={{ marginTop: 4 }}>
+                      任教班级：
+                      {(agentInfo.classes || []).length === 0 ? '未分配' : (agentInfo.classes || []).map((c: any) => (
+                        <Tag key={c.id} color={c.role === 'head_teacher' ? 'gold' : 'blue'}>
+                          {c.name}（{c.role === 'head_teacher' ? '班主任' : '任课教师'}{c.subject ? ` · ${c.subject}` : ''}）
+                        </Tag>
+                      ))}
+                    </div>
+                    {agentInfo.gen_quota && (
+                      <div style={{ marginTop: 4, color: '#888' }}>
+                        今日剩余 AI 生成次数：{agentInfo.gen_quota.daily_remaining} / {agentInfo.gen_quota.daily_limit}（AI 直连提交题目不消耗次数）
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {agentTokenList.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>我的令牌</div>
+                    {agentTokenList.map((t) => (
+                      <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '3px 0' }}>
+                        <Tag color={t.revoked_at ? 'default' : 'green'}>{t.token_prefix}</Tag>
+                        <span style={{ color: '#888' }}>{t.name}</span>
+                        <span style={{ color: '#aaa' }}>
+                          {t.last_used_at ? `最近使用 ${new Date(String(t.last_used_at).replace(' ', 'T')).toLocaleString('zh-CN')}` : '尚未使用'}
+                        </span>
+                        <Popconfirm title="吊销后 AI 立即无法访问，确定？" onConfirm={() => handleRevokeAgentToken(t.id)}>
+                          <a style={{ color: '#ff4d4f' }}>吊销</a>
+                        </Popconfirm>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 方式二：手动粘贴（AI 不方便联网时的兜底） */}
+              <Divider style={{ margin: '4px 0 12px' }} orientation="left" plain>方式二：手动粘贴 AI 返回的题目（兜底）</Divider>
+
               <Space wrap style={{ marginBottom: 12 }}>
                 <Button
                   icon={<CopyOutlined />}
@@ -1179,12 +1433,11 @@ const ClassroomQuiz: React.FC = () => {
                 >
                   复制 AI 提示词
                 </Button>
-                <Button icon={<DownloadOutlined />} onClick={downloadSkill}>下载 Skill 文件</Button>
-                <Button icon={<FileTextOutlined />} onClick={() => setFormatModalOpen(true)}>查看 JSON 格式</Button>
+                <Button icon={<DownloadOutlined />} onClick={downloadSkill}>下载提示词 Skill（粘贴用）</Button>
               </Space>
 
               <Input.TextArea
-                rows={3}
+                rows={2}
                 value={aiRequirement}
                 onChange={(e) => setAiRequirement(e.target.value)}
                 placeholder="补充你的出题需求（会拼在提示词末尾）。例：五年级数学，分数的加减法，出 6 道抢答题，每题配一个可点击演示的 HTML 课件。"
@@ -1193,7 +1446,7 @@ const ClassroomQuiz: React.FC = () => {
 
               <div style={{ marginBottom: 8, fontSize: 13 }}>粘贴 AI 返回的题目数据（JSON）</div>
               <Input.TextArea
-                rows={8}
+                rows={6}
                 value={importText}
                 onChange={(e) => setImportText(e.target.value)}
                 placeholder={'{\n  "title": "第三单元随堂练习",\n  "subject": "数学",\n  "questions": [\n    { "question_text": "题干", "answer_text": "参考答案", "courseware_html": "<!DOCTYPE html>...</html>" }\n  ]\n}'}
@@ -1208,7 +1461,7 @@ const ClassroomQuiz: React.FC = () => {
               </Space>
 
               {importedQuestions.length > 0 && (
-                <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8, marginTop: 12 }}>
+                <div style={{ maxHeight: 200, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8, marginTop: 12 }}>
                   {importedQuestions.map((q, i) => (
                     <div key={i} style={{ padding: '6px 4px', borderBottom: '1px dashed #eee' }}>
                       <Checkbox

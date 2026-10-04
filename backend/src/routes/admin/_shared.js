@@ -28,6 +28,11 @@ function purgeUserData(userId) {
       // 先清理宠物的子表（pet_skills 不直接引用 users）
       db.prepare(`DELETE FROM pet_skills WHERE pet_id IN (SELECT id FROM pets WHERE user_id = ?)`).run(userId);
 
+      // AI 直连接令没有外键约束，删除账号时要一并清掉，避免令牌残留
+      try {
+        db.prepare(`DELETE FROM agent_tokens WHERE user_id = ?`).run(userId);
+      } catch (e) { /* 表可能还不存在，忽略 */ }
+
       const tables = db.prepare(
         `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`
       ).all();

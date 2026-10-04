@@ -42,6 +42,8 @@ const aiCoachRoutes = require('./routes/ai-coach');
 const questionBankRoutes = require('./routes/question-bank');
 const cardRoutes = require('./routes/cards');
 const userTransactionRoutes = require('./routes/user-transactions');
+const agentRoutes = require('./routes/agent');
+const agentTokenRoutes = require('./routes/agent-tokens');
 
 // 初始化数据库
 initDatabase();
@@ -142,6 +144,10 @@ app.use('/api/schools', schoolRoutes);
 app.use('/api/ai-coach', aiCoachRoutes);
 app.use('/api/question-bank', questionBankRoutes);
 app.use('/api/cards', cardRoutes);
+// AI 助手直连：/api/agent 用教师自己生成的令牌鉴权，AI 直接提交课堂做题题目
+app.use('/api/agent', agentRoutes);
+// AI 直连接令的生成与吊销（教师在页面里操作，走正常登录鉴权）
+app.use('/api/agent-tokens', agentTokenRoutes);
 // 学生端「我的资产明细」（金币 + 物品/装备/技能流水）
 app.use('/api/users', userTransactionRoutes);
 

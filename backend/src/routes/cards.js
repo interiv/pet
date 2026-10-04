@@ -9,6 +9,9 @@ const { getPrompt, fillTemplate } = require('../config/prompts');
 const { grantReward } = require('../services/rewards');
 const { collectQuestions, normalizeQuestion } = require('../services/aiQuestion');
 const { beginUsage, settleUsage, countBilledUsage } = require('../services/aiUsage');
+const {
+  clipText, MAX_COURSEWARE_LEN, normalizeQuestions, createClassroomQuiz,
+} = require('../services/classroomQuiz');
 
 function generateCardCode(length = 12) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -20,15 +23,6 @@ function generateCardCode(length = 12) {
   return code;
 }
 
-// 题目附带的 HTML 课件体积上限（200KB）：课件通常是单页小页面，过大会拖慢课堂加载
-const MAX_COURSEWARE_LEN = 200 * 1024;
-
-/** 裁剪文本并在超长时给出提示（返回 null 表示空） */
-function clipText(raw, maxLen) {
-  const s = String(raw ?? '').trim();
-  if (!s) return null;
-  return s.length > maxLen ? s.slice(0, maxLen) : s;
-}
 
 // 建表已收编到 knex 迁移：cards / card_batches / card_redemption_logs /
 // classroom_quizzes / classroom_quiz_questions / classroom_quiz_rewards 见 001_initial_schema，
@@ -657,33 +651,23 @@ router.post('/classroom-quiz', authenticateToken, (req, res) => {
       }
     }
 
-    const result = db.prepare(`
-      INSERT INTO classroom_quizzes (title, description, subject, class_id, created_by)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(title, description || null, subject || null, class_id, req.user.userId);
+    // 题目规整 + 落库统一走 services/classroomQuiz（AI 直连也用同一套逻辑）
+    const { questions: normalized, warnings } = normalizeQuestions(questions);
 
-    const quizId = result.lastInsertRowid;
-
-    if (questions && Array.isArray(questions)) {
-      const insertQ = db.prepare(`
-        INSERT INTO classroom_quiz_questions (quiz_id, question_text, sort_order, courseware_html, answer_text)
-        VALUES (?, ?, ?, ?, ?)
-      `);
-
-      questions.forEach((q, index) => {
-        // 兼容两种写法：纯字符串题干，或 { question_text, courseware_html, answer_text }
-        // （AI 工具录入 / 手工逐题录入会带上 HTML 课件与参考答案）
-        const isObj = q && typeof q === 'object';
-        const text = isObj ? String(q.question_text ?? q.text ?? '') : String(q ?? '');
-        const courseware = isObj ? clipText(q.courseware_html ?? q.courseware, MAX_COURSEWARE_LEN) : null;
-        const answer = isObj ? clipText(q.answer_text ?? q.answer ?? q.reference_answer, 2000) : null;
-        insertQ.run(quizId, text, index + 1, courseware, answer);
-      });
-    }
+    const quizId = createClassroomQuiz({
+      title,
+      description,
+      subject,
+      classId: class_id,
+      teacherId: req.user.userId,
+      questions: normalized,
+    });
 
     res.json({
       message: '课堂做题创建成功',
-      quiz_id: quizId
+      quiz_id: quizId,
+      question_count: normalized.length,
+      warnings,
     });
   } catch (error) {
     console.error('创建课堂做题失败:', error);

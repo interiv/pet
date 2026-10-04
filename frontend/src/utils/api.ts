@@ -709,4 +709,20 @@ export const classroomQuizAPI = {
     api.put(`/cards/classroom-quiz/answers/${answerId}`, { coin_rewarded }),
 };
 
+// AI 助手直连：令牌由教师在页面里生成，AI 用它直接调用 /api/agent/* 提交数据
+export const agentTokenAPI = {
+  list: () => api.get('/agent-tokens'),
+  create: (name?: string) => api.post('/agent-tokens', { name }),
+  revoke: (id: number) => api.delete(`/agent-tokens/${id}`),
+};
+
+export const agentAPI = {
+  /** 用令牌自检连接 + 读接口自述 */
+  introspect: (agentToken: string) =>
+    api.get('/agent/', { headers: { 'X-Agent-Token': agentToken } }),
+  /** 令牌代表的老师身份、任教班级与任教科目 */
+  whoami: (agentToken: string) =>
+    api.get('/agent/whoami', { headers: { 'X-Agent-Token': agentToken } }),
+};
+
 export default api;
