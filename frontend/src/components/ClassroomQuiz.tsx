@@ -291,6 +291,25 @@ const ClassroomQuiz: React.FC = () => {
   // 教师自己的任教科目：创建时默认带出，可手动改
   const mySubject = getMySubject(user?.teacher_classes, currentClass?.id);
 
+  /**
+   * 班级默认值：优先「上次用过的班」→ 其次 store 里的当前班→ 最后第一个任教班。
+   * 教师通常没有 currentClass（那是学生用的），原先默认值恒为空导致每次都要手选。
+   */
+  const defaultClassId = (() => {
+    const last = Number(localStorage.getItem('classroom_quiz_last_class') || 0);
+    const mine = (user?.teacher_classes || []).map((c: any) => Number(c.id));
+    if (last && mine.includes(last)) return last;
+    if (currentClass?.id && mine.includes(Number(currentClass.id))) return Number(currentClass.id);
+    return mine[0];
+  })();
+
+  // 记住老师上次用的班：老师一改班级就记下来，下次创建直接落在同一个班
+  const handleQuizClassChange = (changed: any) => {
+    if (changed && changed.class_id) {
+      localStorage.setItem('classroom_quiz_last_class', String(changed.class_id));
+    }
+  };
+
   // 题目课件编辑
   const [coursewareIndex, setCoursewareIndex] = useState<number | null>(null);
   const [coursewareDraft, setCoursewareDraft] = useState('');
@@ -1051,17 +1070,17 @@ const ClassroomQuiz: React.FC = () => {
         onOk={() => createForm.submit()}
         width={880}
         destroyOnHidden
-        // 每次打开都重新带出任教科目/所在班级：Form.Item 的 initialValue 只在首次挂载时被消费一次，
+        // 每次打开都重新带出任教科目/默认班级：Form.Item 的 initialValue 只在首次挂载时被消费一次，
         // 而 user 是异步从 store 取的，若不在打开时用 setFieldsValue 兜一次，默认值会永远为空
         afterOpenChange={(open) => {
           if (!open) return;
           const preset: any = {};
           if (mySubject) preset.subject = mySubject;
-          if (currentClass?.id) preset.class_id = currentClass.id;
+          if (defaultClassId) preset.class_id = defaultClassId;
           if (Object.keys(preset).length > 0) createForm.setFieldsValue(preset);
         }}
       >
-        <Form form={createForm} layout="vertical" onFinish={handleCreate}>
+        <Form form={createForm} layout="vertical" onFinish={handleCreate} onValuesChange={handleQuizClassChange}>
           <Row gutter={16}>
             <Col span={10}>
               <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
@@ -1069,7 +1088,12 @@ const ClassroomQuiz: React.FC = () => {
               </Form.Item>
             </Col>
             <Col span={7}>
-              <Form.Item name="class_id" label="班级" initialValue={currentClass?.id} rules={[{ required: true, message: '请选择班级' }]}>
+              <Form.Item
+                name="class_id"
+                label="用哪个班上课"
+                tooltip="这场做题只有该班的学生能看到并参与，所以必须选一个班。默认已选中你任教的班级。"
+                rules={[{ required: true, message: '请选择班级' }]}
+              >
                 <Select placeholder="选择班级" showSearch optionFilterProp="children">
                   {classes.map(c => <Select.Option key={c.id} value={c.id}>{c.name}</Select.Option>)}
                 </Select>

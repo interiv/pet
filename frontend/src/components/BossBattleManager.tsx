@@ -39,7 +39,6 @@ const BossBattleManager: React.FC = () => {
   const { user } = useAuthStore();
   const isMobile = useMobile();
   const [classes, setClasses] = useState<any[]>([]);
-  const [headClasses, setHeadClasses] = useState<any[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
   const [currentBoss, setCurrentBoss] = useState<any>(null);
   const [bossList, setBossList] = useState<any[]>([]);
@@ -74,12 +73,22 @@ const BossBattleManager: React.FC = () => {
   useEffect(() => {
     const teacherClasses = (user as any)?.teacher_classes || [];
     setClasses(teacherClasses);
-    const headCls = teacherClasses.filter((c: any) => c.class_role === 'head_teacher');
-    setHeadClasses(headCls);
-    if (headCls.length > 0) {
-      setSelectedClassId(headCls[0].id);
+    // 任课教师也能创建 BOSS 战（原实现只取班主任，导致任课教师进来是一片空白），
+    // 因此这里用任教班级全集，班主任身份只在下拉里做个标注。
+    if (teacherClasses.length > 0) {
+      const last = Number(localStorage.getItem('boss_battle_last_class') || 0);
+      const ids = teacherClasses.map((c: any) => Number(c.id));
+      // 优先沿用上次选过的班，其次第一个任教班
+      setSelectedClassId(last && ids.includes(last) ? last : Number(teacherClasses[0].id));
+    } else {
+      setSelectedClassId(null);
     }
   }, [user]);
+
+  // 记住本次操作的班级，下次直接落在同一个班
+  useEffect(() => {
+    if (selectedClassId) localStorage.setItem('boss_battle_last_class', String(selectedClassId));
+  }, [selectedClassId]);
 
   useEffect(() => {
     if (selectedClassId) {
@@ -621,7 +630,10 @@ const BossBattleManager: React.FC = () => {
             value={selectedClassId}
             onChange={setSelectedClassId}
             style={{ width: isMobile ? 150 : 200 }}
-            options={headClasses.map((c: any) => ({ label: `${c.name} (班主任)`, value: c.id }))}
+            options={classes.map((c: any) => ({
+              label: `${c.name}${c.class_role === 'head_teacher' ? ' (班主任)' : ''}`,
+              value: c.id,
+            }))}
             placeholder="请选择班级"
           />
         </Space>
@@ -647,11 +659,11 @@ const BossBattleManager: React.FC = () => {
         </Space>
       </div>
 
-      {!selectedClassId && headClasses.length === 0 && (
+      {!selectedClassId && classes.length === 0 && (
         <Alert
           type="warning"
-          message="您不是任何班级的班主任"
-          description="只有班主任才能创建和管理BOSS战，请联系管理员设置班主任身份。"
+          message="您还没有任教任何班级"
+          description="BOSS战需要绑定班级才能创建。请先在「个人中心 → 任教信息」申请加入班级，或由管理员/班主任安排任教。"
           showIcon
           style={{ marginBottom: 16 }}
         />

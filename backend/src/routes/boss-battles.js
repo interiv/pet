@@ -22,17 +22,41 @@ function checkHeadTeacher(userId, classId) {
   return row && row.role === 'head_teacher';
 }
 
+/**
+ * 是否在该班任教（班主任也算）。
+ *
+ * BOSS 战的内容来源就是题目，而任课教师手里恰恰有自己科目的题，
+ * 卡的只有班主任会让「最有题的人用不了这个功能」。
+ * BOSS 战本身又是可选参与（不参加没有惩罚，奖励按伤害比例发），
+ * 不涉及班主任那种「管全班」的授权，所以放开到任课教师是合理的。
+ * 但底线是只能对自己任教的班级创建，否则能给任意不相干的班开活动。
+ */
+function teachesClass(userId, classId) {
+  const row = db.prepare(
+    `SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`
+  ).get(userId, classId);
+  return !!row;
+}
+
 function isAdmin(userId) {
   const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId);
   return user && user.role === 'admin';
 }
 
-function requireHeadTeacher(req, res, next) {
-  const { class_id } = req.body;
-  if (!class_id) return res.status(400).json({ error: '请提供班级ID' });
-  if (isAdmin(req.user.userId)) return next();
-  if (checkHeadTeacher(req.user.userId, class_id)) return next();
-  return res.status(403).json({ error: '只有班主任才能操作本班的BOSS战' });
+/** 能否管理该班的 BOSS 战：管理员，或该班任教教师（班主任自然包含在内） */
+function canManageBoss(userId, classId) {
+  if (isAdmin(userId)) return true;
+  return teachesClass(userId, classId);
+}
+
+/**
+ * 终止/删除的权限：管理员、该班班主任，或该 BOSS 的创建者。
+ * 任课教师建错了要能自己收场，但不能动别人建的。
+ */
+function canManageExistingBoss(userId, boss) {
+  if (isAdmin(userId)) return true;
+  if (Number(boss.created_by) === Number(userId)) return true;
+  return checkHeadTeacher(userId, boss.class_id);
 }
 
 router.get('/list/:classId', authenticateToken, (req, res) => {
@@ -219,8 +243,8 @@ router.get('/history/:classId', authenticateToken, (req, res) => {
 router.get('/wrong-questions/:classId', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
   try {
     const classId = req.params.classId;
-    if (!isAdmin(req.user.userId) && !checkHeadTeacher(req.user.userId, classId)) {
-      return res.status(403).json({ error: '只有班主任才能查看班级错题' });
+    if (!isAdmin(req.user.userId) && !teachesClass(req.user.userId, classId)) {
+      return res.status(403).json({ error: '只能查看你任教班级的错题' });
     }
 
     const {
@@ -398,9 +422,9 @@ router.post('/create', authenticateToken, authorizeRole('teacher', 'admin'), (re
       return res.status(400).json({ error: '请提供完整信息' });
     }
 
-    if (!isAdmin(req.user.userId) && !checkHeadTeacher(req.user.userId, class_id)) {
-      return res.status(403).json({ error: '只有班主任才能为本班创建BOSS战' });
-    }
+    if (!isAdmin(req.user.userId) && !teachesClass(req.user.userId, class_id)) {
+  return res.status(403).json({ error: '只能为你任教的班级创建BOSS战' });
+}
 
     const existingBoss = db.prepare(`
       SELECT id FROM boss_battles WHERE class_id = ? AND status = 'active'
@@ -489,8 +513,8 @@ router.post('/auto-generate', authenticateToken, authorizeRole('teacher', 'admin
       return res.status(400).json({ error: '请提供班级ID' });
     }
 
-    if (!isAdmin(req.user.userId) && !checkHeadTeacher(req.user.userId, class_id)) {
-      return res.status(403).json({ error: '只有班主任才能为本班生成BOSS战' });
+    if (!isAdmin(req.user.userId) && !teachesClass(req.user.userId, class_id)) {
+      return res.status(403).json({ error: '只能为你任教的班级生成BOSS战' });
     }
 
     const existingBoss = db.prepare(`
@@ -645,8 +669,8 @@ router.post('/:bossId/terminate', authenticateToken, authorizeRole('teacher', 'a
       return res.status(400).json({ error: '只能终止进行中的BOSS' });
     }
 
-    if (!isAdmin(req.user.userId) && !checkHeadTeacher(req.user.userId, boss.class_id)) {
-      return res.status(403).json({ error: '只有班主任才能终止本班的BOSS战' });
+    if (!canManageExistingBoss(req.user.userId, boss)) {
+      return res.status(403).json({ error: '只有管理员、该班班主任或创建者才能终止这场BOSS战' });
     }
 
     const totalDamage = db.prepare(`
@@ -685,8 +709,8 @@ router.delete('/:bossId', authenticateToken, authorizeRole('teacher', 'admin'), 
       return res.status(400).json({ error: '请先终止进行中的BOSS战再删除' });
     }
 
-    if (!isAdmin(req.user.userId) && !checkHeadTeacher(req.user.userId, boss.class_id)) {
-      return res.status(403).json({ error: '只有班主任才能删除本班的BOSS记录' });
+    if (!canManageExistingBoss(req.user.userId, boss)) {
+  return res.status(403).json({ error: '只有管理员、该班班主任或创建者才能删除这场BOSS战' });
     }
 
     // 检查是否有未领取的奖励
