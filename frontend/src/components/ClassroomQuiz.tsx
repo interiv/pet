@@ -300,8 +300,13 @@ const ClassroomQuiz: React.FC = () => {
   const [importedQuestions, setImportedQuestions] = useState<any[]>([]);
   const [importSelected, setImportSelected] = useState<Set<number>>(new Set());
   // AI 录入两种方式左右分栏展示，避免两种路径的内容堆在同一屏让老师无所适从
+  // 方式一（AI 直接提交）里替代「下载 Skill 文件」的轻量安装入口：
+  // 只给一个公网地址，AI 助手自己去抓取并完成接入，老师不用手动下载再上传。
+  // 做法参考 SkillHub 的「一句话安装」。
   const [aiImportTab, setAiImportTab] = useState<'direct' | 'paste'>('direct');
-  // 方式一里的「接口地址 / 身份令牌」默认折叠：Skill 文件已包含二者，需要手抄时才展开
+  // 方式一里的「其它安装方式」（命令行安装 / 下载文件）默认折叠
+  const [showMoreInstall, setShowMoreInstall] = useState(false);
+  // 方式一里的「接口地址 / 身份令牌」默认折叠：安装地址里已经有了，只在需要手动配置时才展开
   const [showAgentRaw, setShowAgentRaw] = useState(false);
   const [previewHtml, setPreviewHtml] = useState<string>('');
   const [aiRequirement, setAiRequirement] = useState('');
@@ -769,6 +774,22 @@ const ClassroomQuiz: React.FC = () => {
       setAgentTesting(false);
     }
   };
+
+  // Skill 安装文档的公网地址：AI 助手自己抓这个地址就能读到全部接入说明，
+  // 因此老师不需要手动下载文件再上传（与 SkillHub 的「一句话安装」一致）
+  const skillInstallUrl = agentTokenPlain
+    ? `${window.location.origin}/api/skills/install/classroom-quiz?token=${encodeURIComponent(agentTokenPlain)}`
+    : '';
+
+  /** 一句话安装指令：复制给AI 助手，它会自己去读地址并完成接入 */
+  const oneLineInstallPrompt = skillInstallUrl
+    ? `请根据 ${skillInstallUrl} 安装「课堂做题题目生成」技能，读完后按文档说明接入，之后我出题时你直接提交到系统。`
+    : '';
+
+  /** 命令行安装：让能执行命令的助手把文档落到自己的 skills 目录 */
+  const cliInstallCommand = skillInstallUrl
+    ? `mkdir -p ~/.workbuddy/skills/classroom-quiz && curl -fsSL "${skillInstallUrl}" -o ~/.workbuddy/skills/classroom-quiz/SKILL.md`
+    : '';
 
   const downloadAgentSkill = () => {
     if (!agentTokenPlain) {
@@ -1349,7 +1370,6 @@ const ClassroomQuiz: React.FC = () => {
             <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: '12px 4px 12px 12px', marginBottom: 16 }}>
               {/* 两种录入方式左右分栏（tabPosition="left"）：每栏只讲一件事，互不干扰 */}
               <Tabs
-                tabPosition="left"
                 activeKey={aiImportTab}
                 onChange={(k) => setAiImportTab(k as 'direct' | 'paste')}
                 style={{ marginBottom: 0 }}
@@ -1359,64 +1379,100 @@ const ClassroomQuiz: React.FC = () => {
       label: '方式一：AI 直接提交（推荐）',
       children: (
         <div style={{ border: '1px solid #bae0ff', background: '#f0f8ff', borderRadius: 8, padding: 12 }}>
-          <ol style={{ margin: '0 0 12px', paddingLeft: 20, fontSize: 13, color: '#333', lineHeight: 1.9 }}>
-            <li>点「下载 Skill 文件」，里面已写好接口地址和你的身份令牌。</li>
-            <li>把该文件放进 AI 助手（CodeBuddy / WorkBuddy 等）的 skills 目录。</li>
-            <li>直接对它说「出 5 道题并带上课件」，题目会自动写入本页，无需复制粘贴。</li>
-          </ol>
+          {!agentTokenPlain ? (
+            <>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message="还没有身份令牌"
+                description="令牌相当于你的身份，AI 靠它写入题目。请先生成令牌，之后就能用一句话完成安装。"
+              />
+              <Button type="primary" icon={<KeyOutlined />} loading={agentCreating} onClick={handleCreateAgentToken}>
+                {agentTokenList.length > 0 ? '重新生成令牌' : '生成令牌'}
+              </Button>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>方式 1：一句话安装（最省事）</div>
+              <ol style={{ margin: '0 0 10px', paddingLeft: 20, fontSize: 13, color: '#333', lineHeight: 1.9 }}>
+                <li>点下面「复制一句话指令」，粘给你的 AI 助手（WorkBuddy / CodeBuddy 等）。</li>
+                <li>助手会自己去读这个地址、把能力装好，<b>不用你再下载或上传任何文件</b>。</li>
+                <li>之后直接对它说「出 5 道题并带上课件」，题目会自动写入本页。</li>
+              </ol>
+              <Input.TextArea
+                readOnly
+                value={oneLineInstallPrompt}
+                rows={3}
+                style={{ fontFamily: 'Consolas, monospace', fontSize: 12, marginBottom: 8 }}
+              />
+              <Space wrap>
+                <Button type="primary" icon={<CopyOutlined />} onClick={() => copyText(oneLineInstallPrompt, '指令已复制，粘贴给你的 AI 助手即可')}>
+                  复制一句话指令
+                </Button>
+                <Button icon={<ApiOutlined />} loading={agentTesting} onClick={() => testAgentConnect()}>
+                  测试连接
+                </Button>
+                <Button type="link" onClick={() => setShowMoreInstall((v) => !v)} style={{ fontSize: 12 }}>
+                  {showMoreInstall ? '收起其它安装方式' : '其它安装方式'}
+                </Button>
+              </Space>
 
-          {!agentTokenPlain && (
-            <Alert
-              type="info"
-              showIcon
-              style={{ marginBottom: 12 }}
-              message="还没有身份令牌"
-              description="令牌相当于你的身份，AI 靠它写入题目。请先生成令牌，再下载 Skill 文件。"
-            />
+              {showMoreInstall && (
+                <div style={{ marginTop: 12, borderTop: '1px dashed #bae0ff', paddingTop: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>方式 2：让助手用命令行安装到本地</div>
+                  <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
+                    适用于能执行命令的助手，它会把文档写进自己的 skills 目录（WorkBuddy 为 <code>~/.workbuddy/skills/</code>）。
+                    其他客户端的目录在文档里也列了。
+                  </div>
+                  <Input.TextArea
+                    readOnly
+                    value={cliInstallCommand}
+                    rows={3}
+                    style={{ fontFamily: 'Consolas, monospace', fontSize: 12, marginBottom: 8 }}
+                  />
+                  <Button icon={<CopyOutlined />} onClick={() => copyText(cliInstallCommand, '命令已复制，粘贴给助手执行即可')}>
+                    复制安装命令
+                  </Button>
+
+                  <div style={{ fontSize: 13, fontWeight: 600, margin: '14px 0 6px' }}>方式 3：下载 Skill 文件</div>
+                  <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
+                    手动把文件放进助手的 skills 目录。适合上面两种都不方便时使用。
+                  </div>
+                  <Space wrap>
+                    <Button icon={<DownloadOutlined />} onClick={downloadAgentSkill}>下载 Skill 文件</Button>
+                    <Button type="link" onClick={() => copyText(skillInstallUrl, '安装地址已复制')}>
+                      复制安装地址
+                    </Button>
+                  </Space>
+                </div>
+              )}
+            </>
           )}
 
-          <Space wrap>
-            <Button type="primary" icon={<DownloadOutlined />} onClick={downloadAgentSkill} disabled={!agentTokenPlain}>
-              下载 Skill 文件（含地址与令牌）
-            </Button>
-            <Button type={agentTokenPlain ? 'default' : 'primary'} icon={<KeyOutlined />} loading={agentCreating} onClick={handleCreateAgentToken}>
-              {agentTokenList.length > 0 ? '重新生成令牌' : '生成令牌'}
-            </Button>
-            <Button icon={<ApiOutlined />} loading={agentTesting} disabled={!agentTokenPlain} onClick={() => testAgentConnect()}>
-              测试连接
-            </Button>
-          </Space>
+          {/* 地址与令牌：Skill 文件与安装地址里都已经有了，只在需要手动配置时才展开 */}
+          {agentTokenPlain && (
+            <div style={{ marginTop: 10 }}>
+              <a style={{ fontSize: 12 }} onClick={() => setShowAgentRaw((v) => !v)}>
+                {showAgentRaw ? '收起地址与令牌' : '需要手动配置？查看地址与令牌'}
+              </a>
+              {showAgentRaw && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>接口地址</div>
+                  <Space.Compact style={{ width: '100%', marginBottom: 10 }}>
+                    <Input readOnly value={agentBaseUrl} style={{ fontFamily: 'Consolas, monospace' }} />
+                    <Button icon={<CopyOutlined />} onClick={() => copyText(agentBaseUrl, '接口地址已复制')}>复制</Button>
+                  </Space.Compact>
 
-          {/* 地址与令牌默认收起：Skill 文件里已经有了，只有需要手动配置时才展开看 */}
-          <div style={{ marginTop: 10 }}>
-            <a style={{ fontSize: 12 }} onClick={() => setShowAgentRaw((v) => !v)}>
-              {showAgentRaw ? '收起地址与令牌' : '需要手动配置？查看地址与令牌'}
-            </a>
-            {showAgentRaw && (
-              <div style={{ marginTop: 8 }}>
-                <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>接口地址</div>
-                <Space.Compact style={{ width: '100%', marginBottom: 10 }}>
-                  <Input readOnly value={agentBaseUrl} style={{ fontFamily: 'Consolas, monospace' }} />
-                  <Button icon={<CopyOutlined />} onClick={() => copyText(agentBaseUrl, '接口地址已复制')}>复制</Button>
-                </Space.Compact>
-
-                <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>身份令牌（等同你的身份，勿外传）</div>
-                {agentTokenPlain ? (
+                  <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>身份令牌（等同你的身份，勿外传）</div>
                   <Space.Compact style={{ width: '100%' }}>
                     <Input readOnly value={agentTokenPlain} style={{ fontFamily: 'Consolas, monospace' }} />
                     <Button icon={<CopyOutlined />} onClick={() => copyText(agentTokenPlain, '令牌已复制')}>复制</Button>
                   </Space.Compact>
-                ) : (
-                  <Alert
-                    type="warning"
-                    showIcon
-                    message="当前没有可用令牌明文"
-                    description="令牌只在生成时显示一次。若已生成过但忘了保存，请点「重新生成」后再下载 Skill 文件。"
-                  />
-                )}
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {agentInfo && (
             <div style={{ marginTop: 10, background: '#fff', border: '1px solid #e6f4ff', borderRadius: 6, padding: 8, fontSize: 12 }}>
