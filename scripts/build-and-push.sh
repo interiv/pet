@@ -114,6 +114,26 @@ info "或者使用 docker-compose 部署:"
 echo "  image: ${FULL_IMAGE}:${IMAGE_TAG}"
 echo ""
 
+# ---- 部署配置一致性检查 ----
+# 换端口时最容易只改一半：容器内端口是固定的，能改的只有宿主机端口，
+# 而它需要与 Nginx 的 proxy_pass 一致。这里自动读出当前配置并核对。
+if command -v node &> /dev/null; then
+  echo ""
+  if node scripts/check-deploy-config.mjs; then
+    :
+  else
+    warn "部署配置检查未通过，请先修正再更新服务器"
+  fi
+else
+  warn "未检测到 node，跳过部署配置检查（可直接运行 node scripts/check-deploy-config.mjs 手动检查）"
+fi
+
+echo ""
+info "在服务器上更新:"
+echo "  cd /opt/pet"
+echo "  docker compose pull && docker compose up -d"
+echo ""
+
 
 #如下手工自用
 if(false)

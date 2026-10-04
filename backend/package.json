@@ -10,6 +10,8 @@
     "dev": "nodemon src/server.js",
     "//dev": "【开发调试】代码改完自动重启，只在自己电脑上开发时用，服务器部署不要选。",
     "test": "node tests/run-api-tests.js",
+    "check:deploy": "node ../scripts/check-deploy-config.mjs",
+    "//check:deploy": "【部署自检】读 docker-compose.yml 与 backend/.env，核对容器/宿主机/本地开发三处端口是否对得上。换端口后跑一下，能自动抓出「只改了一半」的配置。",
     "//test": "【自动测试】跑接口测试用，部署不需要。",
     "//说明1": "===== setup 系列：数据库初始化（仅全新空库第一次部署时执行） =====",
     "setup": "node scripts/setup.js",
