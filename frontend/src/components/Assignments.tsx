@@ -5,7 +5,7 @@ import { useAuthStore } from '../store/authStore';
 import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
 import { getMySubject } from '../utils/subjects';
 import dayjs from 'dayjs';
-import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined } from '@ant-design/icons';
+import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import CelebrationAnimation from './CelebrationAnimation';
 import PaperRegister from './PaperRegister';
 import PaperBatchRegister from './PaperBatchRegister';
@@ -45,6 +45,9 @@ interface GeneratedResult {
   description: string;
   subject: string;
   question_type: string;
+  question_types?: string[];
+  spec_summary?: { question_type: string; type_label: string; difficulty: string; requested: number; generated: number }[];
+  warning?: string;
   question_count: number;
   requested_count?: number;
   shortfall?: number;
@@ -85,6 +88,13 @@ const difficultyOptions = [
   { value: 'medium', label: '中等' },
   { value: 'hard', label: '困难' }
 ];
+
+// 一次配置多种题型时，后端会把作业的 question_type 记成 mixed
+const MIXED_TYPE = 'mixed';
+const questionTypeLabel = (type: string) =>
+  type === MIXED_TYPE ? '混合题型' : (typeOptions.find(t => t.value === type)?.label || type);
+
+const defaultTypeSpec = () => ({ question_type: 'choice_single', count: 5, difficulty: 'medium' });
 
 interface AssignmentsProps {
   onNavigate?: (menu: string) => void;
@@ -314,20 +324,43 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       if (await discardGeneration(generatedData?.usage_id)) {
         loadGenLimit();
       }
+
+      // 按知识点 / 按详细要求出题：可以一次配置多种题型，各自指定数量与难度
+      const rawSpecs: any[] = Array.isArray(values.type_specs) ? values.type_specs : [];
+      const specs = rawSpecs
+        .filter((r: any) => r && r.question_type)
+        .map((r: any) => ({
+          question_type: r.question_type,
+          count: Math.max(1, parseInt(r.count, 10) || 5),
+          difficulty: r.difficulty || 'medium'
+        }));
+      if (specs.length === 0) {
+        message.error('请至少添加一种题型');
+        return;
+      }
+      if (new Set(specs.map((s: any) => s.question_type)).size !== specs.length) {
+        message.error('同一种题型只能添加一行，请直接调整那一行的数量');
+        return;
+      }
+
       const payload: any = {
         subject: values.subject,
-        difficulty: values.difficulty,
-        question_type: values.question_type,
-        count: values.count || 10,
         grade_level: values.grade_level || '',
         mode: genMode
       };
-      if (genMode === 'topic') {
-        payload.topic = values.topic;
-      } else if (genMode === 'requirements') {
-        payload.requirements = values.requirements;
-      } else {
+      if (genMode === 'paste') {
+        // 粘贴整理模式的题量与题型由素材决定，仍走单题型
+        payload.question_type = values.question_type;
+        payload.difficulty = values.difficulty || 'medium';
+        payload.count = values.count || 10;
         payload.raw_text = values.raw_text;
+      } else {
+        payload.type_specs = specs;
+        if (genMode === 'topic') {
+          payload.topic = values.topic;
+        } else {
+          payload.requirements = values.requirements;
+        }
       }
       const res = await assignmentAPI.generateQuestions(payload, aiTimeout);
       setGeneratedData(res.data as GeneratedResult);
@@ -343,10 +376,16 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       };
       setShowVariantQuestions({});
       setCreateModalTab('preview');
+      if (res.data.warning) {
+        message.warning(res.data.warning);
+      }
       if (res.data.shortfall > 0) {
         message.warning(`AI 本次只生成了 ${res.data.question_count} 道（目标 ${res.data.requested_count} 道），可再次点击生成补齐剩余题目`);
       } else {
-        message.success(`成功生成 ${res.data.question_count} 道题目（共${res.data.total_generated}道含变体）`);
+        const typeSummary = (res.data.question_types || []).length > 1
+          ? `${res.data.question_types.length} 种题型`
+          : '';
+        message.success(`成功生成 ${res.data.question_count} 道题目${typeSummary ? `（${typeSummary}）` : ''}，共${res.data.total_generated}道含变体`);
       }
       loadGenLimit();
     } catch (e: any) {
@@ -1227,7 +1266,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     )},
     { title: '班级', dataIndex: 'class_name', key: 'class_name', responsive: ['md'] as any, render: (name: string) => name ? <Tag color="green">{name}</Tag> : <Tag>未分班</Tag> },
     { title: '科目', dataIndex: 'subject', key: 'subject', render: (subject: string) => <Tag color="blue">{subject}</Tag> },
-    { title: '题型', dataIndex: 'question_type', key: 'question_type', responsive: ['md'] as any, render: (type: string) => <Tag color="purple">{typeOptions.find(t => t.value === type)?.label || type}</Tag> },
+    { title: '题型', dataIndex: 'question_type', key: 'question_type', responsive: ['md'] as any, render: (type: string) => <Tag color="purple">{questionTypeLabel(type)}</Tag> },
     { title: '题目数', dataIndex: 'question_count', key: 'question_count', responsive: ['md'] as any, render: (count: number) => count ?? '-' },
     // 班级人数 / 已作答 是教师与管理员视角的统计，学生看到没有意义，故不显示
     ...(isTeacher ? [
@@ -1661,8 +1700,15 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           generateForm.resetFields();
           // 默认带出教师自己的任教科目，仍可手动改成其他科目
           if (mySubject) generateForm.setFieldsValue({ subject: mySubject });
+          // 出题规格默认给一行，用加号再加
+          generateForm.setFieldsValue({
+            type_specs: [defaultTypeSpec()],
+            question_type: 'choice_single',
+            difficulty: 'medium',
+            count: 10,
+          });
         }}
-        width={isMobile ? '95vw' : 780}
+        width={isMobile ? '95vw' : 860}
         destroyOnHidden
         footer={null}
       >
@@ -1694,10 +1740,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     </Form.Item>
                   </Col>
                   <Col xs={24} sm={12}>
-                    <Form.Item name="question_type" label="题型（每次仅一种）" rules={[{ required: true }]}>
-                      <Select placeholder="选择题型">
-                        {typeOptions.map(t => <Option key={t.value} value={t.value}>{t.label}</Option>)}
-                      </Select>
+                    <Form.Item name="grade_level" label="年级（可选）">
+                      <Input placeholder="如：高一、初三" />
                     </Form.Item>
                   </Col>
                 </Row>
@@ -1708,7 +1752,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 )}
                 {genMode === 'requirements' && (
                   <Form.Item name="requirements" label="详细作业要求" rules={[{ required: true, message: '请填写详细的作业要求' }]} preserve={false}>
-                    <TextArea rows={6} maxLength={2000} showCount placeholder={'用一段话详细描述你想布置的作业要求，AI会按要求生成题目。例如：\n围绕本单元"光的折射"出题，重点考查折射角与入射角的关系，多出生活情境应用题，不要涉及全反射相关内容。'} />
+                    <TextArea rows={5} maxLength={2000} showCount placeholder={'用一段话详细描述你想布置的作业要求，AI会按要求生成题目。例如：\n围绕本单元"光的折射"出题，重点考查折射角与入射角的关系，多出生活情境应用题，不要涉及全反射相关内容。'} />
                   </Form.Item>
                 )}
                 {genMode === 'paste' && (
@@ -1716,31 +1760,96 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     <TextArea rows={10} maxLength={10000} showCount placeholder={'直接把已有的题目（可从Word/PDF/网页复制）粘贴到这里，格式不必规范。AI会自动整理成标准格式、补全答案和解析，然后进入下一步预览确认。'} />
                   </Form.Item>
                 )}
-                <Row gutter={16}>
-                  <Col xs={12} sm={8}>
-                    <Form.Item name="difficulty" label="难度" initialValue="medium">
-                      <Select>{difficultyOptions.map(d => <Option key={d.value} value={d.value}>{d.label}</Option>)}</Select>
-                    </Form.Item>
-                  </Col>
-                  {genMode !== 'paste' ? (
-                    <Col xs={12} sm={8}>
-                      <Form.Item name="count" label="题目数量" initialValue={10}>
-                        <InputNumber min={3} max={20} style={{ width: '100%' }} suffix="道" />
+
+                {/* 粘贴整理模式的题量由素材决定，题型/难度仍需单选；其余两种模式用下面的列表一次配多种题型 */}
+                {genMode === 'paste' ? (
+                  <Row gutter={16}>
+                    <Col xs={24} sm={8}>
+                      <Form.Item name="question_type" label="题型" rules={[{ required: true, message: '请选择题型' }]} preserve={false}>
+                        <Select placeholder="选择题型">
+                          {typeOptions.map(t => <Option key={t.value} value={t.value}>{t.label}</Option>)}
+                        </Select>
                       </Form.Item>
                     </Col>
-                  ) : (
-                    <Col xs={12} sm={8}>
+                    <Col xs={24} sm={8}>
+                      <Form.Item name="difficulty" label="难度" initialValue="medium" preserve={false}>
+                        <Select>{difficultyOptions.map(d => <Option key={d.value} value={d.value}>{d.label}</Option>)}</Select>
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={8}>
                       <Form.Item label="题目数量">
                         <Input disabled placeholder="由粘贴内容决定" />
                       </Form.Item>
                     </Col>
-                  )}
-                  <Col xs={12} sm={8}>
-                    <Form.Item name="grade_level" label="年级（可选）">
-                      <Input placeholder="如：高一、初三" />
-                    </Form.Item>
-                  </Col>
-                </Row>
+                  </Row>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>出题规格</div>
+                    <div style={{ color: '#999', fontSize: 12, marginBottom: 8 }}>
+                      一行代表一种题型，可分别设置数量和难度；点加号可一次生成多种题型的题目（仍只消耗 1 次生成额度）。
+                    </div>
+                    <Form.List name="type_specs">
+                      {(fields, { add, remove }) => (
+                        <>
+                          {fields.length === 0 && (
+                            <div style={{ color: '#999', fontSize: 13, marginBottom: 8 }}>还没有题型，请点下方按钮添加。</div>
+                          )}
+                          {fields.map((field, idx) => (
+                            <Row key={field.key} gutter={8} align="middle" style={{ marginBottom: 8 }}>
+                              <Col flex="auto">
+                                <Form.Item
+                                  {...field}
+                                  name={[field.name, 'question_type']}
+                                  rules={[{ required: true, message: '请选择题型' }]}
+                                  style={{ marginBottom: 0 }}
+                                >
+                                  <Select placeholder={`第 ${idx + 1} 行：题型`}>
+                                    {typeOptions.map(t => <Option key={t.value} value={t.value}>{t.label}</Option>)}
+                                  </Select>
+                                </Form.Item>
+                              </Col>
+                              <Col flex="0 0 120px">
+                                <Form.Item
+                                  {...field}
+                                  name={[field.name, 'count']}
+                                  rules={[{ required: true, message: '请填数量' }]}
+                                  style={{ marginBottom: 0 }}
+                                >
+                                  <InputNumber min={1} max={20} style={{ width: '100%' }} suffix="道" />
+                                </Form.Item>
+                              </Col>
+                              <Col flex="0 0 110px">
+                                <Form.Item {...field} name={[field.name, 'difficulty']} style={{ marginBottom: 0 }}>
+                                  <Select>
+                                    {difficultyOptions.map(d => <Option key={d.value} value={d.value}>{d.label}</Option>)}
+                                  </Select>
+                                </Form.Item>
+                              </Col>
+                              <Col flex="0 0 36px">
+                                <Popconfirm title="删除这一行的题型？" onConfirm={() => remove(field.name)} okText="删除" cancelText="取消">
+                                  <Button type="text" danger size="small" icon={<DeleteOutlined />} />
+                                </Popconfirm>
+                              </Col>
+                            </Row>
+                          ))}
+                          <Button
+                            type="dashed"
+                            block
+                            icon={<PlusOutlined />}
+                            onClick={() => {
+                              // 新行默认挑一个还没用过的题型，避免和已有行重复还要手动改
+                              const used = new Set(((generateForm.getFieldValue('type_specs') || []) as any[]).map((r) => r?.question_type));
+                              const next = typeOptions.find(t => !used.has(t.value))?.value || 'choice_single';
+                              add({ question_type: next, count: 5, difficulty: 'medium' });
+                            }}
+                          >
+                            加一种题型
+                          </Button>
+                        </>
+                      )}
+                    </Form.List>
+                  </>
+                )}
                 <Button type="primary" htmlType="submit" block icon={generating ? <LoadingOutlined /> : <RobotOutlined />} loading={generating} disabled={genLimit ? genLimit.daily_remaining <= 0 : false}>
                   {generating ? 'AI正在处理中...' : genMode === 'paste' ? '🤖 AI整理题目' : genMode === 'requirements' ? '🤖 AI按要求生成题目' : '🤖 AI生成题目'}
                 </Button>
@@ -1768,7 +1877,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 <div style={{ textAlign: 'center', color: '#999', fontSize: 12, marginTop: 8 }}>
                   {genMode === 'paste'
                     ? '提示：AI将逐题整理粘贴的原文并补全答案/解析，题目数量以实际内容为准（不含变体）'
-                    : '提示：实际将生成 N×3 道题（每道题有2个变体），用于学生做错时提供相似新题'}
+                    : '提示：客观题（单选/多选/判断/填空）实际生成 N×3 道，每道题配 2 个相似变体；主观题按 N 道生成。'}
                 </div>
               </Form>
             )
@@ -1786,7 +1895,17 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     ? `AI已整理${generatedData.question_count}道题目，请逐题检查内容与答案是否正确，点击"编辑"可修改`
                     : `共${generatedData.question_count}道主题，含${generatedData.total_generated}道含变体。点击"编辑"可修改题目内容/答案，点击"▼ 查看变体题目"查看备用题`}
                   style={{ marginBottom: 12 }} 
+                  description={generatedData.warning}
                 />
+                {generatedData.spec_summary && generatedData.spec_summary.length > 1 && (
+                  <div style={{ marginBottom: 12 }}>
+                    {generatedData.spec_summary.map((s, i) => (
+                      <Tag key={i} color="purple" style={{ marginBottom: 4 }}>
+                        {s.type_label} · {difficultyOptions.find(d => d.value === s.difficulty)?.label || s.difficulty} · 目标 {s.requested} 道 / 实得 {s.generated} 道
+                      </Tag>
+                    ))}
+                  </div>
+                )}
                 <div style={{ maxHeight: 500, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>
                   {generatedData.questions.map((q, i) => (
                     <div key={i} style={{ padding: '10px 12px', background: i % 2 === 0 ? '#fafafa' : '#fff', borderRadius: 6, marginBottom: 6 }}>

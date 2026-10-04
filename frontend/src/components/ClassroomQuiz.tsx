@@ -2,13 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Card, Table, Button, Modal, Form, Input, Select, InputNumber,
   message, Space, Tag, Tabs, Descriptions, Row, Col, Typography,
-  List, Avatar, Popconfirm, Empty, Badge, Spin, Radio, Checkbox, Alert, Upload, Divider
+  List, Avatar, Popconfirm, Empty, Badge, Spin, Radio, Checkbox, Alert, Upload
 } from 'antd';
 import {
   PlusOutlined, GiftOutlined, CheckCircleOutlined,
   UserOutlined, EyeOutlined, PlayCircleOutlined, RobotOutlined,
   UserSwitchOutlined, SearchOutlined, DeleteOutlined, CodeOutlined,
-  CopyOutlined, DownloadOutlined, UploadOutlined, FileTextOutlined,
+  CopyOutlined, DownloadOutlined, UploadOutlined,
   KeyOutlined, ApiOutlined
 } from '@ant-design/icons';
 import { classroomQuizAPI, questionBankAPI, itemAPI, equipmentAPI, adminAPI, agentTokenAPI, agentAPI } from '../utils/api';
@@ -299,7 +299,10 @@ const ClassroomQuiz: React.FC = () => {
   const [importText, setImportText] = useState('');
   const [importedQuestions, setImportedQuestions] = useState<any[]>([]);
   const [importSelected, setImportSelected] = useState<Set<number>>(new Set());
-  const [formatModalOpen, setFormatModalOpen] = useState(false);
+  // AI 录入两种方式左右分栏展示，避免两种路径的内容堆在同一屏让老师无所适从
+  const [aiImportTab, setAiImportTab] = useState<'direct' | 'paste'>('direct');
+  // 方式一里的「接口地址 / 身份令牌」默认折叠：Skill 文件已包含二者，需要手抄时才展开
+  const [showAgentRaw, setShowAgentRaw] = useState(false);
   const [previewHtml, setPreviewHtml] = useState<string>('');
   const [aiRequirement, setAiRequirement] = useState('');
 
@@ -1025,7 +1028,7 @@ const ClassroomQuiz: React.FC = () => {
           setImportSelected(new Set());
         }}
         onOk={() => createForm.submit()}
-        width={760}
+        width={880}
       >
         <Form form={createForm} layout="vertical" onFinish={handleCreate}>
           <Row gutter={16}>
@@ -1333,17 +1336,54 @@ const ClassroomQuiz: React.FC = () => {
           )}
 
           {createSource === 'ai_import' && (
-            <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 12, marginBottom: 16 }}>
-              {/* 方式一：AI 直连（推荐）——AI 自己带着身份令牌调后端写数据，不用复制粘贴 */}
-              <div style={{ border: '1px solid #bae0ff', background: '#f0f8ff', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                  方式一：让 AI 直接提交（推荐）
-                </div>
-                <div style={{ fontSize: 12, color: '#555', marginBottom: 8 }}>
-                  把你自己的 AI 助手（WorkBuddy / CodeBuddy 等）接入后，对它说「出 5 道题并带上课件」，
-                  它会带着下面的身份令牌直接调用后端接口写入，不需要把题目复制粘贴回来。
-                </div>
+            <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: '12px 4px 12px 12px', marginBottom: 16 }}>
+              {/* 两种录入方式左右分栏（tabPosition="left"）：每栏只讲一件事，互不干扰 */}
+              <Tabs
+                tabPosition="left"
+                activeKey={aiImportTab}
+                onChange={(k) => setAiImportTab(k as 'direct' | 'paste')}
+                style={{ marginBottom: 0 }}
+                items={[
+    {
+      key: 'direct',
+      label: '方式一：AI 直接提交（推荐）',
+      children: (
+        <div style={{ border: '1px solid #bae0ff', background: '#f0f8ff', borderRadius: 8, padding: 12 }}>
+          <ol style={{ margin: '0 0 12px', paddingLeft: 20, fontSize: 13, color: '#333', lineHeight: 1.9 }}>
+            <li>点「下载 Skill 文件」，里面已写好接口地址和你的身份令牌。</li>
+            <li>把该文件放进 AI 助手（CodeBuddy / WorkBuddy 等）的 skills 目录。</li>
+            <li>直接对它说「出 5 道题并带上课件」，题目会自动写入本页，无需复制粘贴。</li>
+          </ol>
 
+          {!agentTokenPlain && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="还没有身份令牌"
+              description="令牌相当于你的身份，AI 靠它写入题目。请先生成令牌，再下载 Skill 文件。"
+            />
+          )}
+
+          <Space wrap>
+            <Button type="primary" icon={<DownloadOutlined />} onClick={downloadAgentSkill} disabled={!agentTokenPlain}>
+              下载 Skill 文件（含地址与令牌）
+            </Button>
+            <Button type={agentTokenPlain ? 'default' : 'primary'} icon={<KeyOutlined />} loading={agentCreating} onClick={handleCreateAgentToken}>
+              {agentTokenList.length > 0 ? '重新生成令牌' : '生成令牌'}
+            </Button>
+            <Button icon={<ApiOutlined />} loading={agentTesting} disabled={!agentTokenPlain} onClick={() => testAgentConnect()}>
+              测试连接
+            </Button>
+          </Space>
+
+          {/* 地址与令牌默认收起：Skill 文件里已经有了，只有需要手动配置时才展开看 */}
+          <div style={{ marginTop: 10 }}>
+            <a style={{ fontSize: 12 }} onClick={() => setShowAgentRaw((v) => !v)}>
+              {showAgentRaw ? '收起地址与令牌' : '需要手动配置？查看地址与令牌'}
+            </a>
+            {showAgentRaw && (
+              <div style={{ marginTop: 8 }}>
                 <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>接口地址</div>
                 <Space.Compact style={{ width: '100%', marginBottom: 10 }}>
                   <Input readOnly value={agentBaseUrl} style={{ fontFamily: 'Consolas, monospace' }} />
@@ -1352,7 +1392,7 @@ const ClassroomQuiz: React.FC = () => {
 
                 <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>身份令牌（等同你的身份，勿外传）</div>
                 {agentTokenPlain ? (
-                  <Space.Compact style={{ width: '100%', marginBottom: 6 }}>
+                  <Space.Compact style={{ width: '100%' }}>
                     <Input readOnly value={agentTokenPlain} style={{ fontFamily: 'Consolas, monospace' }} />
                     <Button icon={<CopyOutlined />} onClick={() => copyText(agentTokenPlain, '令牌已复制')}>复制</Button>
                   </Space.Compact>
@@ -1360,133 +1400,140 @@ const ClassroomQuiz: React.FC = () => {
                   <Alert
                     type="warning"
                     showIcon
-                    style={{ marginBottom: 8 }}
                     message="当前没有可用令牌明文"
                     description="令牌只在生成时显示一次。若已生成过但忘了保存，请点「重新生成」后再下载 Skill 文件。"
                   />
                 )}
-
-                <Space wrap>
-                  <Button type="primary" icon={<KeyOutlined />} loading={agentCreating} onClick={handleCreateAgentToken}>
-                    {agentTokenList.length > 0 ? '重新生成令牌' : '生成令牌'}
-                  </Button>
-                  <Button icon={<ApiOutlined />} loading={agentTesting} onClick={() => testAgentConnect()}>
-                    测试连接
-                  </Button>
-                  <Button icon={<DownloadOutlined />} onClick={downloadAgentSkill}>下载 Skill 文件（含地址与令牌）</Button>
-                  <Button icon={<FileTextOutlined />} onClick={() => setFormatModalOpen(true)}>查看接口文档</Button>
-                </Space>
-
-                {agentInfo && (
-                  <div style={{ marginTop: 10, background: '#fff', border: '1px solid #e6f4ff', borderRadius: 6, padding: 8, fontSize: 12 }}>
-                    <div>
-                      连接成功：当前身份 <b>{agentInfo.teacher?.real_name || agentInfo.teacher?.username}</b>
-                      （{agentInfo.teacher?.role === 'admin' ? '管理员' : '教师'}）
-                    </div>
-                    <div style={{ marginTop: 4 }}>
-                      任教班级：
-                      {(agentInfo.classes || []).length === 0 ? '未分配' : (agentInfo.classes || []).map((c: any) => (
-                        <Tag key={c.id} color={c.role === 'head_teacher' ? 'gold' : 'blue'}>
-                          {c.name}（{c.role === 'head_teacher' ? '班主任' : '任课教师'}{c.subject ? ` · ${c.subject}` : ''}）
-                        </Tag>
-                      ))}
-                    </div>
-                    {agentInfo.gen_quota && (
-                      <div style={{ marginTop: 4, color: '#888' }}>
-                        今日剩余 AI 生成次数：{agentInfo.gen_quota.daily_remaining} / {agentInfo.gen_quota.daily_limit}（AI 直连提交题目不消耗次数）
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {agentTokenList.length > 0 && (
-                  <div style={{ marginTop: 10 }}>
-                    <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>我的令牌</div>
-                    {agentTokenList.map((t) => (
-                      <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '3px 0' }}>
-                        <Tag color={t.revoked_at ? 'default' : 'green'}>{t.token_prefix}</Tag>
-                        <span style={{ color: '#888' }}>{t.name}</span>
-                        <span style={{ color: '#aaa' }}>
-                          {t.last_used_at ? `最近使用 ${new Date(String(t.last_used_at).replace(' ', 'T')).toLocaleString('zh-CN')}` : '尚未使用'}
-                        </span>
-                        <Popconfirm title="吊销后 AI 立即无法访问，确定？" onConfirm={() => handleRevokeAgentToken(t.id)}>
-                          <a style={{ color: '#ff4d4f' }}>吊销</a>
-                        </Popconfirm>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
+            )}
+          </div>
 
-              {/* 方式二：手动粘贴（AI 不方便联网时的兜底） */}
-              <Divider style={{ margin: '4px 0 12px' }} orientation="left" plain>方式二：手动粘贴 AI 返回的题目（兜底）</Divider>
-
-              <Space wrap style={{ marginBottom: 12 }}>
-                <Button
-                  icon={<CopyOutlined />}
-                  onClick={() => copyText(
-                    AI_IMPORT_PROMPT + (aiRequirement.trim()
-                      ? aiRequirement.trim()
-                      : `${createForm.getFieldValue('subject') || '（科目）'}：${createForm.getFieldValue('title') || '（练习主题）'}，出 5 道课堂抢答题。`),
-                    '提示词已复制，发给 AI 即可'
-                  )}
-                >
-                  复制 AI 提示词
-                </Button>
-                <Button icon={<DownloadOutlined />} onClick={downloadSkill}>下载提示词 Skill（粘贴用）</Button>
-              </Space>
-
-              <Input.TextArea
-                rows={2}
-                value={aiRequirement}
-                onChange={(e) => setAiRequirement(e.target.value)}
-                placeholder="补充你的出题需求（会拼在提示词末尾）。例：五年级数学，分数的加减法，出 6 道抢答题，每题配一个可点击演示的 HTML 课件。"
-                style={{ marginBottom: 12 }}
-              />
-
-              <div style={{ marginBottom: 8, fontSize: 13 }}>粘贴 AI 返回的题目数据（JSON）</div>
-              <Input.TextArea
-                rows={6}
-                value={importText}
-                onChange={(e) => setImportText(e.target.value)}
-                placeholder={'{\n  "title": "第三单元随堂练习",\n  "subject": "数学",\n  "questions": [\n    { "question_text": "题干", "answer_text": "参考答案", "courseware_html": "<!DOCTYPE html>...</html>" }\n  ]\n}'}
-              />
-              <Space wrap style={{ marginTop: 8 }}>
-                <Upload accept=".json,.txt,.md,.html,.htm" showUploadList={false} beforeUpload={handleImportFile}>
-                  <Button icon={<UploadOutlined />}>上传 JSON / HTML 文件</Button>
-                </Upload>
-                <Button type="primary" icon={<RobotOutlined />} onClick={() => handleParseImport()}>
-                  解析预览
-                </Button>
-              </Space>
-
-              {importedQuestions.length > 0 && (
-                <div style={{ maxHeight: 200, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8, marginTop: 12 }}>
-                  {importedQuestions.map((q, i) => (
-                    <div key={i} style={{ padding: '6px 4px', borderBottom: '1px dashed #eee' }}>
-                      <Checkbox
-                        checked={importSelected.has(i)}
-                        onChange={(e) => {
-                          const s = new Set(importSelected);
-                          if (e.target.checked) s.add(i); else s.delete(i);
-                          setImportSelected(s);
-                        }}
-                      />
-                      <span style={{ marginLeft: 8 }}>{i + 1}. {q.question_text}</span>
-                      {q.answer_text && <Tag color="green" style={{ marginLeft: 8 }}>答案: {q.answer_text}</Tag>}
-                      {q.courseware_html && (
-                        <>
-                          <Tag color="blue" style={{ marginLeft: 8 }}>课件</Tag>
-                          <Button size="small" type="link" onClick={() => setPreviewHtml(q.courseware_html)}>预览</Button>
-                        </>
-                      )}
-                    </div>
-                  ))}
+          {agentInfo && (
+            <div style={{ marginTop: 10, background: '#fff', border: '1px solid #e6f4ff', borderRadius: 6, padding: 8, fontSize: 12 }}>
+              <div>
+                连接成功：当前身份 <b>{agentInfo.teacher?.real_name || agentInfo.teacher?.username}</b>
+                （{agentInfo.teacher?.role === 'admin' ? '管理员' : '教师'}）
+              </div>
+              <div style={{ marginTop: 4 }}>
+                任教班级：
+                {(agentInfo.classes || []).length === 0 ? '未分配' : (agentInfo.classes || []).map((c: any) => (
+                  <Tag key={c.id} color={c.role === 'head_teacher' ? 'gold' : 'blue'}>
+                    {c.name}（{c.role === 'head_teacher' ? '班主任' : '任课教师'}{c.subject ? ` · ${c.subject}` : ''}）
+                  </Tag>
+                ))}
+              </div>
+              {agentInfo.gen_quota && (
+                <div style={{ marginTop: 4, color: '#888' }}>
+                  今日剩余 AI 生成次数：{agentInfo.gen_quota.daily_remaining} / {agentInfo.gen_quota.daily_limit}（AI 直连提交题目不消耗次数）
                 </div>
               )}
-              <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
-                课件不是必须的：没带 courseware_html 也能正常导入。已勾选 {importSelected.size} 道。
-              </div>
+            </div>
+          )}
+
+          {agentTokenList.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>我的令牌</div>
+              {agentTokenList.map((t) => (
+                <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '3px 0' }}>
+                  <Tag color={t.revoked_at ? 'default' : 'green'}>{t.token_prefix}</Tag>
+                  <span style={{ color: '#888' }}>{t.name}</span>
+                  <span style={{ color: '#aaa' }}>
+                    {t.last_used_at ? `最近使用 ${new Date(String(t.last_used_at).replace(' ', 'T')).toLocaleString('zh-CN')}` : '尚未使用'}
+                  </span>
+                  <Popconfirm title="吊销后 AI 立即无法访问，确定？" onConfirm={() => handleRevokeAgentToken(t.id)}>
+                    <a style={{ color: '#ff4d4f' }}>吊销</a>
+                  </Popconfirm>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )
+    },
+    {
+      key: 'paste',
+      label: '方式二：手动粘贴 AI 结果',
+      children: (
+        <div>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="AI 不能联网时用这一种"
+            description="把 Skill 文件或提示词交给 AI，让它按格式出题，再把结果粘贴到下面的框里。"
+          />
+
+          <Space wrap style={{ marginBottom: 12 }}>
+            <Button icon={<DownloadOutlined />} onClick={downloadSkill}>下载 Skill 文件（粘贴用）</Button>
+            <Button
+              icon={<CopyOutlined />}
+              onClick={() => copyText(
+                AI_IMPORT_PROMPT + (aiRequirement.trim()
+                  ? aiRequirement.trim()
+                  : `${createForm.getFieldValue('subject') || '（科目）'}：${createForm.getFieldValue('title') || '（练习主题）'}，出 5 道课堂抢答题。`),
+                '提示词已复制，发给 AI 即可'
+              )}
+            >
+              复制 AI 提示词
+            </Button>
+          </Space>
+
+          <Input.TextArea
+            rows={2}
+            value={aiRequirement}
+            onChange={(e) => setAiRequirement(e.target.value)}
+            placeholder="补充你的出题需求（会拼在提示词末尾）。例：五年级数学，分数的加减法，出 6 道抢答题。"
+            style={{ marginBottom: 12 }}
+          />
+
+          <div style={{ marginBottom: 8, fontSize: 13 }}>粘贴 AI 返回的题目数据（JSON）</div>
+          <Input.TextArea
+            rows={6}
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            placeholder={'{\n  "title": "第三单元随堂练习",\n  "subject": "数学",\n  "questions": [\n    { "question_text": "题干", "answer_text": "参考答案", "courseware_html": "<!DOCTYPE html>...</html>" }\n  ]\n}'}
+          />
+          <Space wrap style={{ marginTop: 8 }}>
+            <Upload accept=".json,.txt,.md,.html,.htm" showUploadList={false} beforeUpload={handleImportFile}>
+              <Button icon={<UploadOutlined />}>上传 JSON / HTML 文件</Button>
+            </Upload>
+            <Button type="primary" icon={<RobotOutlined />} onClick={() => handleParseImport()}>
+              解析预览
+            </Button>
+          </Space>
+
+          {importedQuestions.length > 0 && (
+            <div style={{ maxHeight: 200, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8, marginTop: 12 }}>
+              {importedQuestions.map((q, i) => (
+                <div key={i} style={{ padding: '6px 4px', borderBottom: '1px dashed #eee' }}>
+                  <Checkbox
+                    checked={importSelected.has(i)}
+                    onChange={(e) => {
+                      const s = new Set(importSelected);
+                      if (e.target.checked) s.add(i); else s.delete(i);
+                      setImportSelected(s);
+                    }}
+                  />
+                  <span style={{ marginLeft: 8 }}>{i + 1}. {q.question_text}</span>
+                  {q.answer_text && <Tag color="green" style={{ marginLeft: 8 }}>答案: {q.answer_text}</Tag>}
+                  {q.courseware_html && (
+                    <>
+                      <Tag color="blue" style={{ marginLeft: 8 }}>课件</Tag>
+                      <Button size="small" type="link" onClick={() => setPreviewHtml(q.courseware_html)}>预览</Button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
+            课件不是必须的：没带 courseware_html 也能正常导入。已勾选 {importSelected.size} 道。
+          </div>
+        </div>
+      )
+    },
+                ]}
+              />
             </div>
           )}
         </Form>
@@ -1834,44 +1881,6 @@ const ClassroomQuiz: React.FC = () => {
           srcDoc={previewHtml}
           style={{ width: '100%', height: '60vh', border: '1px solid #f0f0f0', borderRadius: 8, background: '#fff' }}
         />
-      </Modal>
-
-      {/* AI 工具录入：JSON 格式说明 */}
-      <Modal
-        title="AI 工具录入：题目数据格式"
-        open={formatModalOpen}
-        onCancel={() => setFormatModalOpen(false)}
-        footer={[
-          <Button key="copy" type="primary" icon={<CopyOutlined />} onClick={() => copyText(AI_IMPORT_PROMPT, '提示词已复制')}>
-            复制提示词
-          </Button>,
-          <Button key="close" onClick={() => setFormatModalOpen(false)}>关闭</Button>,
-        ]}
-        width={760}
-      >
-        <Paragraph>
-          把下面的格式给 AI（或直接下载 Skill 文件放到 CodeBuddy 的 skills 目录），AI 就会按这个格式产出题目。
-        </Paragraph>
-        <pre style={{ background: '#f6f8fa', padding: 12, borderRadius: 8, overflow: 'auto', fontSize: 12 }}>
-{`{
-  "title": "第三单元随堂练习",
-  "subject": "数学",
-  "questions": [
-    {
-      "question_text": "一个三角形有几个角？",
-      "answer_text": "3 个",
-      "courseware_html": "<!DOCTYPE html>...</html>"   // 可选
-    }
-  ]
-}`}
-        </pre>
-        <Divider style={{ margin: '12px 0' }} />
-        <ul style={{ color: '#666', fontSize: 13, paddingLeft: 20 }}>
-          <li>question_text：必填，题干纯文本。</li>
-          <li>answer_text：可选，参考答案，只给老师看。</li>
-          <li>courseware_html：可选，完整独立的 HTML 文档，课堂上可投屏并让学生操作后作答。</li>
-          <li>如果 AI 在 JSON 前后加了说明文字也没关系，解析时会自动把 JSON 抠出来。</li>
-        </ul>
       </Modal>
     </div>
   );

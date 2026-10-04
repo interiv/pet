@@ -401,7 +401,14 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
         </Form>
       </Modal>
 
-      <Modal title="编辑教师" open={editModalVisible} onOk={handleUpdate} onCancel={() => { setEditModalVisible(false); form.resetFields(); }}>
+      {/* 任教关系一行要放下「班级 + 身份 + 科目 + 删除」四块，默认 520px 会挤成一团，故加宽 */}
+      <Modal
+        title="编辑教师"
+        open={editModalVisible}
+        onOk={handleUpdate}
+        onCancel={() => { setEditModalVisible(false); form.resetFields(); }}
+        width={760}
+      >
         <Form form={form} layout="vertical">
           <Form.Item name="real_name" label="姓名"><Input placeholder="教师姓名" /></Form.Item>
           <Form.Item name="username" label="用户名（登录账号）"><Input /></Form.Item>

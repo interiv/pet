@@ -254,21 +254,20 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
   let usageStartedAt = 0;
   try {
     // token_usage 表由 004 号迁移创建，不再在请求时动态建表
-    const { subject, topic, difficulty = 'medium', question_type, count = 10, grade_level = '', mode = 'topic', requirements = '', raw_text = '' } = req.body;
+    const { subject, topic, difficulty = 'medium', question_type, count = 10, grade_level = '', mode = 'topic', requirements = '', raw_text = '', type_specs } = req.body;
     
     console.log('\n========== AI 生成作业请求 ==========');
-    console.log('📥 请求参数:', JSON.stringify({ mode, subject, topic, difficulty, question_type, count, grade_level, requirements_len: String(requirements || '').length, raw_text_len: String(raw_text || '').length }, null, 2));
+    console.log('📥 请求参数:', JSON.stringify({ mode, subject, topic, difficulty, question_type, count, grade_level, type_specs: Array.isArray(type_specs) ? type_specs.length : 0, requirements_len: String(requirements || '').length, raw_text_len: String(raw_text || '').length }, null, 2));
     console.log('👤 用户ID:', req.user.userId, '| 角色:', req.user.role);
     
     // 生成模式：topic=按知识点主题(原有) | requirements=按教师详细要求 | paste=粘贴题目AI整理
     const genMode = ['topic', 'requirements', 'paste'].includes(mode) ? mode : 'topic';
     const isPasteMode = genMode === 'paste';
     const isRequirementsMode = genMode === 'requirements';
-    const noVariants = isPasteMode || !isObjectiveType(question_type);
 
-    if (!subject || !question_type) {
+    if (!subject) {
       console.log('❌ 参数验证失败');
-      return res.status(400).json({ error: '请填写科目和题型' });
+      return res.status(400).json({ error: '请填写科目' });
     }
     if (genMode === 'topic' && !topic) {
       return res.status(400).json({ error: '请填写知识点主题' });
@@ -280,14 +279,40 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       return res.status(400).json({ error: '请粘贴题目内容' });
     }
 
-    const maxQuestionsPerGen = getSystemSetting('max_questions_per_generation', 20);
-    if (count > maxQuestionsPerGen) {
-      return res.status(400).json({ error: `单次最多生成 ${maxQuestionsPerGen} 道题目` });
+    /**
+     * 出题规格：前端可以用加号一次配置多行「题型 + 数量 + 难度」，
+     * 逐行生成后合并成一份作业（一次点击只扣一次生成额度）。
+     * 粘贴整理模式的题量由素材决定，仍只支持单题型，这里直接回落到老的单题型参数。
+     */
+    const rawSpecs = (!isPasteMode && Array.isArray(type_specs) && type_specs.length > 0)
+      ? type_specs
+      : [{ question_type, count, difficulty }];
+
+    const specs = [];
+    for (const raw of rawSpecs) {
+      const t = raw && (raw.question_type || raw.type);
+      // 提前挡掉没有对应提示词模板的题型，避免带着空 prompt 去打 LLM 还白扣一次额度
+      if (!t || !GEN_PROMPT_KEYS[t]) {
+        console.log('⚠️ 跳过不支持的题型:', t);
+        continue;
+      }
+      const specDifficulty = ['easy', 'medium', 'hard'].includes(raw.difficulty) ? raw.difficulty : difficulty;
+      const specCount = Math.max(1, parseInt(raw.count, 10) || count || 10);
+      // 同一题型重复出现时只保留第一行，避免同样的题白生成一遍
+      if (specs.some((s) => s.question_type === t)) continue;
+      specs.push({ question_type: t, count: specCount, difficulty: specDifficulty });
+    }
+    if (specs.length === 0) {
+      return res.status(400).json({ error: '请至少选择一种支持的题型' });
     }
 
-    // 提前挡掉没有对应提示词模板的题型，避免带着空 prompt 去打 LLM 还白扣一次额度
-    if (!GEN_PROMPT_KEYS[question_type]) {
-      return res.status(400).json({ error: `暂不支持生成该题型（${question_type}）` });
+    const maxQuestionsPerGen = getSystemSetting('max_questions_per_generation', 20);
+    const totalRequested = specs.reduce((sum, s) => sum + s.count, 0);
+    if (specs.some((s) => s.count > maxQuestionsPerGen)) {
+      return res.status(400).json({ error: `单个题型最多生成 ${maxQuestionsPerGen} 道题目` });
+    }
+    if (totalRequested > maxQuestionsPerGen * 2) {
+      return res.status(400).json({ error: `一次最多生成 ${maxQuestionsPerGen * 2} 道题目，请减少题型或数量` });
     }
 
     const { getChinaDate } = require('../config/timezone');
@@ -320,109 +345,144 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       timeout: timeoutMs / 1000 + '秒'
     });
 
-    const typeLabel = typeLabels[question_type] || question_type;
-    const actualCount = count * 3;
-
-    const effectiveTopic = topic || (isRequirementsMode ? String(requirements).trim().slice(0, 30) : `${subject}${typeLabel}练习`);
-
-    const taskDesc = fillTemplate(
-      getPrompt(isRequirementsMode ? 'gen_task_requirements' : 'gen_task_topic'),
-      { grade_level, effectiveTopic, subject, typeLabel, difficulty, requirements }
-    );
-
-    // 每组变体数：客观题 3 道一组（学生做错时给相似新题），主观题/粘贴整理不做变体
-    const VARIANT_STEP = noVariants ? 1 : 3;
-    // 目标题量（含变体）。粘贴整理模式由素材决定，传 0 表示不限制。
-    const targetCount = isPasteMode ? 0 : count * VARIANT_STEP;
-
-    let pasteVars = null;
-    let pasteKey = '';
-    if (isPasteMode) {
-      let formatSample = '';
-      let typeRules = '';
-      if (question_type === 'choice_single') {
-        formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"题目内容","options":["选项A内容","选项B内容","选项C内容","选项D内容"],"answer":"A","explanation":"详细解析","analysis":"解题步骤/思路","knowledge_point":"细粒度知识点"}]}`;
-        typeRules = 'answer为单个正确选项字母（如"A"）；若原题缺少选项，请根据题意补全A/B/C/D四个选项；若选项数量不足四个，保持原有选项数量即可';
-      } else if (question_type === 'choice_multi') {
-        formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"题目内容","options":["选项A内容","选项B内容","选项C内容","选项D内容"],"answer":["A","C"],"explanation":"详细解析","analysis":"解题步骤","knowledge_point":"细粒度知识点"}]}`;
-        typeRules = 'answer必须是由正确选项字母组成的数组（如["A","C"]）；若原题缺少选项，请根据题意补全选项';
-      } else if (question_type === 'judgment') {
-        formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"判断题陈述内容","answer":true,"explanation":"为什么对或错的解析","analysis":"判断依据","knowledge_point":"细粒度知识点"}]}`;
-        typeRules = 'answer必须是布尔值true或false，判断题不需要options字段';
-      } else if (question_type === 'fill_blank') {
-        formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"含空位的题目（用______表示要填的部分）","answer":"应填入的内容","explanation":"详细解析","analysis":"解题步骤","knowledge_point":"细粒度知识点"}]}`;
-        typeRules = 'answer是填入空位的内容字符串（多个空用英文逗号分隔），填空题不需要options字段';
-      } else {
-        formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"题目要求","answer":"参考答案要点","explanation":"评分标准和解析","analysis":"答题思路指导","knowledge_point":"细粒度知识点"}]}`;
-        typeRules = 'answer为参考答案要点，主观题不需要options字段';
-      }
-      pasteVars = { subject, typeLabel, question_type, raw_text, formatSample, typeRules };
-      pasteKey = PASTE_PROMPT_KEYS[question_type] || 'gen_paste_essay';
-    }
-
-    /**
-     * 按本轮实际要生成的题量拼提示词。
-     * 「一次性要 30 道题」是判断题/多选题失败的主因——输出量过大会被模型
-     * 自身的长度上限截断。现在改成多轮：先要满量，拿不全就自动接着补齐。
-     */
-    const buildPrompt = (ask, note) => {
-      let base;
-      if (isPasteMode) {
-        base = fillTemplate(getPrompt(pasteKey), pasteVars);
-      } else {
-        const key = GEN_PROMPT_KEYS[question_type];
-        const want = ask || targetCount || actualCount;
-        base = fillTemplate(getPrompt(key), {
-          taskDesc,
-          actualCount: want,
-          count: Math.max(1, Math.round(want / VARIANT_STEP)),
-        });
-      }
-      return note ? `${base}\n\n${note}` : base;
-    };
-
-    console.log('\n📤 发送请求到 LLM 服务器...');
-    console.log('🎯 目标地址:', `${config.ai_base_url}/chat/completions`);
-    console.log('🤖 使用模型:', config.ai_model);
-    console.log('📝 首轮 Prompt 长度:', buildPrompt(targetCount || 0, '').length, '字符');
-    console.log('⏱️ 超时设置:', timeoutMs / 1000, '秒');
-    
     const maxTokensPerGen = getSystemSetting('max_tokens_per_generation', 18000);
+    const maxRounds = Math.max(1, getSystemSetting('ai_gen_max_rounds', 3));
 
     usageStartedAt = Date.now();
 
     // 先领取一次额度。后续只要没走到 res.json()，就一定会在 settle 时把它退还，
     // 因此「AI 失败/解析失败/返回空题」都不会再占用每日生成次数。
+    // 多个题型规格合并成一次生成：只扣当天的生成次数一次。
     usageId = beginUsage(req.user.userId, today, {
       model: config.ai_model,
       subject,
-      topic: effectiveTopic,
-      question_type,
-      count,
+      topic: topic || (isRequirementsMode ? String(requirements).trim().slice(0, 30) : `${subject}练习`),
+      question_type: specs.length === 1 ? specs[0].question_type : 'mixed',
+      count: totalRequested,
     });
     const usageTokens = { prompt: 0, completion: 0, total: 0 };
 
-    const maxRounds = Math.max(1, getSystemSetting('ai_gen_max_rounds', 3));
+    /**
+     * 按单个「题型 + 数量 + 难度」规格跑一轮完整的多轮补齐生成。
+     * 每种题型各自用各自的提示词与变体步长，返回归一化后的题目，交由调用方合并入库。
+     */
+    const runSpecGeneration = async (spec) => {
+      const specType = spec.question_type;
+      const specCount = spec.count;
+      const specDifficulty = spec.difficulty;
+      const specTypeLabel = typeLabels[specType] || specType;
+      // 每组变体数：客观题 3 道一组（学生做错时给相似新题），主观题/粘贴整理不做变体
+      const specVariantStep = isPasteMode || !isObjectiveType(specType) ? 1 : 3;
+      // 目标题量（含变体）。粘贴整理模式由素材决定，传 0 表示不限制。
+      const specTargetCount = isPasteMode ? 0 : specCount * specVariantStep;
+      const specEffectiveTopic = topic || (isRequirementsMode ? String(requirements).trim().slice(0, 30) : `${subject}${specTypeLabel}练习`);
 
-    const genResult = await collectQuestions({
-      config,
-      timeoutMs,
-      maxTokens: maxTokensPerGen,
-      type: question_type,
-      target: targetCount,
-      variants: VARIANT_STEP,
-      maxRounds,
-      buildPrompt,
-      onTokens: (u) => {
-        usageTokens.prompt += u.prompt_tokens || 0;
-        usageTokens.completion += u.completion_tokens || 0;
-        usageTokens.total += u.total_tokens || 0;
-      },
-      logger: (m) => console.log(m),
-    });
+      const specTaskDesc = fillTemplate(
+        getPrompt(isRequirementsMode ? 'gen_task_requirements' : 'gen_task_topic'),
+        { grade_level, effectiveTopic: specEffectiveTopic, subject, typeLabel: specTypeLabel, difficulty: specDifficulty, requirements }
+      );
+
+      let specPasteVars = null;
+      let specPasteKey = '';
+      if (isPasteMode) {
+        let formatSample = '';
+        let typeRules = '';
+        if (specType === 'choice_single') {
+          formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"题目内容","options":["选项A内容","选项B内容","选项C内容","选项D内容"],"answer":"A","explanation":"详细解析","analysis":"解题步骤/思路","knowledge_point":"细粒度知识点"}]}`;
+          typeRules = 'answer为单个正确选项字母（如"A"）；若原题缺少选项，请根据题意补全A/B/C/D四个选项；若选项数量不足四个，保持原有选项数量即可';
+        } else if (specType === 'choice_multi') {
+          formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"题目内容","options":["选项A内容","选项B内容","选项C内容","选项D内容"],"answer":["A","C"],"explanation":"详细解析","analysis":"解题步骤","knowledge_point":"细粒度知识点"}]}`;
+          typeRules = 'answer必须是由正确选项字母组成的数组（如["A","C"]）；若原题缺少选项，请根据题意补全选项';
+        } else if (specType === 'judgment') {
+          formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"判断题陈述内容","answer":true,"explanation":"为什么对或错的解析","analysis":"判断依据","knowledge_point":"细粒度知识点"}]}`;
+          typeRules = 'answer必须是布尔值true或false，判断题不需要options字段';
+        } else if (specType === 'fill_blank') {
+          formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"含空位的题目（用______表示要填的部分）","answer":"应填入的内容","explanation":"详细解析","analysis":"解题步骤","knowledge_point":"细粒度知识点"}]}`;
+          typeRules = 'answer是填入空位的内容字符串（多个空用英文逗号分隔），填空题不需要options字段';
+        } else {
+          formatSample = `{"topic":"整理后的主题(8-20字)","title":"建议的作业标题","description":"建议的作业描述","questions":[{"content":"题目要求","answer":"参考答案要点","explanation":"评分标准和解析","analysis":"答题思路指导","knowledge_point":"细粒度知识点"}]}`;
+          typeRules = 'answer为参考答案要点，主观题不需要options字段';
+        }
+        specPasteVars = { subject, typeLabel: specTypeLabel, question_type: specType, raw_text, formatSample, typeRules };
+        specPasteKey = PASTE_PROMPT_KEYS[specType] || 'gen_paste_essay';
+      }
+
+      /**
+       * 按本轮实际要生成的题量拼提示词。
+       * 「一次性要 30 道题」是判断题/多选题失败的主因——输出量过大会被模型
+       * 自身的长度上限截断。现在改成多轮：先要满量，拿不全就自动接着补齐。
+       */
+      const specBuildPrompt = (ask, note) => {
+        let base;
+        if (isPasteMode) {
+          base = fillTemplate(getPrompt(specPasteKey), specPasteVars);
+        } else {
+          const key = GEN_PROMPT_KEYS[specType];
+          const want = ask || specTargetCount || specCount * 3;
+          base = fillTemplate(getPrompt(key), {
+            taskDesc: specTaskDesc,
+            actualCount: want,
+            count: Math.max(1, Math.round(want / specVariantStep)),
+          });
+        }
+        return note ? `${base}\n\n${note}` : base;
+      };
+
+      console.log(`\n📤 [${specTypeLabel} × ${specCount} 道 · 难度 ${specDifficulty}] 发送请求到 LLM 服务器...`);
+      console.log('🎯 目标地址:', `${config.ai_base_url}/chat/completions`);
+      console.log('🤖 使用模型:', config.ai_model);
+      console.log('📝 首轮 Prompt 长度:', specBuildPrompt(specTargetCount || 0, '').length, '字符');
+      console.log('⏱️ 超时设置:', timeoutMs / 1000, '秒');
+
+      const result = await collectQuestions({
+        config,
+        timeoutMs,
+        maxTokens: maxTokensPerGen,
+        type: specType,
+        target: specTargetCount,
+        variants: specVariantStep,
+        maxRounds,
+        buildPrompt: specBuildPrompt,
+        onTokens: (u) => {
+          usageTokens.prompt += u.prompt_tokens || 0;
+          usageTokens.completion += u.completion_tokens || 0;
+          usageTokens.total += u.total_tokens || 0;
+        },
+        logger: (m) => console.log(m),
+      });
+
+      return {
+        spec,
+        typeLabel: specTypeLabel,
+        noVariants: specVariantStep === 1,
+        variantStep: specVariantStep,
+        effectiveTopic: specEffectiveTopic,
+        questions: result.questions,
+        parsed: result.lastPack || {},
+        rejectedCount: result.invalid.length,
+        rounds: result.rounds.length,
+      };
+    };
+
+    // 逐个规格生成：某个题型失败不影响其它题型，最后统一合并入库
+    const specResults = [];
+    const failedSpecs = [];
+    for (const spec of specs) {
+      let one = null;
+      try {
+        one = await runSpecGeneration(spec);
+      } catch (specErr) {
+        console.error(`❌ 题型 ${typeLabels[spec.question_type] || spec.question_type} 生成失败:`, specErr.message);
+      }
+      if (!one || one.questions.length === 0) {
+        failedSpecs.push(spec);
+        continue;
+      }
+      specResults.push(one);
+    }
 
     const elapsed = ((Date.now() - usageStartedAt) / 1000).toFixed(2);
-    console.log('\n⏱️ 总耗时:', elapsed, '秒 | 请求轮次:', genResult.rounds.length);
+    console.log('\n⏱️ 总耗时:', elapsed, '秒 | 成功规格:', specResults.length, '/', specs.length);
     console.log('📊 Token 使用: prompt=' + usageTokens.prompt + ', completion=' + usageTokens.completion + ', total=' + usageTokens.total);
 
     if (usageTokens.completion > 0) {
@@ -432,26 +492,19 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       }
     }
 
-    const questions = genResult.questions;
-    const parsed = genResult.lastPack || {};
-
     console.log('\n📊 最终结果:');
-    console.log('  - 有效题目数量:', questions.length, '/ 目标', targetCount || '由素材决定');
-    if (questions.length > 0) {
-      console.log('  - 第一题预览:', questions[0].content?.slice(0, 50) + '...');
-      console.log('  - 知识点分布:', [...new Set(questions.map(q => q.knowledge_point).filter(Boolean))].slice(0, 5).join(', '));
+    for (const r of specResults) {
+      console.log(`  - ${r.typeLabel}（难度 ${r.spec.difficulty}）有效题目 ${r.questions.length} 道 / 目标 ${isPasteMode ? '由素材决定' : r.spec.count}，剔除不合格 ${r.rejectedCount} 道`);
     }
-    if (genResult.invalid.length > 0) {
-      console.log(`  - 已剔除不合格题目 ${genResult.invalid.length} 道:`);
-      genResult.invalid.slice(0, 5).forEach((x) => console.log(`      · ${x.content} → ${x.reason}`));
+    if (failedSpecs.length > 0) {
+      console.log('  - ⚠️ 未产出题目的题型:', failedSpecs.map((s) => typeLabels[s.question_type] || s.question_type).join('、'));
     }
 
-    if (questions.length === 0) {
+    if (specResults.length === 0) {
       console.log('❌ AI未能生成有效题目，本次额度已退还');
       settleUsage(usageId, 'failed', { ...usageTokens, duration: Date.now() - usageStartedAt });
-      const detail = genResult.lastError ? `：${genResult.lastError}` : '';
       return res.status(500).json({
-        error: `AI 生成失败${detail}，本次未消耗生成次数，请稍后重试`,
+        error: 'AI 生成失败，本次未消耗生成次数，请稍后重试',
         quota_refunded: true,
       });
     }
@@ -460,31 +513,37 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
     let variantGroupId = (maxGroupId?.max_id || 0) + 1;
     const processedQuestions = [];
 
-    for (let i = 0; i < questions.length; i++) {
-      // 题目已在上游完成校验与答案归一化：answer 一定是与题型匹配的字符串
-      const q = questions[i];
-      const answerStr = String(q.answer ?? '');
+    // 逐规格写入，变体分组按规格各自连续编号；startIdx 记录该规格在 insertedIds 中的起点，
+    // 后面拼装预览数据时按段切片即可
+    for (const r of specResults) {
+      r.startIdx = processedQuestions.length;
+      const specType = r.spec.question_type;
+      for (let i = 0; i < r.questions.length; i++) {
+        // 题目已在上游完成校验与答案归一化：answer 一定是与题型匹配的字符串
+        const q = r.questions[i];
+        const answerStr = String(q.answer ?? '');
 
-      processedQuestions.push({
-        subject,
-        topic: effectiveTopic,
-        difficulty,
-        type: question_type,
-        content: q.content,
-        options: q.options ? JSON.stringify(q.options) : null,
-        answer: answerStr,
-        explanation: q.explanation || '',
-        analysis: q.analysis || '',
-        hint: q.hint || '',
-        knowledge_point: (q.knowledge_point && String(q.knowledge_point).trim()) || effectiveTopic,
-        variant_group_id: noVariants ? null : variantGroupId,
-        variant_index: noVariants ? 0 : (i % VARIANT_STEP),
-        source: 'ai',
-        created_by: req.user.userId
-      });
+        processedQuestions.push({
+          subject,
+          topic: r.effectiveTopic,
+          difficulty: r.spec.difficulty,
+          type: specType,
+          content: q.content,
+          options: q.options ? JSON.stringify(q.options) : null,
+          answer: answerStr,
+          explanation: q.explanation || '',
+          analysis: q.analysis || '',
+          hint: q.hint || '',
+          knowledge_point: (q.knowledge_point && String(q.knowledge_point).trim()) || r.effectiveTopic,
+          variant_group_id: r.noVariants ? null : variantGroupId,
+          variant_index: r.noVariants ? 0 : (i % r.variantStep),
+          source: 'ai',
+          created_by: req.user.userId
+        });
 
-      if (!noVariants && (i + 1) % VARIANT_STEP === 0) {
-        variantGroupId++;
+        if (!r.noVariants && (i + 1) % r.variantStep === 0) {
+          variantGroupId++;
+        }
       }
     }
 
@@ -519,42 +578,53 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       console.warn('⚠️ 题目关联生成记录失败:', linkErr.message);
     }
 
-    const toDisplay = (idx) => ({
-      tempId: insertedIds[idx],
-      content: questions[idx].content,
-      options: questions[idx].options ? (typeof questions[idx].options === 'string' ? JSON.parse(questions[idx].options) : questions[idx].options) : null,
-      answer: questions[idx].answer !== undefined ? (Array.isArray(questions[idx].answer) ? questions[idx].answer.join(',') : String(questions[idx].answer)) : '',
-      explanation: questions[idx].explanation || '',
-      type: question_type,
-      knowledge_point: processedQuestions[idx]?.knowledge_point || effectiveTopic
-    });
-
     const displayQuestions = [];
+    let requestedCount = 0;
+    let shortfall = 0;
+    let rejectedCount = 0;
 
-    if (noVariants) {
-      insertedIds.forEach((_id, idx) => {
-        displayQuestions.push({ ...toDisplay(idx), hasVariants: false });
+    for (const r of specResults) {
+      const specIds = insertedIds.slice(r.startIdx, r.startIdx + r.questions.length);
+      const toDisplay = (idx) => ({
+        tempId: specIds[idx],
+        content: r.questions[idx].content,
+        options: r.questions[idx].options ? (typeof r.questions[idx].options === 'string' ? JSON.parse(r.questions[idx].options) : r.questions[idx].options) : null,
+        answer: r.questions[idx].answer !== undefined ? (Array.isArray(r.questions[idx].answer) ? r.questions[idx].answer.join(',') : String(r.questions[idx].answer)) : '',
+        explanation: r.questions[idx].explanation || '',
+        type: r.spec.question_type,
+        knowledge_point: processedQuestions[r.startIdx + idx]?.knowledge_point || r.effectiveTopic
       });
-    } else {
-      // 多轮补齐后实际题量可能少于目标数量，这里按真实生成的组数组织变体，避免下标越界
-      const availableGroups = Math.min(count, Math.floor(insertedIds.length / VARIANT_STEP));
-      if (availableGroups === 0) {
-        // 连一组变体都没凑齐，退化成普通列表展示，别把已经生成的题白白丢掉
-        insertedIds.forEach((_id, idx) => {
+
+      rejectedCount += r.rejectedCount;
+
+      if (r.noVariants) {
+        specIds.forEach((_id, idx) => {
           displayQuestions.push({ ...toDisplay(idx), hasVariants: false });
         });
-      }
-      for (let g = 0; g < availableGroups; g++) {
-        const baseIdx = g * VARIANT_STEP;
-        const groupIds = [];
-        const variants = [];
-        for (let v = 0; v < VARIANT_STEP; v++) {
-          const vIdx = baseIdx + v;
-          if (vIdx >= insertedIds.length) break;
-          groupIds.push(insertedIds[vIdx]);
-          if (v > 0) variants.push(toDisplay(vIdx));
+        requestedCount += r.questions.length;
+      } else {
+        // 多轮补齐后实际题量可能少于目标数量，这里按真实生成的组数组织变体，避免下标越界
+        const availableGroups = Math.min(r.spec.count, Math.floor(specIds.length / r.variantStep));
+        if (availableGroups === 0) {
+          // 连一组变体都没凑齐，退化成普通列表展示，别把已经生成的题白白丢掉
+          specIds.forEach((_id, idx) => {
+            displayQuestions.push({ ...toDisplay(idx), hasVariants: false });
+          });
         }
-        displayQuestions.push({ ...toDisplay(baseIdx), variantIds: groupIds, hasVariants: true, variants });
+        for (let g = 0; g < availableGroups; g++) {
+          const baseIdx = g * r.variantStep;
+          const groupIds = [];
+          const variants = [];
+          for (let v = 0; v < r.variantStep; v++) {
+            const vIdx = baseIdx + v;
+            if (vIdx >= specIds.length) break;
+            groupIds.push(specIds[vIdx]);
+            if (v > 0) variants.push(toDisplay(vIdx));
+          }
+          displayQuestions.push({ ...toDisplay(baseIdx), variantIds: groupIds, hasVariants: true, variants });
+        }
+        requestedCount += r.spec.count;
+        shortfall += Math.max(0, r.spec.count - (availableGroups || specIds.length));
       }
     }
 
@@ -567,21 +637,28 @@ router.post('/generate', authenticateToken, authorizeRole('teacher', 'admin'), a
       duration: Date.now() - usageStartedAt
     });
 
-    const resultCount = noVariants ? questions.length : displayQuestions.length;
-    // 多轮补齐后仍没凑够目标题量时告知前端，界面可以提示「本次只生成了 N 道，可再点一次继续补齐」
-    const shortfall = noVariants ? 0 : Math.max(0, count - displayQuestions.length);
+    const resultCount = displayQuestions.length;
+    const primary = specResults[0];
+    const combinedTypeLabel = specResults.map((r) => r.typeLabel).join('+');
+    const failedTypeLabels = failedSpecs.map((s) => typeLabels[s.question_type] || s.question_type);
 
     res.json({
       message: '生成成功',
-      title: parsed.title || `${effectiveTopic} - ${typeLabel}练习`,
-      description: parsed.description || `共${resultCount}道${effectiveTopic}相关${typeLabel}`,
+      title: primary.parsed.title || `${primary.effectiveTopic} - ${combinedTypeLabel}练习`,
+      description: primary.parsed.description || `共${resultCount}道${primary.effectiveTopic}相关${combinedTypeLabel}题目`,
       subject,
-      question_type,
+      // 多题型混合时用 mixed 占位：提交接口会把它当主观题处理，整份走AI 评阅，
+      // 避免客观题被按单一题型的口径判分。作业详情里按题型标签展示。
+      question_type: specResults.length === 1 ? primary.spec.question_type : 'mixed',
+      question_types: specResults.map((r) => r.spec.question_type),
+      spec_summary: specResults.map((r) => ({ question_type: r.spec.question_type, type_label: r.typeLabel, difficulty: r.spec.difficulty, requested: isPasteMode ? r.questions.length : r.spec.count, generated: r.questions.length })),
       question_count: resultCount,
-      requested_count: noVariants ? questions.length : count,
+      requested_count: requestedCount,
       shortfall,
-      rejected_count: genResult.invalid.length,
+      rejected_count: rejectedCount,
       total_generated: insertedIds.length,
+      // 部分题型没出题时如实告知，避免老师以为是自己配置错了
+      ...(failedTypeLabels.length > 0 ? { warning: `以下题型本次未生成出有效题目：${failedTypeLabels.join('、')}` } : {}),
       // 教师未发布而退出时，前端凭这个 id 撤销本次生成并退还额度
       usage_id: usageId,
       questions: displayQuestions,
