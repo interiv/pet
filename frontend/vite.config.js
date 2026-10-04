@@ -35,6 +35,14 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          // Vite 的动态导入预加载辅助函数（__vite__mapDeps）是一个极小的公共模块，
+          // 但它必须和「所有页面都要用的小工具」放在一起。
+          // 之前它被内联进了 vendor-antv（@ant-design/charts）这个 1.4MB 的 chunk，
+          // 结果登录页这种完全不需要图表的页面也被迫静态依赖它，
+          // 白白多下 1.4MB。这里显式兜底到 vendor-utils。
+          if (id.includes('vite/preload-helper') || id.includes('vite/modulepreload-polyfill')) {
+            return 'vendor-utils';
+          }
           if (id.includes('node_modules')) {
             if (id.includes('@ant-design/charts') || id.includes('@antv/')) return 'vendor-antv';
             if (id.includes('recharts')) return 'vendor-recharts';

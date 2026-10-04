@@ -55,22 +55,58 @@ const STARTED_AT = new Date().toISOString();
 const { db } = require('./config/database');
 const { isClassMember } = require('./middleware/classAccess');
 
-// 未配置 FRONTEND_URL 时（本地开发 / 首次部署）默认为空数组会拒绝所有跨域请求，
-// 这里回退到本地常用开发地址，避免出现「接口通但前端全被 CORS 拦掉」的假故障。
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173,http://localhost:3000')
+// ===== CORS 白名单 =====
+// 未配置 FRONTEND_URL 时回退到本地常用开发地址，避免出现「接口通但前端全被 CORS 拦掉」的假故障。
+//
+// 之前的实现有两个问题，导致线上出现「不允许的跨域请求」时无从排查：
+//   1. 拒绝时只说「不允许」，不打被拒绝的域名，日志里看不出是哪个 Origin 触发的；
+//   2. 完全精确匹配，所以协议/端口/尾斜杠/www 前缀任何一处不一致都会被拒。
+// 现在统一做规范化比较，并在开发环境放行 localhost 的任意端口（vite 换端口很常见）。
+const rawOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173,http://localhost:3000')
   .split(',')
-  .map(u => u.trim())
+  .map((u) => u.trim())
   .filter(Boolean);
 
+/** 规范化来源用于比较：统一小写、去掉结尾斜杠 */
+const normalizeOrigin = (u) => String(u || '').trim().replace(/\/+$/, '').toLowerCase();
+
+const allowedOrigins = rawOrigins.map(normalizeOrigin).filter(Boolean);
+const allowedOriginSet = new Set(allowedOrigins);
+const isProd = process.env.NODE_ENV === 'production';
+// 显式总开关：仅供内网/单机部署临时排障使用，生产环境不建议开启
+const allowAllOrigins = /^(1|true|yes)$/i.test(String(process.env.CORS_ALLOW_ALL || ''));
+
+/** 开发环境：放行 localhost / 127.0.0.1 的任意端口 */
+const isLocalhostOrigin = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(origin);
+
+/** @param {string|null|undefined} origin @returns {boolean} */
+function isOriginAllowed(origin) {
+  if (!origin) return true;                // curl / 移动端等无 Origin 的请求
+  if (allowAllOrigins) return true;
+  const o = normalizeOrigin(origin);
+  if (allowedOriginSet.has(o)) return true;
+  // 放行 http/https 互换之外的细微差异：www 前缀
+  if (allowedOriginSet.has(o.replace(/^https?:\/\/(www\.)/, (m, p) => m.replace('www.', '')))) return true;
+  if (!isProd && isLocalhostOrigin(origin)) return true;
+  return false;
+}
+
 console.log(`CORS 允许来源: ${allowedOrigins.join(', ') || '(无)'}`);
+if (!isProd) console.log('CORS 调试: 开发环境已放行 localhost / 127.0.0.1 的任意端口');
+if (allowAllOrigins) console.warn('⚠️ CORS_ALLOW_ALL 已开启：任何来源都能访问本接口，请勿用于生产');
 
 const app = express();
 const server = http.createServer(app);
 
 // Socket.IO 初始化（用于战斗和实时互动）
+// 与 HTTP 接口共用同一套来源判定，避免出现「接口通了但聊天连不上」的半通状态
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (isOriginAllowed(origin)) return callback(null, true);
+      console.error(`[CORS] Socket.IO 拒绝来源: ${origin || '(无)'}`);
+      callback(new Error('不允许的跨域请求'), false);
+    },
     methods: ['GET', 'POST']
   }
 });
@@ -83,13 +119,17 @@ app.use(helmet()); // 安全头
 app.use(compression()); // 压缩响应
 app.use(cors({
   origin: function (origin, callback) {
-    // 允许没有 origin 的请求（如移动应用、curl 等）
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('不允许的跨域请求'));
-    }
+    if (isOriginAllowed(origin)) return callback(null, true);
+    // 必须把被拒绝的 origin 打出来：否则只看到「不允许的跨域请求」，
+    // 根本无从判断是域名写错、端口变了，还是协议不一致
+    console.error(
+      `[CORS] 拒绝跨域请求：Origin="${origin}" 不在白名单中。\n` +
+      `[CORS] 当前白名单：${allowedOrigins.join(', ') || '(空)'}\n` +
+      `[CORS] 排查：①浏览器地址栏的协议+域名+端口是否与 FRONTEND_URL 完全一致；` +
+      `② 多实例部署时每个实例的 FRONTEND_URL 都要包含实际访问的域名；` +
+      `③ 若通过 IP 而非域名访问，把该 IP 也加进 FRONTEND_URL（用逗号分隔多个）。`
+    );
+    callback(new Error(`不允许的跨域请求（Origin: ${origin || '无'}）`));
   },
   credentials: true
 }));
