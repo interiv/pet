@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space, Radio, Checkbox, Progress, Card, Alert, Upload, Image, Divider, Empty, Statistic, Row, Col, Tabs, Badge, Popconfirm } from 'antd';
 import { assignmentAPI, adminAPI, classroomQuizAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
+import { getMySubject } from '../utils/subjects';
 import dayjs from 'dayjs';
 import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined } from '@ant-design/icons';
 import CelebrationAnimation from './CelebrationAnimation';
@@ -218,6 +219,13 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
   const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
   const isAdmin = user?.role === 'admin';
+
+  // 教师自己的任教科目：留作业时默认带出，老师仍可手动改成其他科目
+  const mySubject = useMemo(() => {
+    const teacherClasses = (user as any)?.teacher_classes;
+    const classId = selectedClass ?? (classes.length === 1 ? classes[0].id : undefined);
+    return getMySubject(teacherClasses, classId);
+  }, [user, selectedClass, classes]);
 
   useEffect(() => {
     if (user) {
@@ -1648,7 +1656,12 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           // 生成了但没发布就关闭：撤销本次生成并退还额度
           discardGeneration(pendingUsageId, true).then((ok) => { if (ok) loadGenLimit(); });
         }}
-        afterOpenChange={(open) => { if (open) generateForm.resetFields(); }}
+        afterOpenChange={(open) => {
+          if (!open) return;
+          generateForm.resetFields();
+          // 默认带出教师自己的任教科目，仍可手动改成其他科目
+          if (mySubject) generateForm.setFieldsValue({ subject: mySubject });
+        }}
         width={isMobile ? '95vw' : 780}
         destroyOnHidden
         footer={null}
@@ -1668,7 +1681,13 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 </Form.Item>
                 <Row gutter={16}>
                   <Col xs={24} sm={12}>
-                    <Form.Item name="subject" label="科目" rules={[{ required: true }]}>
+                    <Form.Item
+                      name="subject"
+                      label="科目"
+                      initialValue={mySubject}
+                      extra={mySubject ? `默认已选你的任教科目「${mySubject}」，可改成其他科目` : undefined}
+                      rules={[{ required: true }]}
+                    >
                       <Select placeholder="选择科目">
                         {subjectOptions.map(s => <Option key={s} value={s}>{s}</Option>)}
                       </Select>

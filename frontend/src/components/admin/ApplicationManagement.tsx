@@ -92,7 +92,12 @@ const ApplicationManagement: React.FC<{
       key: 'role',
       render: (r: string, record: any) => r === 'student'
         ? <Tag>学生</Tag>
-        : record.teacher_type === 'head_teacher' ? <Tag color="purple">班主任</Tag> : <Tag color="geekblue">任课教师</Tag>
+        : (
+          <Space size={4}>
+            {record.teacher_type === 'head_teacher' ? <Tag color="purple">班主任</Tag> : <Tag color="geekblue">任课教师</Tag>}
+            {record.subject ? <Tag color="cyan">{record.subject}</Tag> : null}
+          </Space>
+        )
     },
     { title: '状态', dataIndex: 'status', key: 'status', render: getStatusTag },
     { title: '申请时间', dataIndex: 'created_at', key: 'created_at', render: (t: string) => new Date(t).toLocaleString() },

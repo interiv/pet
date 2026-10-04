@@ -91,21 +91,26 @@ function applyApplicationToClass(application, reviewerId) {
     return { ok: true, classId: cls.id, className: cls.name, isHeadTeacher: false };
   }
 
-  // 教师申请
+  // 教师申请：注册时填的任教科目一并落到 class_teachers（布置作业时用它做默认科目）
   const existing = db.prepare('SELECT id FROM class_teachers WHERE class_id = ? AND teacher_id = ?')
     .get(cls.id, applicantId);
+  const applySubject = String(application.subject || '').trim().slice(0, 20) || null;
 
   if (isHeadTeacherApply) {
     if (existing) {
-      db.prepare(`UPDATE class_teachers SET role = 'head_teacher' WHERE id = ?`).run(existing.id);
+      db.prepare(`UPDATE class_teachers SET role = 'head_teacher', subject = COALESCE(?, subject) WHERE id = ?`)
+        .run(applySubject, existing.id);
     } else {
-      db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'head_teacher')`)
-        .run(cls.id, applicantId);
+      db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role, subject) VALUES (?, ?, 'head_teacher', ?)`)
+        .run(cls.id, applicantId, applySubject);
     }
     db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?').run(applicantId, cls.id);
   } else if (!existing) {
-    db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, 'teacher')`)
-      .run(cls.id, applicantId);
+    db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role, subject) VALUES (?, ?, 'teacher', ?)`)
+      .run(cls.id, applicantId, applySubject);
+  } else if (applySubject && !existing.subject) {
+    // 已在本班但没科目（历史数据）：补上申请时填的科目
+    db.prepare(`UPDATE class_teachers SET subject = ? WHERE id = ?`).run(applySubject, existing.id);
   }
 
   // 激活账号

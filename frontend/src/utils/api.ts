@@ -56,7 +56,12 @@ api.interceptors.response.use(
 
 // 认证相关 API
 export const authAPI = {
-  register: (data: { username: string; password: string; email?: string }) => 
+  register: (data: {
+    username: string; password: string; email?: string; real_name?: string; role?: string;
+    requested_class_id?: number; requested_class_ids?: number[]; teacher_type?: string;
+    /** 一行一条任教关系：班级 + 身份 + 科目 */
+    assignments?: Array<{ class_id: number; role: 'head_teacher' | 'teacher'; subject?: string }>;
+  }) =>
     api.post('/auth/register', data),
   
   login: (data: { username: string; password: string }) => 
@@ -357,6 +362,8 @@ export const adminAPI = {
     class_id?: number;
     class_ids?: number[];
     teacher_identity?: 'head_teacher' | 'teacher';
+    /** 一行一条任教关系：班级 + 身份 + 科目（与编辑教师共用同一结构） */
+    assignments?: Array<{ class_id: number; role: 'head_teacher' | 'teacher'; subject?: string }>;
   }) => api.post('/admin/teachers', data),
   getTeachers: (params?: { status?: string; search?: string }) => api.get('/admin/teachers', { params }),
   getPendingTeachers: () => api.get('/admin/pending-teachers'),
@@ -676,7 +683,9 @@ export const cardAPI = {
 export const classroomQuizAPI = {
   createQuiz: (data: {
     title: string; description?: string; subject?: string;
-    class_id: number; questions: { question_text: string }[];
+    class_id: number;
+    /** 题干必填；courseware_html 为该题附带的 HTML 课件（可选），answer_text 为参考答案（可选） */
+    questions: Array<{ question_text: string; courseware_html?: string; answer_text?: string }>;
   }) => api.post('/cards/classroom-quiz', data),
   getQuizzes: (params?: { class_id?: number; status?: string }) =>
     api.get('/cards/classroom-quiz', { params }),

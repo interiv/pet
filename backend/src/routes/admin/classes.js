@@ -61,7 +61,7 @@ router.get('/classes', authenticateToken, (req, res) => {
 
     const classesWithTeachers = classes.map(cls => {
       const teachers = db.prepare(`
-        SELECT ct.id as class_teacher_id, ct.role, u.id as teacher_id, u.username, u.real_name
+        SELECT ct.id as class_teacher_id, ct.role, ct.subject, u.id as teacher_id, u.username, u.real_name
         FROM class_teachers ct
         JOIN users u ON ct.teacher_id = u.id
         WHERE ct.class_id = ?
@@ -79,7 +79,7 @@ router.get('/classes', authenticateToken, (req, res) => {
 router.post('/classes/:id/teachers', authenticateToken, (req, res) => {
   try {
     const { id } = req.params;
-    const { teacher_id, role } = req.body;
+    const { teacher_id, role, subject } = req.body;
     const userId = req.user.userId;
     const userRole = req.user.role;
 
@@ -125,10 +125,11 @@ router.post('/classes/:id/teachers', authenticateToken, (req, res) => {
     }
 
     const addTeacher = db.transaction(() => {
+      const targetSubject = String(subject ?? '').trim().slice(0, 20) || null;
       const result = db.prepare(`
-        INSERT INTO class_teachers (class_id, teacher_id, role)
-        VALUES (?, ?, ?)
-      `).run(id, teacher_id, targetRole);
+        INSERT INTO class_teachers (class_id, teacher_id, role, subject)
+        VALUES (?, ?, ?, ?)
+      `).run(id, teacher_id, targetRole, targetSubject);
 
       // 关键：指定班主任时必须同步 classes.head_teacher_id，否则"我的班级"等依赖该字段的功能会失效
       if (targetRole === 'head_teacher') {
@@ -190,7 +191,7 @@ router.delete('/classes/:id/teachers/:teacherId', authenticateToken, (req, res) 
 router.put('/classes/:id/teachers/:teacherId', authenticateToken, (req, res) => {
   try {
     const { id, teacherId } = req.params;
-    const { role } = req.body || {};
+    const { role, subject } = req.body || {};
     const classId = parseInt(id, 10);
     const targetTeacherId = parseInt(teacherId, 10);
     const userId = req.user.userId;
@@ -246,6 +247,12 @@ router.put('/classes/:id/teachers/:teacherId', authenticateToken, (req, res) => 
     }
 
     const update = db.transaction(() => {
+      // 科目：传了就覆盖（传空字符串表示清空），没传则保持原值
+      if (subject !== undefined) {
+        const targetSubject = String(subject ?? '').trim().slice(0, 20) || null;
+        db.prepare('UPDATE class_teachers SET subject = ? WHERE class_id = ? AND teacher_id = ?')
+          .run(targetSubject, classId, targetTeacherId);
+      }
       db.prepare('UPDATE class_teachers SET role = ? WHERE class_id = ? AND teacher_id = ?')
         .run(targetRole, classId, targetTeacherId);
 

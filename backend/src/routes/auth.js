@@ -10,7 +10,7 @@ const { getChinaDate } = require('../config/timezone');
 // 用户注册
 router.post('/register', async (req, res) => {
   try {
-    const { username, password, email, real_name, role = 'student', requested_class_id, requested_class_ids, teacher_type } = req.body;
+    const { username, password, email, real_name, role = 'student', requested_class_id, requested_class_ids, teacher_type, assignments } = req.body;
 
     // 用户名统一去掉首尾空格，避免 " abc" 与 "abc" 被当作两个账号
     const uname = String(username || '').trim();
@@ -33,41 +33,68 @@ router.post('/register', async (req, res) => {
 
     // 教师类型的两种身份：班主任（head_teacher）/ 任课教师（teacher）
     const isTeacher = role === 'teacher';
-    const applyAs = isTeacher ? (teacher_type === 'teacher' ? 'teacher' : 'head_teacher') : 'student';
 
-    // 确定要申请的班级（班主任用单选 requested_class_id，任课教师用多选 requested_class_ids）
-    let applyClassIds = [];
-    if (role === 'student' && requested_class_id) {
-      applyClassIds = [parseInt(requested_class_id)];
-    } else if (isTeacher) {
-      const rawIds = Array.isArray(requested_class_ids) && requested_class_ids.length > 0
-        ? requested_class_ids
-        : (requested_class_id ? [requested_class_id] : []);
-      applyClassIds = rawIds.map((id) => parseInt(id)).filter((n) => Number.isFinite(n));
+    // 科目：自由文本，去空格后限长 20（留空 = 该教师在该班不固定科目）
+    const normalizeSubject = (raw) => {
+      const s = String(raw ?? '').trim();
+      return s ? s.slice(0, 20) : null;
+    };
+
+    // 一行一条任教关系：[{ class_id, role: 'head_teacher' | 'teacher', subject }]
+    // 教师注册页与管理员后台都用同一种结构，审批通过后原样落到 class_teachers
+    let applyRows = [];
+    if (isTeacher) {
+      if (Array.isArray(assignments) && assignments.length > 0) {
+        const seen = new Set();
+        for (const row of assignments) {
+          const classId = parseInt(row && (row.class_id ?? row.classId), 10);
+          if (!Number.isFinite(classId) || seen.has(classId)) continue;
+          seen.add(classId);
+          applyRows.push({
+            classId,
+            role: row.role === 'head_teacher' ? 'head_teacher' : 'teacher',
+            subject: normalizeSubject(row && (row.subject ?? row.subject_name)),
+          });
+        }
+      } else {
+        // 兼容旧写法：单一 teacher_type + requested_class_id / requested_class_ids
+        const rawIds = Array.isArray(requested_class_ids) && requested_class_ids.length > 0
+          ? requested_class_ids
+          : (requested_class_id ? [requested_class_id] : []);
+        const identity = teacher_type === 'teacher' ? 'teacher' : 'head_teacher';
+        applyRows = rawIds
+          .map((id) => parseInt(id))
+          .filter((n) => Number.isFinite(n))
+          .map((classId) => ({ classId, role: identity, subject: null }));
+      }
+    } else if (requested_class_id) {
+      const classId = parseInt(requested_class_id);
+      if (Number.isFinite(classId)) applyRows = [{ classId, role: 'student', subject: null }];
     }
-    // 去重，避免重复班级触发 class_applications 的唯一约束
-    applyClassIds = [...new Set(applyClassIds)];
+
+    const applyAs = applyRows.some((r) => r.role === 'head_teacher') ? 'head_teacher'
+      : (isTeacher ? 'teacher' : 'student');
 
     // 学生、教师都必须选择要加入的班级
-    if ((role === 'student' || isTeacher) && applyClassIds.length === 0) {
+    if ((role === 'student' || isTeacher) && applyRows.length === 0) {
       return res.status(400).json({ error: '请选择要加入的班级' });
     }
 
     // 班主任只能申请一个班级（成为班主任后如需加入其他班级，由管理员在后台操作）
-    if (applyAs === 'head_teacher' && applyClassIds.length > 1) {
+    if (applyRows.filter((r) => r.role === 'head_teacher').length > 1) {
       return res.status(400).json({ error: '班主任只能选择一个班级' });
     }
 
     // 验证班级是否存在；班主任只能申请尚无班主任的班级
     const classesWithHeadTeacher = [];
-    for (const classId of applyClassIds) {
-      const cls = db.prepare('SELECT id, name, head_teacher_id FROM classes WHERE id = ?').get(classId);
+    for (const row of applyRows) {
+      const cls = db.prepare('SELECT id, name, head_teacher_id FROM classes WHERE id = ?').get(row.classId);
       if (!cls) {
-        return res.status(400).json({ error: `班级 ID ${classId} 不存在` });
+        return res.status(400).json({ error: `班级 ID ${row.classId} 不存在` });
       }
-      if (applyAs === 'head_teacher') {
+      if (row.role === 'head_teacher') {
         const hasHeadTeacher = cls.head_teacher_id
-          || db.prepare(`SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(classId);
+          || db.prepare(`SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(row.classId);
         if (hasHeadTeacher) {
           classesWithHeadTeacher.push(cls.name);
         }
@@ -92,12 +119,12 @@ router.post('/register', async (req, res) => {
 
       const newUserId = result.lastInsertRowid;
 
-      for (const classId of applyClassIds) {
-        // role 受 CHECK 约束只能是 student/teacher，教师身份另存 teacher_type
+      for (const row of applyRows) {
+        // role 受 CHECK 约束只能是 student/teacher，教师身份另存 teacher_type，科目另存 subject
         db.prepare(`
-          INSERT INTO class_applications (user_id, class_id, role, teacher_type, status)
-          VALUES (?, ?, ?, ?, 'pending')
-        `).run(newUserId, classId, isTeacher ? 'teacher' : 'student', isTeacher ? applyAs : null);
+          INSERT INTO class_applications (user_id, class_id, role, teacher_type, subject, status)
+          VALUES (?, ?, ?, ?, ?, 'pending')
+        `).run(newUserId, row.classId, isTeacher ? 'teacher' : 'student', isTeacher ? row.role : null, row.subject);
       }
 
       return newUserId;
@@ -106,7 +133,7 @@ router.post('/register', async (req, res) => {
     const userId = createUserWithApplications();
 
     // 给对应班级的教师发送申请通知（通知失败不影响注册结果）
-    for (const classId of applyClassIds) {
+    for (const { classId, role: rowRole, subject } of applyRows) {
       try {
         const classTeachers = db.prepare(`
           SELECT teacher_id FROM class_teachers WHERE class_id = ?
@@ -115,12 +142,16 @@ router.post('/register', async (req, res) => {
         const className = db.prepare('SELECT name FROM classes WHERE id = ?').get(classId)?.name || '未知班级';
 
         for (const teacher of classTeachers) {
-          const title = applyAs === 'head_teacher' ? '新教师申请担任班主任'
-            : applyAs === 'teacher' ? '新教师申请加入班级'
+          const isHeadRow = rowRole === 'head_teacher';
+          const title = isHeadRow ? '新教师申请担任班主任'
+            : isTeacher ? '新教师申请加入班级'
             : '新学生申请加入班级';
-          const content = applyAs === 'head_teacher'
-            ? `${uname} 申请担任班级「${className}」的班主任，请前往审批。`
-            : `${uname} 申请加入你的班级「${className}」，请前往审批。`;
+          const subjectText = subject ? `（科目：${subject}）` : '';
+          const content = isHeadRow
+            ? `${uname} 申请担任班级「${className}」的班主任${subjectText}，请前往审批。`
+            : isTeacher
+              ? `${uname} 申请以任课教师身份加入你的班级「${className}」${subjectText}，请前往审批。`
+              : `${uname} 申请加入你的班级「${className}」，请前往审批。`;
           db.prepare(`
             INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
             VALUES (?, 'class_join_request', ?, ?, 'class_application', ?)
@@ -323,7 +354,7 @@ router.get('/me', authenticateToken, (req, res) => {
     let teacher_classes = [];
     if (user.role === 'teacher' || user.role === 'admin') {
       teacher_classes = db.prepare(`
-        SELECT c.id, c.name, c.slug, c.grade, ct.role AS class_role
+        SELECT c.id, c.name, c.slug, c.grade, ct.role AS class_role, ct.subject
         FROM class_teachers ct JOIN classes c ON ct.class_id = c.id
         WHERE ct.teacher_id = ?
         ORDER BY c.created_at DESC
@@ -346,7 +377,7 @@ router.get('/approval-status', (req, res) => {
     const user = db.prepare(`SELECT id, status FROM users WHERE username = ? COLLATE NOCASE`).get(uname);
     if (!user) return res.status(404).json({ error: '用户不存在' });
     const apps = db.prepare(`
-      SELECT ca.status, ca.role, ca.teacher_type, ca.created_at, ca.reviewed_at, c.name AS class_name
+      SELECT ca.status, ca.role, ca.teacher_type, ca.subject, ca.created_at, ca.reviewed_at, c.name AS class_name
       FROM class_applications ca LEFT JOIN classes c ON ca.class_id = c.id
       WHERE ca.user_id = ?
       ORDER BY ca.created_at DESC

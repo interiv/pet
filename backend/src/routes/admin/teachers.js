@@ -27,12 +27,22 @@ const {
 } = require('./_shared');
 
 /**
- * 校验并归一化「任教关系列表」：[{ class_id, role }]
+ * 归一化科目：去空格、限长，空值转 NULL
+ * 科目是自由文本（学校可能有地方课程），不做白名单限制，只做长度约束。
+ */
+function normalizeSubject(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  return s.slice(0, 20);
+}
+
+/**
+ * 校验并归一化「任教关系列表」：[{ class_id, role, subject }]
  * 规则：
  *  - 同一个班级只能出现一次（自动去重，保留第一条）
  *  - 一个教师只能当一个班的班主任（班主任行最多 1 条）
  *  - 目标班级不能已有别的班主任
- * @returns {{ assignments: {classId:number, role:'teacher'|'head_teacher'}[], classes: any[] }}
+ * @returns {{ assignments: {classId:number, role:'teacher'|'head_teacher', subject:string|null}[], classes: any[] }}
  * @throws {Error} 校验失败时抛出，message 为可直接展示给管理员的提示
  */
 function resolveTeachingAssignments(rawAssignments, teacherId) {
@@ -45,7 +55,11 @@ function resolveTeachingAssignments(rawAssignments, teacherId) {
     if (!Number.isFinite(classId)) continue;
     if (seen.has(classId)) continue;
     seen.add(classId);
-    assignments.push({ classId, role: item.role === 'head_teacher' ? 'head_teacher' : 'teacher' });
+    assignments.push({
+      classId,
+      role: item.role === 'head_teacher' ? 'head_teacher' : 'teacher',
+      subject: normalizeSubject(item && (item.subject ?? item.subject_name)),
+    });
   }
 
   if (assignments.filter((a) => a.role === 'head_teacher').length > 1) {
@@ -87,8 +101,8 @@ function syncTeacherClasses(teacherId, assignments) {
   db.prepare('DELETE FROM class_teachers WHERE teacher_id = ?').run(teacherId);
 
   for (const a of assignments) {
-    db.prepare('INSERT INTO class_teachers (class_id, teacher_id, role) VALUES (?, ?, ?)')
-      .run(a.classId, teacherId, a.role);
+    db.prepare('INSERT INTO class_teachers (class_id, teacher_id, role, subject) VALUES (?, ?, ?, ?)')
+      .run(a.classId, teacherId, a.role, a.subject || null);
     if (a.role === 'head_teacher') {
       db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?').run(teacherId, a.classId);
     }
@@ -99,7 +113,8 @@ function syncTeacherClasses(teacherId, assignments) {
 function describeAssignments(assignments, classes) {
   const parts = assignments.map((a) => {
     const cls = classes.find((c) => c.id === a.classId);
-    return `「${cls ? cls.name : a.classId}」任${a.role === 'head_teacher' ? '班主任' : '课教师'}`;
+    const roleText = a.role === 'head_teacher' ? '班主任' : '课教师';
+    return `「${cls ? cls.name : a.classId}」任${roleText}${a.subject ? `（${a.subject}）` : ''}`;
   });
   return parts.length > 0 ? parts.join('、') : '未分配任何班级';
 }
@@ -127,7 +142,7 @@ router.get('/teachers', authenticateToken, (req, res) => {
 
     //附带每个教师所在的班级与身份（班主任 / 任课教师），供列表展示与编辑
     const classStmt = db.prepare(`
-      SELECT c.id, c.name, c.slug, c.grade, ct.role
+      SELECT c.id, c.name, c.slug, c.grade, ct.role, ct.subject
       FROM class_teachers ct JOIN classes c ON ct.class_id = c.id
       WHERE ct.teacher_id = ?
       ORDER BY CASE ct.role WHEN 'head_teacher' THEN 0 ELSE 1 END, c.created_at DESC
@@ -200,7 +215,7 @@ router.post('/approve-teacher', authenticateToken, requireAdmin, (req, res) => {
 
 router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { username, password, email, real_name, class_id, class_ids, teacher_identity } = req.body;
+    const { username, password, email, real_name, class_id, class_ids, teacher_identity, assignments, subject } = req.body;
     // 真实姓名：与登录账号分离（可空，兼容旧版前端）
     const realName = String(real_name || '').trim() || null;
 
@@ -224,17 +239,22 @@ router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
     const rawClassIds = Array.isArray(class_ids) && class_ids.length > 0
       ? class_ids
       : (class_id ? [class_id] : []);
-    if (identity === 'head_teacher' && rawClassIds.length > 1) {
+    if (!Array.isArray(assignments) && identity === 'head_teacher' && rawClassIds.length > 1) {
       return res.status(400).json({ error: '班主任只能分配一个班级' });
     }
 
+    // 一行一条任教关系（班级 + 身份 + 科目）优先；没有时退回旧的「班级 + 单一身份」写法
+    const rawAssignments = Array.isArray(assignments)
+      ? assignments
+      : rawClassIds.map((cid) => ({ class_id: cid, role: identity, subject: normalizeSubject(subject) }));
+
     let resolved;
     try {
-      resolved = resolveTeachingAssignments(rawClassIds.map((cid) => ({ class_id: cid, role: identity })), null);
+      resolved = resolveTeachingAssignments(rawAssignments, null);
     } catch (e) {
       return res.status(400).json({ error: e.message });
     }
-    const { assignments, classes: targetClasses } = resolved;
+    const { assignments: resolvedAssignments, classes: targetClasses } = resolved;
 
     const passwordHash = await bcrypt.hash(password, 10);
 
@@ -246,7 +266,7 @@ router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
       `).run(String(username).trim(), passwordHash, email || null, realName);
 
       const teacherId = result.lastInsertRowid;
-      syncTeacherClasses(teacherId, assignments);
+      syncTeacherClasses(teacherId, resolvedAssignments);
       return teacherId;
     });
 
@@ -254,14 +274,16 @@ router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
 
     const classNames = targetClasses.map((c) => c.name);
     res.json({
-      message: assignments.length > 0
-        ? `教师创建成功，${describeAssignments(assignments, targetClasses)}`
+      message: resolvedAssignments.length > 0
+        ? `教师创建成功，${describeAssignments(resolvedAssignments, targetClasses)}`
         : '教师创建成功',
       teacher_id: teacherId,
-      class_ids: assignments.map((a) => a.classId),
+      class_ids: resolvedAssignments.map((a) => a.classId),
       class_names: classNames,
-      class_id: assignments.length === 1 ? assignments[0].classId : null,
-      teacher_identity: assignments.length > 0 ? identity : null
+      class_id: resolvedAssignments.length === 1 ? resolvedAssignments[0].classId : null,
+      teacher_identity: resolvedAssignments.length > 0
+        ? (resolvedAssignments.find((a) => a.role === 'head_teacher') ? 'head_teacher' : 'teacher')
+        : null
     });
   } catch (error) {
     console.error('创建教师失败:', error);
@@ -317,19 +339,23 @@ router.put('/teachers/:id', authenticateToken, requireAdmin, (req, res) => {
       if (Array.isArray(assignments)) {
         raw = assignments;
       } else {
-        // 兼容旧调用方式：class_ids + 单一 teacher_identity
+        // 兼容旧调用方式：class_ids + 单一 teacher_identity（尽量保留已设科目）
+        const existingRows = db.prepare('SELECT class_id, role, subject FROM class_teachers WHERE teacher_id = ?').all(id);
         const rawClassIds = class_ids !== undefined
           ? class_ids
           : (class_id !== undefined
             ? (class_id ? [class_id] : [])
-            : db.prepare('SELECT class_id FROM class_teachers WHERE teacher_id = ? ORDER BY class_id').all(id).map((r) => r.class_id));
+            : existingRows.map((r) => r.class_id));
 
         let identity = teacher_identity;
         if (identity === undefined) {
           const current = db.prepare(`SELECT 1 FROM class_teachers WHERE teacher_id = ? AND role = 'head_teacher'`).get(id);
           identity = current ? 'head_teacher' : 'teacher';
         }
-        raw = (Array.isArray(rawClassIds) ? rawClassIds : []).map((cid) => ({ class_id: cid, role: identity }));
+        raw = (Array.isArray(rawClassIds) ? rawClassIds : []).map((cid) => {
+          const keep = existingRows.find((r) => Number(r.class_id) === Number(cid));
+          return { class_id: cid, role: identity, subject: keep ? keep.subject : undefined };
+        });
       }
 
       try {

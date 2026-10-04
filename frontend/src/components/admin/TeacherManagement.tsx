@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Form, Input, message, Tag, Space, Modal, Select, Popconfirm, Alert, Divider } from 'antd';
+import { Table, Button, Form, Input, message, Tag, Space, Modal, Select, Popconfirm, Alert, Divider, AutoComplete } from 'antd';
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import { adminAPI, schoolAPI } from '../../utils/api';
 import { useTablePagination } from './hooks';
+import { SUBJECT_OPTIONS } from '../../utils/subjects';
 
 const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove }) => {
   const pagination = useTablePagination();
@@ -37,7 +38,8 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
   }, [createModalVisible, editModalVisible]);
 
   const createSchoolId = Form.useWatch('school_id', createForm);
-  const createIdentity = Form.useWatch('teacher_identity', createForm) || 'teacher';
+  // 新建：一行一条任教关系（班级 + 身份 + 科目）
+  const createAssignments: any[] = Form.useWatch('assignments', createForm) || [];
   // 选学校后只显示该校班级（未分配学校的历史班级始终保留）
   const createClassOptions = createSchoolId
     ? classList.filter((c: any) => c.school_id === createSchoolId || !c.school_id)
@@ -82,10 +84,11 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
       email: record.email || '',
       status: record.status,
       password: '',
-      // 一行一条任教关系：既是班主任还是任课教师，跟着这条记录走
+      // 一行一条任教关系：既是班主任还是任课教师、教哪门课，都跟着这条记录走
       assignments: (record.classes || []).map((c: any) => ({
         class_id: c.id,
         role: c.role === 'head_teacher' ? 'head_teacher' : 'teacher',
+        subject: c.subject || undefined,
       })),
     });
     setEditModalVisible(true);
@@ -94,7 +97,18 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
   const handleCreate = async () => {
     try {
       const values = await createForm.validateFields();
-      const res = await adminAPI.createTeacher(values);
+      const payload = {
+        ...values,
+        // 一行一条：班级 + 身份 + 科目；后端整份覆盖写入
+        assignments: (values.assignments || [])
+          .filter((r: any) => r && r.class_id)
+          .map((r: any) => ({
+            class_id: Number(r.class_id),
+            role: r.role === 'head_teacher' ? 'head_teacher' : 'teacher',
+            subject: (r.subject || '').trim() || undefined,
+          })),
+      };
+      const res = await adminAPI.createTeacher(payload);
       message.success(res.data?.message || '教师创建成功，可直接登录使用');
       setCreateModalVisible(false);
       createForm.resetFields();
@@ -120,6 +134,7 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
         assignments: (values.assignments || []).map((row: any) => ({
           class_id: row.class_id,
           role: row.role === 'head_teacher' ? 'head_teacher' : 'teacher',
+          subject: (row.subject || '').trim() || undefined,
         })),
       };
       const res = await adminAPI.updateTeacher(editingTeacher.id, payload);
@@ -171,7 +186,7 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
               <Tag key={c.id} color={c.role === 'head_teacher' ? 'gold' : 'default'}>
                 {c.name}
                 <span style={{ opacity: 0.7, fontSize: 12 }}>
-                  （{c.role === 'head_teacher' ? '班主任' : '任课教师'}）
+                  （{c.role === 'head_teacher' ? '班主任' : '任课教师'}{c.subject ? ` · ${c.subject}` : ''}）
                 </span>
               </Tag>
             ))}
@@ -298,60 +313,91 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
               showSearch
               optionFilterProp="label"
               placeholder="选择学校（可选）"
-              onChange={() => createForm.setFieldsValue({ class_id: undefined, class_ids: undefined })}
+              onChange={() => {
+                const rows = createForm.getFieldValue('assignments') || [];
+                createForm.setFieldsValue({
+                  class_id: undefined,
+                  class_ids: undefined,
+                  assignments: rows.map((r: any) => ({ ...r, class_id: undefined })),
+                });
+              }}
               options={schools.map((s: any) => ({ value: s.id, label: `${s.name}${s.city ? ` - ${s.city}` : ''}` }))}
             />
           </Form.Item>
-          <Form.Item
-            name="teacher_identity"
-            label="教师身份"
-            initialValue="teacher"
-            tooltip="选择班级后生效：班主任会成为该班班主任（一名教师只能带一个班），任课教师可同时加入多个班级"
-          >
-            <Select
-              onChange={() => {
-                // 切换身份时清空已选班级（两种身份用的字段不同）
-                createForm.setFieldsValue({ class_id: undefined, class_ids: undefined });
-              }}
-            >
-              <Select.Option value="teacher">任课教师</Select.Option>
-              <Select.Option value="head_teacher">班主任</Select.Option>
-            </Select>
-          </Form.Item>
-
-          {createIdentity === 'head_teacher' ? (
-            <Form.Item name="class_id" label="分配班级（可选，只能选一个）">
-              <Select
-                allowClear
-                showSearch
-                optionFilterProp="children"
-                placeholder={headTeacherCandidateClasses.length ? '选择班级' : '暂无可选班级（都已设置班主任）'}
-              >
-                {headTeacherCandidateClasses.map((c: any) => (
-                  <Select.Option key={c.id} value={c.id}>
-                    {c.name}{c.grade ? `（${c.grade}）` : ''}
-                  </Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-          ) : (
-            <Form.Item name="class_ids" label="分配班级（可多选，也可以先不选）">
-              <Select
-                mode="multiple"
-                allowClear
-                showSearch
-                optionFilterProp="children"
-                maxTagCount={3}
-                placeholder={createClassOptions.length ? '选择班级（可多选）' : '暂无可选班级'}
-              >
-                {createClassOptions.map((c: any) => (
-                  <Select.Option key={c.id} value={c.id}>
-                    {c.name}{c.grade ? `（${c.grade}）` : ''}
-                  </Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-          )}
+          <Divider style={{ margin: '4px 0 12px' }} orientation="left" plain>任教关系（一个班级一条）</Divider>
+          <Form.List name="assignments">
+            {(fields, { add, remove }) => (
+              <>
+                {fields.length === 0 && (
+                  <div style={{ color: '#999', fontSize: 13, marginBottom: 8 }}>
+                    暂不分配班级也可以先创建教师，之后随时在这里补。
+                  </div>
+                )}
+                {fields.map((field) => {
+                  const rowRole = createAssignments[field.name]?.role || 'teacher';
+                  const usedByOthers = createAssignments
+                    .filter((_: any, i: number) => i !== field.name)
+                    .map((r: any) => r?.class_id)
+                    .filter(Boolean);
+                  const options = (rowRole === 'head_teacher' ? headTeacherCandidateClasses : createClassOptions)
+                    .filter((c: any) => !usedByOthers.includes(c.id));
+                  return (
+                    <Space key={field.key} align="center" wrap style={{ display: 'flex', marginBottom: 8 }}>
+                      <Form.Item
+                        {...field}
+                        name={[field.name, 'class_id']}
+                        rules={[{ required: true, message: '请选择班级' }]}
+                        style={{ marginBottom: 0 }}
+                      >
+                        <Select
+                          showSearch
+                          optionFilterProp="label"
+                          placeholder="选择班级"
+                          style={{ width: 220 }}
+                          options={options.map((c: any) => ({ value: c.id, label: `${c.name}${c.grade ? `（${c.grade}）` : ''}` }))}
+                        />
+                      </Form.Item>
+                      <Form.Item {...field} name={[field.name, 'role']} style={{ marginBottom: 0 }}>
+                        <Select
+                          style={{ width: 130 }}
+                          onChange={(v) => {
+                            if (v !== 'head_teacher') return;
+                            const list = createForm.getFieldValue('assignments') || [];
+                            const otherHead = list.some((r: any, i: number) => i !== field.name && r?.role === 'head_teacher');
+                            if (otherHead) {
+                              message.warning('一个教师只能担任一个班的班主任');
+                              createForm.setFieldValue(['assignments', field.name, 'role'], 'teacher');
+                            }
+                          }}
+                          options={[
+                            { value: 'teacher', label: '任课教师' },
+                            { value: 'head_teacher', label: '班主任' },
+                          ]}
+                        />
+                      </Form.Item>
+                      <Form.Item {...field} name={[field.name, 'subject']} style={{ marginBottom: 0 }}>
+                        <AutoComplete
+                          style={{ width: 140 }}
+                          placeholder="科目（选填）"
+                          options={SUBJECT_OPTIONS.map(s => ({ value: s }))}
+                          filterOption={(input, option) =>
+                            String(option?.value ?? '').toLowerCase().includes(String(input).toLowerCase())
+                          }
+                        />
+                      </Form.Item>
+                      <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => remove(field.name)} />
+                    </Space>
+                  );
+                })}
+                <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ class_id: undefined, role: 'teacher' })}>
+                  添加一条任教关系
+                </Button>
+                <div style={{ color: '#999', fontSize: 12, marginTop: 6 }}>
+                  一个班级只能有一位班主任；班主任下拉只显示还没被占用的班级。科目用于布置作业时自动带出。
+                </div>
+              </>
+            )}
+          </Form.List>
         </Form>
       </Modal>
 
@@ -415,13 +461,23 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
                             const otherHead = list.some((r: any, i: number) => i !== field.name && r?.role === 'head_teacher');
                             if (otherHead) {
                               message.warning('一个教师只能担任一个班的班主任，另一条需改为任课教师');
-                              form.setFieldsValue({ [`assignments[${field.name}].role`]: 'teacher' });
+                              form.setFieldValue(['assignments', field.name, 'role'], 'teacher');
                             }
                           }}
                           options={[
                             { value: 'teacher', label: '任课教师' },
                             { value: 'head_teacher', label: '班主任' },
                           ]}
+                        />
+                      </Form.Item>
+                      <Form.Item {...field} name={[field.name, 'subject']} style={{ marginBottom: 0 }}>
+                        <AutoComplete
+                          style={{ width: 140 }}
+                          placeholder="科目（选填）"
+                          options={SUBJECT_OPTIONS.map(s => ({ value: s }))}
+                          filterOption={(input, option) =>
+                            String(option?.value ?? '').toLowerCase().includes(String(input).toLowerCase())
+                          }
                         />
                       </Form.Item>
                       <Popconfirm title="删除这条任教关系？" onConfirm={() => remove(field.name)} okText="删除" cancelText="取消">

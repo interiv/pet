@@ -20,6 +20,16 @@ function generateCardCode(length = 12) {
   return code;
 }
 
+// 题目附带的 HTML 课件体积上限（200KB）：课件通常是单页小页面，过大会拖慢课堂加载
+const MAX_COURSEWARE_LEN = 200 * 1024;
+
+/** 裁剪文本并在超长时给出提示（返回 null 表示空） */
+function clipText(raw, maxLen) {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  return s.length > maxLen ? s.slice(0, maxLen) : s;
+}
+
 // 建表已收编到 knex 迁移：cards / card_batches / card_redemption_logs /
 // classroom_quizzes / classroom_quiz_questions / classroom_quiz_rewards 见 001_initial_schema，
 // classroom_quiz_answers 见 004_consolidate_runtime_tables。此处不再于模块加载时建表，
@@ -583,12 +593,18 @@ router.post('/classroom-quiz', authenticateToken, (req, res) => {
 
     if (questions && Array.isArray(questions)) {
       const insertQ = db.prepare(`
-        INSERT INTO classroom_quiz_questions (quiz_id, question_text, sort_order)
-        VALUES (?, ?, ?)
+        INSERT INTO classroom_quiz_questions (quiz_id, question_text, sort_order, courseware_html, answer_text)
+        VALUES (?, ?, ?, ?, ?)
       `);
 
       questions.forEach((q, index) => {
-        insertQ.run(quizId, q.question_text || q, index + 1);
+        // 兼容两种写法：纯字符串题干，或 { question_text, courseware_html, answer_text }
+        // （AI 工具录入 / 手工逐题录入会带上 HTML 课件与参考答案）
+        const isObj = q && typeof q === 'object';
+        const text = isObj ? String(q.question_text ?? q.text ?? '') : String(q ?? '');
+        const courseware = isObj ? clipText(q.courseware_html ?? q.courseware, MAX_COURSEWARE_LEN) : null;
+        const answer = isObj ? clipText(q.answer_text ?? q.answer ?? q.reference_answer, 2000) : null;
+        insertQ.run(quizId, text, index + 1, courseware, answer);
       });
     }
 

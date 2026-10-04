@@ -6,7 +6,7 @@ import {
   LeftOutlined, RightOutlined, CloseOutlined, ThunderboltOutlined,
   GiftOutlined, UserSwitchOutlined, DeleteOutlined, StopOutlined, ReloadOutlined, SearchOutlined,
   SoundOutlined, PauseCircleOutlined, PlayCircleOutlined, AudioOutlined, BarChartOutlined,
-  CheckCircleOutlined, CloseCircleOutlined
+  CheckCircleOutlined, CloseCircleOutlined, FileTextOutlined, EyeOutlined
 } from '@ant-design/icons';
 import { pinyin } from 'pinyin-pro';
 import { classroomQuizAPI, itemAPI, equipmentAPI } from '../utils/api';
@@ -95,7 +95,17 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
   });
   const recRef = useRef<any>(null);
 
+  // 题目课件 / 参考答案（有就显示按钮，课件可投屏给学生操作后再作答）
+  const [showCourseware, setShowCourseware] = useState(false);
+  const [showAnswer, setShowAnswer] = useState(false);
+
   const currentQuestion = questions[index];
+
+  // 换题时收起课件与答案，避免误把上一题的课件留在大屏上
+  useEffect(() => {
+    setShowCourseware(false);
+    setShowAnswer(false);
+  }, [index]);
 
   // ===== 语音朗读 =====
   const loadVoices = () => {
@@ -650,6 +660,46 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
         <div style={{ color: '#fff', fontSize: `calc(clamp(30px, 4.5vw, 64px) * ${fontScale})`, fontWeight: 500, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
           {currentQuestion?.question_text || '暂无题目'}
         </div>
+
+        {/* 题目附带的 HTML 课件：先让学生看课件、操作思考，再回到题目作答 */}
+        {currentQuestion?.courseware_html && (
+          <div style={{ marginTop: 16 }}>
+            <Button
+              type={showCourseware ? 'default' : 'primary'}
+              icon={<FileTextOutlined />}
+              onClick={() => setShowCourseware((v) => !v)}
+            >
+              {showCourseware ? '收起课件' : '展示课件（学生先看再答）'}
+            </Button>
+          </div>
+        )}
+        {showCourseware && currentQuestion?.courseware_html && (
+          <div style={{
+            marginTop: 12, width: '92%', height: '52vh', background: '#fff',
+            borderRadius: 8, overflow: 'hidden', border: '1px solid #333',
+          }}>
+            <iframe
+              title="question-courseware"
+              srcDoc={currentQuestion.courseware_html}
+              style={{ width: '100%', height: '100%', border: 'none' }}
+            />
+          </div>
+        )}
+
+        {/* 参考答案：只给老师看，点一下才展开 */}
+        {currentQuestion?.answer_text && (
+          <div style={{ marginTop: 12 }}>
+            <Button size="small" icon={<EyeOutlined />} onClick={() => setShowAnswer((v) => !v)}>
+              {showAnswer ? '隐藏参考答案' : '参考答案'}
+            </Button>
+            {showAnswer && (
+              <div style={{ color: '#52c41a', fontSize: 20, marginTop: 8, whiteSpace: 'pre-wrap' }}>
+                {currentQuestion.answer_text}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* 朗读控制 */}
         <Space style={{ marginTop: 16 }} wrap>
           {!speaking ? (

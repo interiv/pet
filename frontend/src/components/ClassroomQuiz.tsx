@@ -2,16 +2,18 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Card, Table, Button, Modal, Form, Input, Select, InputNumber,
   message, Space, Tag, Tabs, Descriptions, Row, Col, Typography,
-  List, Avatar, Popconfirm, Empty, Badge, Spin, Radio, Checkbox, Alert
+  List, Avatar, Popconfirm, Empty, Badge, Spin, Radio, Checkbox, Alert, Upload, Divider
 } from 'antd';
 import {
   PlusOutlined, GiftOutlined, CheckCircleOutlined,
   UserOutlined, EyeOutlined, PlayCircleOutlined, RobotOutlined,
-  UserSwitchOutlined, SearchOutlined
+  UserSwitchOutlined, SearchOutlined, DeleteOutlined, CodeOutlined,
+  CopyOutlined, DownloadOutlined, UploadOutlined, FileTextOutlined
 } from '@ant-design/icons';
 import { classroomQuizAPI, questionBankAPI, itemAPI, equipmentAPI, adminAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import { getPetThumbUrl } from '../utils/petImage';
+import { getMySubject } from '../utils/subjects';
 import ClassroomConsole from './ClassroomConsole';
 
 const { Title, Text, Paragraph } = Typography;
@@ -31,6 +33,134 @@ const aiTypeOptions = [
   { value: 'essay', label: '简答题' }
 ];
 
+// ===== AI 工具录入：给 AI 用的提示词 / Skill =====
+// 教师把这段提示词（或下载的 skill 文件）交给 AI，AI 按约定格式产出题目数据，
+// 再粘贴回本页即可批量导入；HTML 课件可选，没有就留空字符串。
+const AI_IMPORT_PROMPT = `你是我的出题助手，请为课堂随堂练习出题。
+
+【输出要求】
+只输出一个 JSON 对象（不要包裹 markdown 代码块、不要多余解释），格式如下：
+{
+  "title": "本次练习标题",
+  "subject": "科目，如：数学",
+  "questions": [
+    {
+      "question_text": "题干（必填，纯文本，可含换行）",
+      "answer_text": "参考答案（可选）",
+      "courseware_html": "该题目的 HTML 课件（可选，没有就填空字符串）"
+    }
+  ]
+}
+
+【课件要求】
+- courseware_html 是一个**完整独立的 HTML 文档字符串**（以 <!DOCTYPE html> 开头），可直接用 iframe 打开。
+- 课件要能帮助学生理解并思考这道题：可以有图示、可交互的小动画/拖拽/点击反馈等。
+- 不要引用外部网络资源（离线可用），样式与脚本都写在同一个 HTML 里。
+
+【我的需求】
+`;
+
+const AI_IMPORT_SKILL_MD = `# 课堂做题题目生成（课堂宠物养成系统）
+
+## 用途
+按固定 JSON 格式为「课堂做题」批量生成题目，可附带可交互的 HTML 课件。
+
+## 使用方式
+1. 在对话中告诉我：科目、年级/班级、知识点、题目数量、难度、是否需要课件。
+2. 只输出下列 JSON（不要 markdown 代码块、不要解释文字）：
+
+\`\`\`json
+{
+  "title": "第三单元随堂练习",
+  "subject": "数学",
+  "questions": [
+    {
+      "question_text": "题干文本",
+      "answer_text": "参考答案",
+      "courseware_html": "<!DOCTYPE html>...</html>"
+    }
+  ]
+}
+\`\`\`
+
+## 字段说明
+- question_text：必填，题干纯文本。
+- answer_text：可选，参考答案，只给老师看。
+- courseware_html：可选，完整独立的 HTML 文档字符串（以 <!DOCTYPE html> 开头），
+  离线可用、不引用外部资源，用于课堂上展示并让学生操作后思考作答。
+
+## 产出后
+把 JSON 粘贴回系统「课堂做题 → 创建 → AI 工具录入」文本框，点「解析预览」即可导入。
+`;
+
+// HTML 课件起手模板：教师点「插入模板」就有可改的骨架
+const COURSEWARE_TEMPLATE = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>课堂课件</title>
+<style>
+  body { font-family: "Microsoft YaHei", system-ui, sans-serif; padding: 24px; color: #222; background: #fff; }
+  h2 { color: #1677ff; }
+  .tip { background: #f6f8fa; border-left: 4px solid #1677ff; padding: 12px 16px; margin: 16px 0; }
+  button { padding: 8px 16px; font-size: 16px; border-radius: 6px; border: 1px solid #1677ff; background: #1677ff; color: #fff; cursor: pointer; }
+  #out { margin-top: 16px; font-size: 18px; }
+</style>
+</head>
+<body>
+  <h2>课件标题</h2>
+  <div class="tip">在这里放图示、动画或可操作的小实验，学生看完后再作答。</div>
+  <button onclick="document.getElementById('out').textContent = '操作成功：' + new Date().toLocaleTimeString()">点我试一试</button>
+  <div id="out"></div>
+</body>
+</html>`;
+
+/** 从 AI 返回的文本里解析题目（支持纯 JSON、被文字包裹的 JSON、questions 数组） */
+function parseImportedQuestions(raw: string): { questions: any[]; meta: any } {
+  const text = String(raw || '').trim();
+  if (!text) return { questions: [], meta: {} };
+
+  let data: any = null;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    // AI 常在 JSON 前后附带说明文字，这里把第一段 JSON 抠出来
+    const start = text.search(/[[{]/);
+    if (start >= 0) {
+      const isArray = text[start] === '[';
+      const end = isArray ? text.lastIndexOf(']') : text.lastIndexOf('}');
+      if (end > start) {
+        try {
+          data = JSON.parse(text.slice(start, end + 1));
+        } catch {
+          data = null;
+        }
+      }
+    }
+  }
+  if (!data) {
+    throw new Error('没能识别出 JSON，请确认内容里包含 { } 或 [ ] 格式的题目数据');
+  }
+
+  const list = Array.isArray(data) ? data : (Array.isArray(data.questions) ? data.questions : null);
+  if (!list) throw new Error('JSON 里没有找到 questions 数组');
+
+  const questions = list.map((item: any) => {
+    if (typeof item === 'string') {
+      return { question_text: item.trim(), answer_text: '', courseware_html: '' };
+    }
+    const q = item || {};
+    return {
+      question_text: String(q.question_text ?? q.question ?? q.content ?? q.stem ?? q.title ?? '').trim(),
+      answer_text: String(q.answer_text ?? q.answer ?? q.reference_answer ?? '').trim(),
+      courseware_html: String(q.courseware_html ?? q.courseware ?? q.html ?? '').trim(),
+    };
+  }).filter((q: any) => q.question_text);
+
+  return { questions, meta: Array.isArray(data) ? {} : data };
+}
+
 const statusMap: Record<string, { color: string; label: string }> = {
   active: { color: 'processing', label: '进行中' },
   completed: { color: 'success', label: '已完成' },
@@ -42,7 +172,7 @@ const renderStatus = (s: string) => (
 );
 
 const ClassroomQuiz: React.FC = () => {
-  const { currentClass } = useAuthStore();
+  const { currentClass, user } = useAuthStore();
   const [quizzes, setQuizzes] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -65,7 +195,25 @@ const ClassroomQuiz: React.FC = () => {
 
   // 创建：班级 / 题目来源
   const [classes, setClasses] = useState<any[]>([]);
-  const [createSource, setCreateSource] = useState<'manual' | 'bank' | 'ai'>('manual');
+  const [createSource, setCreateSource] = useState<'manual' | 'bank' | 'ai' | 'ai_import'>('manual');
+  // 手工录入两种写法：逐题录入（可带 HTML 课件）/ 纯文本批量
+  const [manualMode, setManualMode] = useState<'rows' | 'text'>('rows');
+  const manualRows: any[] = Form.useWatch('manual_questions', createForm) || [];
+
+  // 教师自己的任教科目：创建时默认带出，可手动改
+  const mySubject = getMySubject((user as any)?.teacher_classes, currentClass?.id);
+
+  // 题目课件编辑
+  const [coursewareIndex, setCoursewareIndex] = useState<number | null>(null);
+  const [coursewareDraft, setCoursewareDraft] = useState('');
+
+  // AI 工具录入：粘贴 AI 产出的 JSON（可带 HTML 课件）
+  const [importText, setImportText] = useState('');
+  const [importedQuestions, setImportedQuestions] = useState<any[]>([]);
+  const [importSelected, setImportSelected] = useState<Set<number>>(new Set());
+  const [formatModalOpen, setFormatModalOpen] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState<string>('');
+  const [aiRequirement, setAiRequirement] = useState('');
 
   // 题库选题
   const [bankQuestions, setBankQuestions] = useState<any[]>([]);
@@ -213,13 +361,32 @@ const ClassroomQuiz: React.FC = () => {
 
   const handleCreate = async (values: any) => {
     try {
-      let questions: { question_text: string }[] = [];
+      let questions: any[] = [];
 
       if (createSource === 'manual') {
-        questions = (values.question_texts || '')
-          .split('\n')
-          .filter((line: string) => line.trim())
-          .map((text: string) => ({ question_text: text.trim() }));
+        if (manualMode === 'rows') {
+          // 逐题录入：题干 + 参考答案（选填）+ HTML 课件（选填）
+          questions = (values.manual_questions || [])
+            .filter((q: any) => q && String(q.question_text || '').trim())
+            .map((q: any) => ({
+              question_text: String(q.question_text).trim(),
+              answer_text: String(q.answer_text || '').trim() || undefined,
+              courseware_html: String(q.courseware_html || '').trim() || undefined,
+            }));
+        } else {
+          questions = (values.question_texts || '')
+            .split('\n')
+            .filter((line: string) => line.trim())
+            .map((text: string) => ({ question_text: text.trim() }));
+        }
+      } else if (createSource === 'ai_import') {
+        questions = importedQuestions
+          .filter((_, i) => importSelected.has(i))
+          .map((q: any) => ({
+            question_text: q.question_text,
+            answer_text: q.answer_text || undefined,
+            courseware_html: q.courseware_html || undefined,
+          }));
       } else if (createSource === 'bank') {
         if (selectedBankIds.length === 0) {
           message.warning('请先从题库中勾选题目');
@@ -260,17 +427,115 @@ const ClassroomQuiz: React.FC = () => {
         questions,
       });
 
-      message.success('课堂做题创建成功');
+      const coursewareCount = questions.filter((q: any) => q.courseware_html).length;
+      message.success(coursewareCount > 0
+        ? `课堂做题创建成功，其中 ${coursewareCount} 道题带 HTML 课件`
+        : '课堂做题创建成功');
       setCreateModalOpen(false);
       createForm.resetFields();
       setCreateSource('manual');
+      setManualMode('rows');
       setSelectedBankIds([]);
       setAiQuestions([]);
       setAiSelected(new Set());
+      setImportText('');
+      setImportedQuestions([]);
+      setImportSelected(new Set());
       loadQuizzes();
     } catch (e: any) {
       message.error(e?.response?.data?.error || '创建失败');
     }
+  };
+
+  // ===== 题目 HTML 课件 =====
+  const openCoursewareEditor = (index: number) => {
+    const rows = createForm.getFieldValue('manual_questions') || [];
+    setCoursewareIndex(index);
+    setCoursewareDraft((rows[index]?.courseware_html) || '');
+  };
+
+  const saveCourseware = () => {
+    if (coursewareIndex === null) return;
+    createForm.setFieldValue(['manual_questions', coursewareIndex, 'courseware_html'], coursewareDraft);
+    setCoursewareIndex(null);
+    message.success('课件已保存到该题目');
+  };
+
+  /** 读取本地文件内容（课件 .html / AI 产出的 .json 都走这里） */
+  const readFileAsText = (file: File): Promise<string> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('文件读取失败'));
+    reader.readAsText(file);
+  });
+
+  const handleUploadCourseware = async (file: File, index: number) => {
+    try {
+      const text = await readFileAsText(file);
+      createForm.setFieldValue(['manual_questions', index, 'courseware_html'], text);
+      message.success(`已把 ${file.name} 作为第 ${index + 1} 题的课件`);
+    } catch {
+      message.error('课件文件读取失败');
+    }
+    return false; // 阻止 antd 自动上传
+  };
+
+  // ===== AI 工具录入 =====
+  const copyText = async (text: string, tip: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      message.success(tip);
+    } catch {
+      message.warning('浏览器禁止了自动复制，请手动选中文本框内容复制');
+    }
+  };
+
+  const downloadSkill = () => {
+    const blob = new Blob([AI_IMPORT_SKILL_MD], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '课堂做题-AI录入-skill.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleParseImport = (text?: string) => {
+    const raw = text ?? importText;
+    try {
+      const { questions: parsed, meta } = parseImportedQuestions(raw);
+      if (parsed.length === 0) {
+        message.warning('没有解析到任何题目');
+        return;
+      }
+      setImportedQuestions(parsed);
+      setImportSelected(new Set(parsed.map((_: any, i: number) => i)));
+      // AI 顺带给了标题/科目就一并填进表单，省得老师再输一遍
+      if (meta?.title) createForm.setFieldValue('title', meta.title);
+      if (meta?.subject) createForm.setFieldValue('subject', meta.subject);
+      message.success(`解析到 ${parsed.length} 道题，请勾选要使用的题目`);
+    } catch (e: any) {
+      message.error(e?.message || '解析失败，请检查内容格式');
+    }
+  };
+
+  const handleImportFile = async (file: File) => {
+    try {
+      const text = await readFileAsText(file);
+      // 纯 HTML 文件：整份作为一道题的课件；其余按 JSON 解析
+      if (/\.html?$/i.test(file.name) && !text.trim().startsWith('{') && !text.trim().startsWith('[')) {
+        setImportText(text);
+        setImportedQuestions([{ question_text: `见课件：${file.name}`, answer_text: '', courseware_html: text }]);
+        setImportSelected(new Set([0]));
+        message.success('已把该 HTML 作为一道题的课件导入，可在下方修改题干');
+        return false;
+      }
+      setImportText(text);
+      handleParseImport(text);
+    } catch {
+      message.error('文件读取失败');
+    }
+    return false;
   };
 
   const handleViewDetail = async (quiz: any) => {
@@ -497,7 +762,18 @@ const ClassroomQuiz: React.FC = () => {
       <Modal
         title="创建课堂做题"
         open={createModalOpen}
-        onCancel={() => { setCreateModalOpen(false); createForm.resetFields(); setCreateSource('manual'); setSelectedBankIds([]); setAiQuestions([]); setAiSelected(new Set()); }}
+        onCancel={() => {
+          setCreateModalOpen(false);
+          createForm.resetFields();
+          setCreateSource('manual');
+          setManualMode('rows');
+          setSelectedBankIds([]);
+          setAiQuestions([]);
+          setAiSelected(new Set());
+          setImportText('');
+          setImportedQuestions([]);
+          setImportSelected(new Set());
+        }}
         onOk={() => createForm.submit()}
         width={760}
       >
@@ -516,7 +792,12 @@ const ClassroomQuiz: React.FC = () => {
               </Form.Item>
             </Col>
             <Col span={7}>
-              <Form.Item name="subject" label="科目">
+              <Form.Item
+                name="subject"
+                label="科目"
+                initialValue={mySubject}
+                extra={mySubject ? `默认你的任教科目：${mySubject}` : undefined}
+              >
                 <Select placeholder="选择科目" allowClear>
                   {subjectOptions.map(s => <Select.Option key={s} value={s}>{s}</Select.Option>)}
                 </Select>
@@ -528,25 +809,120 @@ const ClassroomQuiz: React.FC = () => {
           </Form.Item>
 
           <Form.Item label="题目来源">
-            <Radio.Group value={createSource} onChange={(e) => handleSourceChange(e.target.value)} buttonStyle="solid">
+            <Radio.Group value={createSource} onChange={(e) => handleSourceChange(e.target.value as any)} buttonStyle="solid">
               <Radio.Button value="manual">手动输入</Radio.Button>
               <Radio.Button value="bank">从题库选择</Radio.Button>
               <Radio.Button value="ai">AI快速出题</Radio.Button>
+              <Radio.Button value="ai_import">🤖 AI工具录入</Radio.Button>
             </Radio.Group>
           </Form.Item>
 
           {createSource === 'manual' && (
-            <Form.Item
-              name="question_texts"
-              label="题目列表"
-              rules={[{ required: true, message: '请输入题目' }]}
-              extra="每行一道题目，题目将按顺序展示"
-            >
-              <Input.TextArea
-                rows={8}
-                placeholder={`1. 计算 25 × 4 = ?\n2. 一个三角形有几个角？\n3. ...`}
-              />
-            </Form.Item>
+            <>
+              <Radio.Group
+                value={manualMode}
+                onChange={(e) => setManualMode(e.target.value)}
+                size="small"
+                style={{ marginBottom: 12 }}
+              >
+                <Radio.Button value="rows">逐题录入（可带 HTML 课件）</Radio.Button>
+                <Radio.Button value="text">纯文本批量粘贴</Radio.Button>
+              </Radio.Group>
+
+              {manualMode === 'text' ? (
+                <Form.Item
+                  name="question_texts"
+                  label="题目列表"
+                  rules={[{ required: true, message: '请输入题目' }]}
+                  extra="每行一道题目，题目将按顺序展示"
+                >
+                  <Input.TextArea
+                    rows={8}
+                    placeholder={`1. 计算 25 × 4 = ?\n2. 一个三角形有几个角？\n3. ...`}
+                  />
+                </Form.Item>
+              ) : (
+                <Form.List
+                  name="manual_questions"
+                  rules={[
+                    {
+                      validator: async (_: any, rows: any[]) => {
+                        if (!rows || rows.length === 0) {
+                          return Promise.reject(new Error('请至少添加一道题目'));
+                        }
+                        return Promise.resolve();
+                      },
+                    },
+                  ]}
+                >
+                  {(fields, { add, remove }) => (
+                    <>
+                      {fields.length === 0 && (
+                        <div style={{ color: '#999', fontSize: 13, marginBottom: 8 }}>
+                          还没有题目，点下方按钮一行一题地添加。
+                        </div>
+                      )}
+                      {fields.map((field) => {
+                        const hasCourseware = !!manualRows[field.name]?.courseware_html;
+                        return (
+                          <div
+                            key={field.key}
+                            style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 12, marginBottom: 8 }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                              <span style={{ fontWeight: 500 }}>第 {field.name + 1} 题</span>
+                              <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => remove(field.name)} />
+                            </div>
+                            <Form.Item
+                              {...field}
+                              name={[field.name, 'question_text']}
+                              rules={[{ required: true, message: '请输入题干' }]}
+                              style={{ marginBottom: 8 }}
+                            >
+                              <Input.TextArea rows={2} placeholder="题干（课堂上投屏展示）" />
+                            </Form.Item>
+                            <Space wrap>
+                              <Form.Item {...field} name={[field.name, 'answer_text']} style={{ marginBottom: 0 }}>
+                                <Input style={{ width: 240 }} placeholder="参考答案（选填，仅教师可见）" />
+                              </Form.Item>
+                              <Form.Item {...field} name={[field.name, 'courseware_html']} hidden>
+                                <Input.TextArea />
+                              </Form.Item>
+                              <Button
+                                size="small"
+                                icon={<CodeOutlined />}
+                                type={hasCourseware ? 'primary' : 'default'}
+                                onClick={() => openCoursewareEditor(field.name)}
+                              >
+                                {hasCourseware ? '课件已附（点击编辑）' : '添加 HTML 课件'}
+                              </Button>
+                              {hasCourseware && (
+                                <Button size="small" icon={<EyeOutlined />} onClick={() => setPreviewHtml(manualRows[field.name]?.courseware_html || '')}>
+                                  预览课件
+                                </Button>
+                              )}
+                              <Upload
+                                accept=".html,.htm,.txt"
+                                showUploadList={false}
+                                beforeUpload={(file) => handleUploadCourseware(file, field.name)}
+                              >
+                                <Button size="small" icon={<UploadOutlined />}>上传课件 HTML</Button>
+                              </Upload>
+                            </Space>
+                          </div>
+                        );
+                      })}
+                      <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ question_text: '', answer_text: '', courseware_html: '' })}>
+                        添加一道题
+                      </Button>
+                      <div style={{ color: '#999', fontSize: 12, marginTop: 6 }}>
+                        课件不是必须的：附上 HTML 课件后，课堂上可以先展示课件让学生操作、思考，再回到题目作答。
+                      </div>
+                    </>
+                  )}
+                </Form.List>
+              )}
+            </>
           )}
 
           {createSource === 'bank' && (
@@ -705,6 +1081,85 @@ const ClassroomQuiz: React.FC = () => {
               </div>
             </div>
           )}
+
+          {createSource === 'ai_import' && (
+            <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message="让 AI 帮你出题，再一次性导进来"
+                description="复制提示词（或下载 Skill 文件）交给 AI → AI 按格式返回题目 JSON（可带 HTML 课件）→ 粘贴回来点「解析预览」→ 勾选后创建。"
+              />
+              <Space wrap style={{ marginBottom: 12 }}>
+                <Button
+                  icon={<CopyOutlined />}
+                  onClick={() => copyText(
+                    AI_IMPORT_PROMPT + (aiRequirement.trim()
+                      ? aiRequirement.trim()
+                      : `${createForm.getFieldValue('subject') || '（科目）'}：${createForm.getFieldValue('title') || '（练习主题）'}，出 5 道课堂抢答题。`),
+                    '提示词已复制，发给 AI 即可'
+                  )}
+                >
+                  复制 AI 提示词
+                </Button>
+                <Button icon={<DownloadOutlined />} onClick={downloadSkill}>下载 Skill 文件</Button>
+                <Button icon={<FileTextOutlined />} onClick={() => setFormatModalOpen(true)}>查看 JSON 格式</Button>
+              </Space>
+
+              <Input.TextArea
+                rows={3}
+                value={aiRequirement}
+                onChange={(e) => setAiRequirement(e.target.value)}
+                placeholder="补充你的出题需求（会拼在提示词末尾）。例：五年级数学，分数的加减法，出 6 道抢答题，每题配一个可点击演示的 HTML 课件。"
+                style={{ marginBottom: 12 }}
+              />
+
+              <div style={{ marginBottom: 8, fontSize: 13 }}>粘贴 AI 返回的题目数据（JSON）</div>
+              <Input.TextArea
+                rows={8}
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+                placeholder={'{\n  "title": "第三单元随堂练习",\n  "subject": "数学",\n  "questions": [\n    { "question_text": "题干", "answer_text": "参考答案", "courseware_html": "<!DOCTYPE html>...</html>" }\n  ]\n}'}
+              />
+              <Space wrap style={{ marginTop: 8 }}>
+                <Upload accept=".json,.txt,.md,.html,.htm" showUploadList={false} beforeUpload={handleImportFile}>
+                  <Button icon={<UploadOutlined />}>上传 JSON / HTML 文件</Button>
+                </Upload>
+                <Button type="primary" icon={<RobotOutlined />} onClick={() => handleParseImport()}>
+                  解析预览
+                </Button>
+              </Space>
+
+              {importedQuestions.length > 0 && (
+                <div style={{ maxHeight: 260, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8, marginTop: 12 }}>
+                  {importedQuestions.map((q, i) => (
+                    <div key={i} style={{ padding: '6px 4px', borderBottom: '1px dashed #eee' }}>
+                      <Checkbox
+                        checked={importSelected.has(i)}
+                        onChange={(e) => {
+                          const s = new Set(importSelected);
+                          if (e.target.checked) s.add(i); else s.delete(i);
+                          setImportSelected(s);
+                        }}
+                      />
+                      <span style={{ marginLeft: 8 }}>{i + 1}. {q.question_text}</span>
+                      {q.answer_text && <Tag color="green" style={{ marginLeft: 8 }}>答案: {q.answer_text}</Tag>}
+                      {q.courseware_html && (
+                        <>
+                          <Tag color="blue" style={{ marginLeft: 8 }}>课件</Tag>
+                          <Button size="small" type="link" onClick={() => setPreviewHtml(q.courseware_html)}>预览</Button>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
+                课件不是必须的：没带 courseware_html 也能正常导入。已勾选 {importSelected.size} 道。
+              </div>
+            </div>
+          )}
         </Form>
       </Modal>
 
@@ -770,6 +1225,19 @@ const ClassroomQuiz: React.FC = () => {
                           <List.Item.Meta
                             avatar={<Tag color="blue">{index + 1}</Tag>}
                             title={<span style={{ whiteSpace: 'pre-wrap' }}>{q.question_text}</span>}
+                            description={
+                              <Space size={4} wrap style={{ marginTop: 4 }}>
+                                {q.answer_text && <Tag color="green">参考答案：{q.answer_text}</Tag>}
+                                {q.courseware_html && (
+                                  <>
+                                    <Tag color="cyan">含 HTML 课件</Tag>
+                                    <Button size="small" type="link" onClick={() => setPreviewHtml(q.courseware_html)}>
+                                      查看课件
+                                    </Button>
+                                  </>
+                                )}
+                              </Space>
+                            }
                           />
                         </List.Item>
                       )}
@@ -988,6 +1456,94 @@ const ClassroomQuiz: React.FC = () => {
           onRewarded={loadQuizzes}
         />
       )}
+
+      {/* 编辑题目的 HTML 课件 */}
+      <Modal
+        title={`HTML 课件${coursewareIndex !== null ? `（第 ${coursewareIndex + 1} 题）` : ''}`}
+        open={coursewareIndex !== null}
+        onCancel={() => setCoursewareIndex(null)}
+        onOk={saveCourseware}
+        width={860}
+        okText="保存到题目"
+        cancelText="取消"
+      >
+        <Space wrap style={{ marginBottom: 8 }}>
+          <Button size="small" icon={<CodeOutlined />} onClick={() => setCoursewareDraft(COURSEWARE_TEMPLATE)}>
+            插入模板
+          </Button>
+          <Button size="small" icon={<EyeOutlined />} onClick={() => setPreviewHtml(coursewareDraft)} disabled={!coursewareDraft.trim()}>
+            预览
+          </Button>
+          <Upload accept=".html,.htm,.txt" showUploadList={false} beforeUpload={async (file) => {
+            setCoursewareDraft(await readFileAsText(file));
+            return false;
+          }}>
+            <Button size="small" icon={<UploadOutlined />}>上传 HTML 文件</Button>
+          </Upload>
+        </Space>
+        <Input.TextArea
+          rows={14}
+          value={coursewareDraft}
+          onChange={(e) => setCoursewareDraft(e.target.value)}
+          placeholder={'粘贴一个完整的 HTML 文档（以 <!DOCTYPE html> 开头），课堂上可投屏并让学生操作'}
+        />
+        <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
+          课件要能离线打开：样式和脚本都写在这一个 HTML 里，不要引用外部网络资源。
+        </div>
+      </Modal>
+
+      {/* 课件预览 */}
+      <Modal
+        title="课件预览"
+        open={!!previewHtml}
+        onCancel={() => setPreviewHtml('')}
+        footer={null}
+        width={900}
+      >
+        <iframe
+          title="courseware-preview"
+          srcDoc={previewHtml}
+          style={{ width: '100%', height: '60vh', border: '1px solid #f0f0f0', borderRadius: 8, background: '#fff' }}
+        />
+      </Modal>
+
+      {/* AI 工具录入：JSON 格式说明 */}
+      <Modal
+        title="AI 工具录入：题目数据格式"
+        open={formatModalOpen}
+        onCancel={() => setFormatModalOpen(false)}
+        footer={[
+          <Button key="copy" type="primary" icon={<CopyOutlined />} onClick={() => copyText(AI_IMPORT_PROMPT, '提示词已复制')}>
+            复制提示词
+          </Button>,
+          <Button key="close" onClick={() => setFormatModalOpen(false)}>关闭</Button>,
+        ]}
+        width={760}
+      >
+        <Paragraph>
+          把下面的格式给 AI（或直接下载 Skill 文件放到 CodeBuddy 的 skills 目录），AI 就会按这个格式产出题目。
+        </Paragraph>
+        <pre style={{ background: '#f6f8fa', padding: 12, borderRadius: 8, overflow: 'auto', fontSize: 12 }}>
+{`{
+  "title": "第三单元随堂练习",
+  "subject": "数学",
+  "questions": [
+    {
+      "question_text": "一个三角形有几个角？",
+      "answer_text": "3 个",
+      "courseware_html": "<!DOCTYPE html>...</html>"   // 可选
+    }
+  ]
+}`}
+        </pre>
+        <Divider style={{ margin: '12px 0' }} />
+        <ul style={{ color: '#666', fontSize: 13, paddingLeft: 20 }}>
+          <li>question_text：必填，题干纯文本。</li>
+          <li>answer_text：可选，参考答案，只给老师看。</li>
+          <li>courseware_html：可选，完整独立的 HTML 文档，课堂上可投屏并让学生操作后作答。</li>
+          <li>如果 AI 在 JSON 前后加了说明文字也没关系，解析时会自动把 JSON 抠出来。</li>
+        </ul>
+      </Modal>
     </div>
   );
 };

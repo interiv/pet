@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { Form, Input, Button, Card, message, Typography, Select, Alert } from 'antd';
-import { UserOutlined, LockOutlined, MailOutlined, LinkOutlined } from '@ant-design/icons';
+import { Form, Input, Button, Card, message, Typography, Select, Alert, AutoComplete, Divider, Space } from 'antd';
+import { UserOutlined, LockOutlined, MailOutlined, LinkOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { authAPI, classAPI, schoolAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+import { SUBJECT_OPTIONS } from '../utils/subjects';
 
 const useMobile = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -27,11 +28,12 @@ const Register: React.FC = () => {
   const [schools, setSchools] = useState<any[]>([]);
   const [selectedSchoolId, setSelectedSchoolId] = useState<number | null>(null);
   const [selectedRole, setSelectedRole] = useState('student');
-  const [teacherType, setTeacherType] = useState<'head_teacher' | 'teacher'>('head_teacher');
   const [inviteCode, setInviteCode] = useState('');
   const [inviteInfo, setInviteInfo] = useState<any>(null);
   const isMobile = useMobile();
   const [form] = Form.useForm();
+  // 教师注册：一行一条任教关系（班级 + 身份 + 科目）
+  const teacherRows: any[] = Form.useWatch('assignments', form) || [];
 
   useEffect(() => {
     loadClasses();
@@ -89,8 +91,18 @@ const Register: React.FC = () => {
   const onFinish = async (values: any) => {
     setLoading(true);
     try {
-      const { confirmPassword, role, ...registerData } = values;
-      
+      const { confirmPassword, role, assignments, ...registerData } = values;
+
+      // 教师：把「一行一条」的任教关系整理成后端需要的结构（同时保留旧字段，兼容旧后端）
+      const teachingRows = (assignments || [])
+        .filter((r: any) => r && r.class_id)
+        .map((r: any) => ({
+          class_id: Number(r.class_id),
+          role: r.role === 'head_teacher' ? 'head_teacher' : 'teacher',
+          subject: (r.subject || '').trim() || undefined,
+        }));
+      const teacherType = teachingRows.some((r: any) => r.role === 'head_teacher') ? 'head_teacher' : 'teacher';
+
       // 如果有邀请码，使用邀请注册 API
       if (inviteCode && inviteInfo) {
         const response = await classAPI.registerWithInvite({
@@ -107,7 +119,12 @@ const Register: React.FC = () => {
         const response = await authAPI.register({
           ...registerData,
           role,
-          requested_class_ids: values.requested_class_ids
+          // 一行一条：班级 + 身份（班主任/任课教师）+ 科目
+          assignments: teachingRows,
+          // 兼容旧参数：班主任单选、任课教师多选
+          teacher_type: teacherType,
+          requested_class_ids: teachingRows.map((r: any) => r.class_id),
+          requested_class_id: teachingRows.length === 1 ? teachingRows[0].class_id : undefined,
         });
         if (response.data.pending) {
           message.success(response.data.message);
@@ -274,7 +291,12 @@ const Register: React.FC = () => {
                 onChange={(v: number) => {
                   setSelectedSchoolId(v);
                   // 学校变化后清空已选班级，避免选到别校的班级
-                  form.setFieldsValue({ requested_class_id: undefined, requested_class_ids: undefined });
+                  const rows = form.getFieldValue('assignments') || [];
+                  form.setFieldsValue({
+                    requested_class_id: undefined,
+                    requested_class_ids: undefined,
+                    assignments: rows.map((r: any) => ({ ...r, class_id: undefined })),
+                  });
                 }}
                 options={schools.map((s: any) => ({ value: s.id, label: `${s.name}${s.city ? ` - ${s.city}` : ''}` }))}
               />
@@ -297,67 +319,111 @@ const Register: React.FC = () => {
 
           {!inviteInfo && selectedRole === 'teacher' && (
             <>
-              <Form.Item
-                name="teacher_type"
-                label="教师类型"
-                initialValue="head_teacher"
-                rules={[{ required: true, message: '请选择教师类型' }]}
+              <Divider style={{ margin: '4px 0 12px' }} orientation="left" plain>
+                任教班级与身份（一个班级一条）
+              </Divider>
+              <Form.List
+                name="assignments"
+                rules={[
+                  {
+                    validator: async (_: any, rows: any[]) => {
+                      if (!rows || rows.length === 0) {
+                        return Promise.reject(new Error('请至少添加一条任教班级'));
+                      }
+                      return Promise.resolve();
+                    },
+                  },
+                ]}
               >
-                <Select
-                  onChange={(value) => {
-                    setTeacherType(value);
-                    // 切换身份后清空已选班级（两种身份用的字段不同）
-                    form.setFieldsValue({ requested_class_id: undefined, requested_class_ids: undefined });
-                  }}
-                >
-                  <Option value="head_teacher">班主任（只能选择一个班级）</Option>
-                  <Option value="teacher">任课教师（可同时申请多个班级）</Option>
-                </Select>
-              </Form.Item>
-
-              {teacherType === 'head_teacher' ? (
-                <Form.Item
-                  name="requested_class_id"
-                  label="选择要担任班主任的班级"
-                  rules={[{ required: true, message: '请选择要担任班主任的班级' }]}
-                >
-                  <Select
-                    placeholder={
-                      headTeacherCandidates.length
-                        ? '选择班级'
-                        : '当前暂无缺少班主任的班级，请联系管理员'
-                    }
-                    showSearch
-                    optionFilterProp="children"
-                  >
-                    {headTeacherCandidates.map(c => (
-                      <Option key={c.id} value={c.id}>
-                        {c.name} {c.grade ? `(${c.grade})` : ''}{c.school_name ? ` · ${c.school_name}` : ''}
-                      </Option>
-                    ))}
-                  </Select>
-                </Form.Item>
-              ) : (
-                <Form.Item
-                  name="requested_class_ids"
-                  label="选择要加入的班级（可多选）"
-                  rules={[{ required: true, message: '请至少选择一个班级' }]}
-                >
-                  <Select
-                    mode="multiple"
-                    placeholder={filteredClasses.length ? '选择要加入的班级' : '当前学校暂无公开班级'}
-                    maxTagCount={2}
-                    showSearch
-                    optionFilterProp="children"
-                  >
-                    {filteredClasses.map(c => (
-                      <Option key={c.id} value={c.id}>
-                        {c.name} {c.grade ? `(${c.grade})` : ''}{c.school_name ? ` · ${c.school_name}` : ''}
-                      </Option>
-                    ))}
-                  </Select>
-                </Form.Item>
-              )}
+                {(fields, { add, remove }) => (
+                  <>
+                    {fields.length === 0 && (
+                      <div style={{ color: '#999', fontSize: 13, marginBottom: 8 }}>
+                        还没有添加任教班级，可先选学校再添加。
+                      </div>
+                    )}
+                    {fields.map((field) => {
+                      const rowRole = teacherRows[field.name]?.role || 'teacher';
+                      const usedByOthers = teacherRows
+                        .filter((_: any, i: number) => i !== field.name)
+                        .map((r: any) => r?.class_id)
+                        .filter(Boolean);
+                      // 班主任行只能选还没有班主任的班级
+                      const candidates = (rowRole === 'head_teacher' ? headTeacherCandidates : filteredClasses)
+                        .filter((c: any) => !usedByOthers.includes(c.id));
+                      return (
+                        <Space key={field.key} align="center" wrap style={{ display: 'flex', marginBottom: 8 }}>
+                          <Form.Item
+                            {...field}
+                            name={[field.name, 'class_id']}
+                            rules={[{ required: true, message: '请选择班级' }]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Select
+                              showSearch
+                              optionFilterProp="children"
+                              placeholder="选择班级"
+                              style={{ minWidth: 200 }}
+                            >
+                              {candidates.map(c => (
+                                <Option key={c.id} value={c.id}>
+                                  {c.name} {c.grade ? `(${c.grade})` : ''}{c.school_name ? ` · ${c.school_name}` : ''}
+                                </Option>
+                              ))}
+                            </Select>
+                          </Form.Item>
+                          <Form.Item {...field} name={[field.name, 'role']} style={{ marginBottom: 0 }}>
+                            <Select
+                              style={{ width: 130 }}
+                              onChange={(v) => {
+                                if (v !== 'head_teacher') return;
+                                const list = form.getFieldValue('assignments') || [];
+                                const otherHead = list.some((r: any, i: number) => i !== field.name && r?.role === 'head_teacher');
+                                if (otherHead) {
+                                  message.warning('一个教师只能担任一个班的班主任');
+                                  form.setFieldValue(['assignments', field.name, 'role'], 'teacher');
+                                }
+                              }}
+                              options={[
+                                { value: 'teacher', label: '任课教师' },
+                                { value: 'head_teacher', label: '班主任' },
+                              ]}
+                            />
+                          </Form.Item>
+                          <Form.Item {...field} name={[field.name, 'subject']} style={{ marginBottom: 0 }}>
+                            <AutoComplete
+                              style={{ width: 120 }}
+                              placeholder="科目（选填）"
+                              options={SUBJECT_OPTIONS.map(s => ({ value: s }))}
+                              filterOption={(input, option) =>
+                                String(option?.value ?? '').toLowerCase().includes(String(input).toLowerCase())
+                              }
+                            />
+                          </Form.Item>
+                          <Button
+                            type="text"
+                            danger
+                            size="small"
+                            icon={<DeleteOutlined />}
+                            onClick={() => remove(field.name)}
+                          />
+                        </Space>
+                      );
+                    })}
+                    <Button
+                      type="dashed"
+                      block
+                      icon={<PlusOutlined />}
+                      onClick={() => add({ class_id: undefined, role: 'teacher', subject: undefined })}
+                    >
+                      添加一条任教班级
+                    </Button>
+                    <div style={{ color: '#999', fontSize: 12, marginTop: 6 }}>
+                      一个班级一条：可以同时在多个班任课；班主任只能有一个班。科目用于布置作业时自动带出，可随时修改。
+                    </div>
+                  </>
+                )}
+              </Form.List>
             </>
           )}
 
