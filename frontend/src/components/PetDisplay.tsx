@@ -20,6 +20,12 @@ import { EquipmentPanel } from './EquipmentPanel';
 
 const { Meta } = Card;
 
+/**
+ * 复活宠物时，不选道具要扣的金币数。
+ * 必须与后端 pets.js 的 REVIVE_GOLD_COST 一致，改动时两边同步。
+ */
+const REVIVE_GOLD_COST = 100;
+
 interface PetDisplayProps {
   pet: any;
   onNavigate?: (menu: string) => void;
@@ -36,6 +42,15 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
   const [myItems, setMyItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm();
+
+  /**
+   * 背包里真正能用的复活道具。
+   *
+   * 目前 items 表里没有 effect_type = 'revive' 的道具（转生用的是 reincarnate），
+   * 所以这里通常是空数组——弹窗会直接显示「扣金币复活」，
+   * 而不是给一个永远选不出东西的空下拉框。
+   */
+  const reviveItems = myItems.filter((i) => i.effect_type === 'revive' && i.quantity > 0);
 
   useEffect(() => {
     loadEquipments();
@@ -101,6 +116,9 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
     try {
       const res = await itemAPI.getMyItems();
       setMyItems(res.data.items || []);
+      // 复活与转生共用同一个 form 实例：不清空的话，上次在转生里选过的道具
+      // 会跟着提交到复活接口，后端判成「没有复活道具」，白跑一趟
+      form.resetFields();
       setReviveModalVisible(true);
     } catch (error) {
       message.error('加载背包失败');
@@ -441,16 +459,33 @@ const PetDisplay: React.FC<PetDisplayProps> = ({ pet, onNavigate }) => {
         destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={handleRevive}>
-          <p style={{ marginBottom: 16 }}>请选择复活道具（可选，不选则使用金币复活）</p>
-          <Form.Item name="item_id" label="复活道具">
-            <Select placeholder="选择复活道具（不选则消耗100金币）" allowClear>
-              {myItems.filter(item => item.effect_type === 'revive').map(item => (
-                <Select.Option key={item.item_id} value={item.item_id}>
-                  {item.name} (x{item.quantity})
-                </Select.Option>
-              ))}
-            </Select>
-          </Form.Item>
+          {/* 背包里没有复活道具时，别给一个永远选不出东西的空下拉框，
+              直接说清「要花钱」——原先这里只写「请选择复活道具（可选）」，
+              下面的选择框却是空的，学生既选不了也看不到要付多少。 */}
+          {reviveItems.length > 0 ? (
+            <>
+              <p style={{ marginBottom: 16 }}>
+                可使用复活道具复活；不选则消耗 <strong>{REVIVE_GOLD_COST}</strong> 金币。
+              </p>
+              <Form.Item name="item_id" label="复活道具">
+                <Select placeholder={`不选则消耗 ${REVIVE_GOLD_COST} 金币`} allowClear>
+                  {reviveItems.map((item) => (
+                    <Select.Option key={item.item_id} value={item.item_id}>
+                      {item.name} (x{item.quantity})
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </>
+          ) : (
+            <Alert
+              type="info"
+              showIcon
+              message={`复活需要消耗 ${REVIVE_GOLD_COST} 金币`}
+              description="背包里暂时没有复活道具，可以直接用金币复活。"
+              style={{ marginBottom: 8 }}
+            />
+          )}
         </Form>
       </Modal>
 

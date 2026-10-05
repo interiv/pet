@@ -6,7 +6,7 @@ const { updateTaskProgress } = require('./daily-tasks');
 const { checkAndAwardAchievement } = require('./achievements');
 // 技能槽规则统一复用 skills.js 的实现，避免两个学习接口口径不一致
 const { allocateSkillSlot, countPetSkills, MAX_SKILL_SLOTS } = require('./skills');
-const { recordItemChange } = require('../services/rewards');
+const { recordItemChange, recordGoldChange } = require('../services/rewards');
 
 // 取道具名（user_items 查询不一定带出 items.name，缺省回退成「道具#id」）
 function itemNameOf(userItem, itemId) {
@@ -523,7 +523,20 @@ function checkPetStatus(pet) {
   return false;
 }
 
-// 复活宠物
+/**
+ * 复活宠物：不选道具时改用金币
+ *
+ * 背景是一处前后端约定不一致，被学生撞上了：
+ *   前端弹窗写着「复活道具（可选，不选则消耗 100 金币）」，
+ *   后端却把 item_id 改成了必填，不传就报「复活需要消耗复活道具」。
+ *   而 items 表里压根没有 effect_type = 'revive' 的道具（转生用的是 reincarnate），
+ *   于是下拉框永远是空的、强制要道具又永远满足不了 —— 复活功能彻底走不通。
+ *
+ * 现在两条路都通：给了道具就消耗道具，没给道具就扣 REVIVE_GOLD_COST 金币。
+ * 「不允许零成本复活」这个初衷保留：两条路都要付代价，只是不再要求学生必须先买到道具。
+ */
+const REVIVE_GOLD_COST = 100;
+
 router.post('/revive', authenticateToken, (req, res) => {
   try {
     const { item_id } = req.body;
@@ -537,42 +550,64 @@ router.post('/revive', authenticateToken, (req, res) => {
       return res.status(400).json({ error: '宠物不需要复活' });
     }
 
-    // 必须消耗复活道具：原先 item_id 可省略，不传即可零成本复活，复活道具形同虚设
-    if (!item_id) {
-      return res.status(400).json({ error: '复活需要消耗复活道具' });
+    // 两条路都先校验通过，再统一落库：避免「扣了钱才发现另一条路也走不通」
+    let userItem = null;
+    if (item_id) {
+      userItem = db.prepare('SELECT * FROM user_items WHERE user_id = ? AND item_id = ? AND quantity > 0')
+        .get(req.user.userId, item_id);
+      if (!userItem) {
+        return res.status(400).json({ error: '没有这个复活道具' });
+      }
+    } else {
+      const user = db.prepare('SELECT gold FROM users WHERE id = ?').get(req.user.userId);
+      if (!user || Number(user.gold) < REVIVE_GOLD_COST) {
+        return res.status(400).json({
+          error: `复活需要消耗复活道具，或 ${REVIVE_GOLD_COST} 金币（当前金币不足）`,
+        });
+      }
     }
-    const userItem = db.prepare('SELECT * FROM user_items WHERE user_id = ? AND item_id = ? AND quantity > 0').get(req.user.userId, item_id);
-    if (!userItem) {
-      return res.status(400).json({ error: '没有复活道具' });
-    }
-    db.prepare('UPDATE user_items SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?').run(req.user.userId, item_id);
-    recordItemChange(req.user.userId, {
-      refType: 'item', refId: item_id, name: itemNameOf(userItem, item_id),
-      change: -1, reason: '复活宠物', source: 'revive_pet',
-    });
 
     const penalty = 0.1 + Math.random() * 0.05;
     const newAttack = Math.floor(pet.attack * (1 - penalty));
     const newDefense = Math.floor(pet.defense * (1 - penalty));
     const newSpeed = Math.floor(pet.speed * (1 - penalty));
 
-    db.prepare(`
-      UPDATE pets SET
-        status = 'normal',
-        hunger = 50,
-        health = 50,
-        mood = 50,
-        attack = ?,
-        defense = ?,
-        speed = ?,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE user_id = ?
-    `).run(newAttack, newDefense, newSpeed, req.user.userId);
+    // 扣费与复活必须同生共死：扣完金币复活失败，学生白掉 100 金币
+    const reviveTransaction = db.transaction(() => {
+      if (userItem) {
+        db.prepare('UPDATE user_items SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?')
+          .run(req.user.userId, item_id);
+        recordItemChange(req.user.userId, {
+          refType: 'item', refId: item_id, name: itemNameOf(userItem, item_id),
+          change: -1, reason: '复活宠物', source: 'revive_pet',
+        });
+      } else {
+        db.prepare('UPDATE users SET gold = gold - ? WHERE id = ?').run(REVIVE_GOLD_COST, req.user.userId);
+        recordGoldChange(req.user.userId, -REVIVE_GOLD_COST, '复活宠物', 'revive_pet');
+      }
 
+      db.prepare(`
+        UPDATE pets SET
+          status = 'normal',
+          hunger = 50,
+          health = 50,
+          mood = 50,
+          attack = ?,
+          defense = ?,
+          speed = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `).run(newAttack, newDefense, newSpeed, req.user.userId);
+    });
+    reviveTransaction();
+
+    const costText = userItem
+      ? `消耗复活道具「${itemNameOf(userItem, item_id)}」`
+      : `消耗 ${REVIVE_GOLD_COST} 金币`;
     const updatedPet = db.prepare('SELECT * FROM pets WHERE user_id = ?').get(req.user.userId);
 
     res.json({
-      message: `复活成功，属性下降 ${Math.floor(penalty * 100)}%`,
+      message: `复活成功（${costText}），属性下降 ${Math.floor(penalty * 100)}%`,
       pet: updatedPet
     });
   } catch (error) {
