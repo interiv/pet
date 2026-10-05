@@ -215,6 +215,19 @@ export const assignmentAPI = {
   getScanBatch: (assignmentId: number, batchId: number) =>
     api.get(`/assignments/${assignmentId}/paper-scan/batches/${batchId}`),
 
+  /**
+   * 某张照片的可访问地址，用在 <img src> 上。
+   * 走带 token 的请求：照片是学生的作答，不能当成公开静态资源直接暴露。
+   * 用 fetch + blob 而不是 img 直链，是因为 img 标签带不上 Authorization 头。
+   */
+  fetchScanImage: async (assignmentId: number, batchId: number, imageId: number): Promise<string> => {
+    const res = await api.get(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/images/${imageId}/file`, {
+      responseType: 'blob',
+      timeout: 30000,
+    });
+    return URL.createObjectURL(res.data as Blob);
+  },
+
   /** 登记一张照片的占位（只记元信息，不传文件） */
   addScanImageMeta: (assignmentId: number, batchId: number, meta: { file_name: string; file_size: number; mime_type?: string }) =>
     api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/images`, meta),
@@ -250,6 +263,17 @@ export const assignmentAPI = {
 
   resumeScan: (assignmentId: number, batchId: number) =>
     api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/resume`),
+
+  /** 把某份卷子指给某个学生（AI 认错名字时人工纠正，会持久化） */
+  assignScanGroup: (assignmentId: number, batchId: number, groupNo: number, studentId: number | null, studentName?: string) =>
+    api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/groups/${groupNo}/assign`, {
+      student_id: studentId,
+      student_name: studentName || '',
+    }),
+
+  /** 保存某份卷子的逐题修正（改对错、改部分分），只覆盖传上来的题 */
+  saveScanGroupResults: (assignmentId: number, batchId: number, groupNo: number, results: Array<{ question_id: number; is_correct?: boolean; score?: number; comment?: string }>) =>
+    api.put(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/groups/${groupNo}/results`, { results }),
 
   deleteScanBatch: (assignmentId: number, batchId: number) =>
     api.delete(`/assignments/${assignmentId}/paper-scan/batches/${batchId}`),

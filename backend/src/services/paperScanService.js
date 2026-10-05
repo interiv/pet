@@ -147,7 +147,10 @@ function deleteImage(imageId) {
   const img = db.prepare('SELECT * FROM paper_scan_images WHERE id = ?').get(imageId);
   if (!img) return;
   if (img.file_path) {
-    const abs = path.join(uploadsDir, path.basename(img.file_path));
+    // 必须用 imageAbsolutePath：照片存在paper-scan/ 子目录下，
+    // 直接拼 uploadsDir 会算出一个不存在的路径，unlink 静默失败，
+    // 结果是「记录删了、文件还在」，磁盘上不断堆积孤儿照片。
+    const abs = imageAbsolutePath(img.file_path);
     try { if (fs.existsSync(abs)) fs.unlinkSync(abs); } catch (e) { /* 删文件失败不阻塞 */ }
   }
   db.prepare('DELETE FROM paper_scan_images WHERE id = ?').run(imageId);
@@ -222,6 +225,69 @@ function attachStudentToGroup(batchId, groupNo, studentId, rawName) {
 const imageAbsolutePath = (filePath) =>
   path.join(uploadsDir, 'paper-scan', path.basename(filePath));
 
+// ===== 识别结果的人工修正=====
+
+/**
+ * 老师手动把某份卷子指给某个学生，并持久化。
+ *
+ * 为什么必须有这个接口：AI 认错名字（字迹潦草、名字写错、同名）时，
+ * 老师要能手工纠正。以前这个修正只存在浏览器内存里，一刷新就没了，
+ * 重新打开又要从头指派一遍——几十份卷子时这是不可接受的。
+ *
+ * 落两处，缺一不可：
+ *   1. paper_scan_images.student_id —— 按组存的归属，下次打开直接带出来
+ *   2. batch.result 里的 papers[]—— 识别结果快照，前端渲染与登记都读它
+ */
+function assignStudent(batchId, groupNo, studentId, studentName) {
+  const sid = studentId ? parseInt(studentId, 10) : null;
+  db.prepare('UPDATE paper_scan_images SET student_id = ?, updated_at = ? WHERE batch_id = ? AND group_no = ?')
+    .run(Number.isFinite(sid) ? sid : null, nowIso(), batchId, groupNo);
+
+  const batch = getBatch(batchId);
+  if (!batch) return null;
+  const result = safeParse(batch.result) || {};
+  const papers = Array.isArray(result.papers) ? result.papers : [];
+  const hit = papers.find((p) => p.group_no === groupNo);
+  if (hit) {
+    hit.student_id = Number.isFinite(sid) ? sid : null;
+    hit.student_name = studentName || hit.student_name || '';
+    // 人工指派过就算已匹配，matched 只影响前端的「待指派」筛选
+    hit.matched = Number.isFinite(sid);
+  }
+  db.prepare('UPDATE paper_scan_batches SET result = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(result), nowIso(), batchId);
+  return getBatch(batchId);
+}
+
+/**
+ * 保存老师对某份卷子的逐题修正（改对错、改部分分）。
+ *
+ * 只覆盖传上来的那些题，没传的保持 AI 原本的判断——
+ * 前端可能只改了一题就提交，不该把其余题冲掉。
+ */
+function updateGroupResults(batchId, groupNo, results) {
+  const batch = getBatch(batchId);
+  if (!batch) return null;
+  const result = safeParse(batch.result) || {};
+  const papers = Array.isArray(result.papers) ? result.papers : [];
+  const hit = papers.find((p) => p.group_no === groupNo);
+  if (!hit) return getBatch(batchId);
+
+  const byQid = new Map((Array.isArray(hit.results) ? hit.results : []).map((r) => [r.question_id, r]));
+  (Array.isArray(results) ? results : []).forEach((r) => {
+    const cur = byQid.get(r.question_id);
+    if (!cur) return; // 不属于这卷的题，忽略
+    if (r.is_correct !== undefined) cur.is_correct = Boolean(r.is_correct);
+    if (r.score !== undefined) cur.score = r.score;
+    if (r.comment !== undefined) cur.comment = String(r.comment).slice(0, 500);
+    if (r.student_answer !== undefined) cur.student_answer = String(r.student_answer).slice(0, 2000);
+  });
+
+  db.prepare('UPDATE paper_scan_batches SET result = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(result), nowIso(), batchId);
+  return getBatch(batchId);
+}
+
 module.exports = {
   MAX_IMAGES, uploadsDir,
   /** 延迟创建扫描照片子目录：真正上传时才建，避免启动阶段就因权限问题报错 */
@@ -232,6 +298,10 @@ module.exports = {
   addImagePlaceholder, markUploaded, regroup, reorder, deleteImage, refreshBatchCounters,
   markScanRunning, reportProgress, markScanDone, markScanFailed,
   attachStudentToGroup, imageAbsolutePath,
+  /** 人工修正：把某组指给某个学生（持久化，刷新不丢） */
+  assignStudent,
+  /** 人工修正：保存某组的逐题对错与部分分 */
+  updateGroupResults,
   markScanCancelled, isScanCancelled, clearScanResult, deleteBatch,
 };
 
@@ -268,7 +338,7 @@ function deleteBatch(batchId) {
   const images = listImages(batchId);
   for (const img of images) {
     if (!img.file_path) continue;
-    const abs = path.join(uploadsDir, path.basename(img.file_path));
+    const abs = imageAbsolutePath(img.file_path);
     try { if (fs.existsSync(abs)) fs.unlinkSync(abs); } catch (e) { /* 删文件失败不阻塞 */ }
   }
   db.prepare('DELETE FROM paper_scan_images WHERE batch_id = ?').run(batchId);

@@ -207,6 +207,35 @@ router.post('/:id/paper-scan/batches/:batchId/images/:imageId/file', authenticat
   });
 });
 
+/**
+ * 读取某张照片的内容（缩略图预览、放大核对都要用）
+ *
+ * 没有它的话，新流程上传完就看不到任何东西——上传接口只往磁盘写文件，
+ * 前端拿到的只有 file_name，无法渲染<img>。旧流程把图片塞在请求体里、
+ * 前端自己存着 dataURL，所以不需要这个接口。
+ *
+ * 权限沿用 loadBatch：只有该作业的班主任/管理员、且能操作这个批次的人能看。
+ * 照片本身是学生的作答，不做公开访问。
+ */
+router.get('/:id/paper-scan/batches/:batchId/images/:imageId/file', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, loadBatch, (req, res) => {
+  const imageId = parseInt(req.params.imageId, 10);
+  const image = db.prepare('SELECT * FROM paper_scan_images WHERE id = ? AND batch_id = ?').get(imageId, req.batch.id);
+  if (!image) return res.status(404).json({ error: '照片不存在' });
+  if (!image.file_path) return res.status(404).json({ error: '照片尚未上传' });
+
+  const abs = path.join(scanSvc.scanImageDir(), path.basename(image.file_path));
+  // file_path 来自数据库，这里再用 basename 兜一次：
+  // 万一被写入了 ../ 之类的路径，也不会读到批次目录以外的文件
+  if (!fs.existsSync(abs)) {
+    return res.status(404).json({ error: '照片文件已丢失，请重新上传' });
+  }
+
+  res.type(image.mime_type || 'image/jpeg');
+  // 缩略图内容不变，可缓存；带 hash 的文件名保证了内容变了 URL 也会变
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.sendFile(abs);
+});
+
 /** 删掉单张照片（同时删服务器上的文件） */
 router.delete('/:id/paper-scan/batches/:batchId/images/:imageId', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, loadBatch, (req, res) => {
   try {
@@ -500,6 +529,55 @@ router.post('/:id/paper-scan/batches/:batchId/resume', authenticateToken, author
       scanSvc.markScanFailed(batch.id, e.message || '识别失败');
     }
   });
+});
+
+// ===== 识别结果的人工修正 =====
+
+/**
+ * 把某份卷子指给某个学生（AI 认错名字时老师手工纠正）。
+ * 传student_id: null 表示取消指派。
+ */
+router.post('/:id/paper-scan/batches/:batchId/groups/:groupNo/assign', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, loadBatch, (req, res) => {
+  try {
+    const groupNo = parseInt(req.params.groupNo, 10);
+    if (!Number.isFinite(groupNo)) return res.status(400).json({ error: '组号无效' });
+
+    // 校验学生确实在这个作业的班级里，防止把别的班学生指过来。
+    // 学生与班级的关联直接存在 users.class_id，没有中间表。
+    const sid = req.body?.student_id ? parseInt(req.body.student_id, 10) : null;
+    let studentName = String(req.body?.student_name || '').slice(0, 50);
+    if (sid !== null) {
+      if (!Number.isFinite(sid)) return res.status(400).json({ error: '学生 id 无效' });
+      const inClass = db.prepare(
+        "SELECT id, real_name, username FROM users WHERE id = ? AND class_id = ? AND role = 'student'"
+      ).get(sid, req.assignment.class_id);
+      if (!inClass) return res.status(400).json({ error: '该学生不在本班' });
+      if (!studentName) studentName = inClass.real_name || inClass.username || '';
+    }
+
+    const batch = scanSvc.assignStudent(req.batch.id, groupNo, sid, studentName);
+    res.json({ batch: scanSvc.toPublicBatch(batch) });
+  } catch (e) {
+    console.error('指派学生失败:', e.message);
+    res.status(500).json({ error: '指派失败' });
+  }
+});
+
+/** 保存某份卷子的逐题修正（改对错、改部分分），只覆盖传上来的题 */
+router.put('/:id/paper-scan/batches/:batchId/groups/:groupNo/results', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, loadBatch, (req, res) => {
+  try {
+    const groupNo = parseInt(req.params.groupNo, 10);
+    if (!Number.isFinite(groupNo)) return res.status(400).json({ error: '组号无效' });
+    const results = req.body?.results;
+    if (!Array.isArray(results)) return res.status(400).json({ error: '缺少 results 数组' });
+    if (results.length > 200) return res.status(400).json({ error: '单份卷子的题目数异常' });
+
+    const batch = scanSvc.updateGroupResults(req.batch.id, groupNo, results);
+    res.json({ batch: scanSvc.toPublicBatch(batch) });
+  } catch (e) {
+    console.error('保存判分修正失败:', e.message);
+    res.status(500).json({ error: '保存失败' });
+  }
 });
 
 module.exports = router;

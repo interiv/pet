@@ -15,12 +15,15 @@ const authenticateToken = (req, res, next) => {
     const decoded = jwt.verify(token, jwtSecret);
 
     // 验证用户是否仍然存在及状态（一并取回账号名与真实姓名，供展示/通知文案使用）
-    const user = db.prepare('SELECT id, status, username, real_name FROM users WHERE id = ?').get(decoded.userId);
+    // role 必须从这里取，不能沿用 token 里的：
+    // token 在有效期内不会变，而管理员可能已经把老师降级为学生、
+    // 或停用某个账号。若信任 token，降级后旧的 token 仍能以教师身份操作。
+    const user = db.prepare('SELECT id, status, username, real_name, role FROM users WHERE id = ?').get(decoded.userId);
     if (!user) {
       return res.status(401).json({ error: '用户不存在' });
     }
 
-    req.user = { ...decoded, username: user.username, real_name: user.real_name };
+    req.user = { ...decoded, username: user.username, real_name: user.real_name, role: user.role };
     
     if (user.status === 'pending_approval') {
       return res.status(403).json({ error: '您的账号正在审核中，请联系管理员。' });

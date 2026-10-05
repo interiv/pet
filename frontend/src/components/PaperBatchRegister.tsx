@@ -1,11 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Modal, Button, Upload, Select, Tag, Empty, Spin, message, Space, Alert, InputNumber, Progress, Popconfirm,
+  InputNumber as NumInput, Tooltip, Divider,
 } from 'antd';
-import { PictureOutlined, RobotOutlined, DeleteOutlined, CheckOutlined, CloseOutlined, SearchOutlined } from '@ant-design/icons';
+import {
+  PictureOutlined, RobotOutlined, DeleteOutlined, CheckOutlined, CloseOutlined,
+  SearchOutlined, ReloadOutlined, StopOutlined, InboxOutlined,
+} from '@ant-design/icons';
 import { assignmentAPI, classroomQuizAPI } from '../utils/api';
-import { pollAiTask } from '../utils/aiTask';
-import { compressImage } from '../utils/imageCompress';
+import { usePaperScan } from '../usePaperScan';
+import { useScanThumbnails } from '../utils/useScanThumbnails';
 
 interface Q {
   id: number;
@@ -15,22 +19,23 @@ interface Q {
   answer?: string | null;
 }
 
-interface RecognizedResult {
+interface PaperResult {
   question_id: number;
-  recognized_answer: string;
+  recognized_answer?: string;
   is_correct: boolean;
   score: number;
-  comment: string;
+  comment?: string;
 }
 
-interface PaperItem {
-  key: string;
+interface Paper {
+  group_no: number;
+  image_ids: number[];
   student_id: number | null;
-  student_name: string;
-  raw_name: string;
+  student_name?: string;
+  raw_name?: string;
   matched: boolean;
-  image_indexes: number[];
-  results: RecognizedResult[];
+  results: PaperResult[];
+  error?: string;
 }
 
 interface Props {
@@ -52,24 +57,29 @@ const answerText = (q: Q) => {
   return q.answer;
 };
 
-const MAX_PHOTOS = 12;
-
 const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClose, onSaved }) => {
   const [loading, setLoading] = useState(false);
   const [questions, setQuestions] = useState<Q[]>([]);
   const [students, setStudents] = useState<any[]>([]);
   const [registeredIds, setRegisteredIds] = useState<number[]>([]);
-  const [photos, setPhotos] = useState<string[]>([]);
-  const [papers, setPapers] = useState<PaperItem[]>([]);
-  const [activeKey, setActiveKey] = useState<string | null>(null);
-  const [judging, setJudging] = useState(false);
-  // AI 识别进度（后端后台执行，这里轮询刷新）
-  const [judgeProgress, setJudgeProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
+  const [activeGroup, setActiveGroup] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
-  const [model, setModel] = useState('');
   const [query, setQuery] = useState('');
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
 
-  const loadAll = async () => {
+  const scan = usePaperScan(assignmentId, open);
+  const {
+    batch, groupSize, pendingFiles, uploading, scanning, loading: scanLoading,
+    pickFiles, uploadAll, startScan, cancelScan, changeGroupSize,
+    moveImage, removeImage, discardBatch, setBatch,
+  } = scan;
+
+  // 缩略图：把服务端 image_id 映射成可显示的 URL
+  const allImageIds = useMemo(() => (batch?.images || []).map((i) => i.image_id), [batch?.images]);
+  const getThumb = useScanThumbnails(assignmentId, batch?.batch_id, allImageIds);
+
+  /** 作业题目 / 学生名单 / 已登记名单——逐题核对与登记都依赖这些 */
+  const loadAll = useCallback(async () => {
     setLoading(true);
     try {
       const aRes = await assignmentAPI.getAssignment(assignmentId);
@@ -84,96 +94,78 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
     } finally {
       setLoading(false);
     }
-  };
+  }, [assignmentId]);
 
   useEffect(() => {
     if (open) {
-      setPhotos([]);
-      setPapers([]);
-      setActiveKey(null);
-      setModel('');
+      setActiveGroup(null);
       loadAll();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, assignmentId]);
+  }, [open, assignmentId, loadAll]);
 
-  const handleAddPhoto = async (file: File) => {
-    if (photos.length >= MAX_PHOTOS) {
-      message.warning(`一次最多 ${MAX_PHOTOS} 张照片`);
-      return;
-    }
-    try {
-      const dataUrl = await compressImage(file);
-      setPhotos(prev => [...prev, dataUrl]);
-    } catch (e) {
-      message.error('图片读取失败');
-    }
-  };
+  // 识别完成后自动选第一份，省一次点击
+  useEffect(() => {
+    if (activeGroup !== null) return;
+    const first = (batch?.result?.papers || [])[0];
+    if (first) setActiveGroup(first.group_no);
+  }, [batch?.result, activeGroup]);
 
-  const handleAIBatchJudge = async () => {
-    if (photos.length === 0) {
-      message.warning('请先添加作业照片');
-      return;
-    }
-    setJudging(true);
-    setJudgeProgress({ percent: 0, done: 0, total: photos.length, current: '正在提交识别任务' });
-    try {
-      // 后端改为后台任务：提交只返回 task_id，识别过程靠轮询拿进度
-      const res = await assignmentAPI.aiPaperJudgeBatch(assignmentId, { images: photos });
-      const taskId: string | undefined = res.data?.task_id;
-      if (!taskId) throw new Error('后端未返回任务号，请确认服务端已更新到最新版本');
+  const papers: Paper[] = useMemo(() => (batch?.result?.papers || []) as Paper[], [batch?.result]);
+  const activePaper = papers.find((p) => p.group_no === activeGroup) || null;
 
-      const data = await pollAiTask(taskId, '/assignments/generate/:taskId', setJudgeProgress);
-      setJudgeProgress(null);
+  const totalPhotos = batch?.total_images || 0;
+  const uploadedPhotos = batch?.uploaded_images || 0;
+  const notUploaded = pendingFiles.filter((p) => !p.uploaded);
+  const canStart = totalPhotos > 0 && uploadedPhotos >= totalPhotos && batch?.scan_status !== 'running';
+  const scanPercent = batch && batch.total_groups > 0
+    ? Math.round((batch.scanned_groups / batch.total_groups) * 100)
+    : 0;
 
-      const list: PaperItem[] = (data.papers || []).map((p: any, i: number) => ({
-        ...p,
-        key: `p_${Date.now()}_${i}`,
-      }));
-      setPapers(list);
-      setModel(data.model || '');
-      setRegisteredIds(data.registered_ids || registeredIds);
-      setActiveKey(list.length > 0 ? list[0].key : null);
-      const unmatched = list.filter(p => !p.student_id).length;
-      message.success(
-        `识别完成：${list.length} 份试卷${unmatched > 0 ? `，其中 ${unmatched} 份未认出姓名，请手动指派` : ''}`
-      );
-    } catch (e: any) {
-      message.error(e?.response?.data?.error || e?.message || '批量识别失败');
-    } finally {
-      setJudgeProgress(null);
-      setJudging(false);
-    }
-  };
-
-  const activePaper = papers.find(p => p.key === activeKey) || null;
-
-  const assignedCount = papers.filter(p => p.student_id).length;
+  const assignedCount = papers.filter((p) => p.student_id).length;
   const readyPapers = useMemo(
-    () => papers.filter(p => p.student_id && !registeredIds.includes(p.student_id)),
+    () => papers.filter((p) => p.student_id && !registeredIds.includes(p.student_id as number)),
     [papers, registeredIds]
   );
 
-  const updatePaper = (key: string, patch: Partial<PaperItem>) => {
-    setPapers(prev => prev.map(p => (p.key === key ? { ...p, ...patch } : p)));
-  };
-
-  const setResult = (key: string, questionId: number, patch: Partial<RecognizedResult>) => {
-    setPapers(prev => prev.map(p => {
-      if (p.key !== key) return p;
-      return {
+  // ===== 人工修正：改判分（本地先动，随后落库）=====
+  const setResult = (groupNo: number, questionId: number, patch: Partial<PaperResult>) => {
+    if (!batch) return;
+    setBatch((prev) => {
+      if (!prev?.result?.papers) return prev;
+      const nextPapers = (prev.result.papers as Paper[]).map((p) => (p.group_no !== groupNo ? p : {
         ...p,
-        results: p.results.map(r => (r.question_id === questionId ? { ...r, ...patch } : r)),
-      };
-    }));
+        results: p.results.map((r) => (r.question_id === questionId ? { ...r, ...patch } : r)),
+      }));
+      return { ...prev, result: { ...prev.result, papers: nextPapers } };
+    });
   };
 
-  const removePaper = (key: string) => {
-    const next = papers.filter(p => p.key !== key);
-    setPapers(next);
-    if (activeKey === key) setActiveKey(next.length > 0 ? next[0].key : null);
+  /** 把某份卷子的修正保存到服务端（刷新后不丢） */
+  const persistResults = async (groupNo: number, results: Array<{ question_id: number; is_correct: boolean; score: number }>) => {
+    try {
+      const r = await assignmentAPI.saveScanGroupResults(assignmentId, batch!.batch_id, groupNo, results);
+      setBatch(r.data.batch);
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || '修正未保存，刷新后会丢失');
+    }
   };
 
+  /** 手动指派学生：落库，刷新后仍在 */
+  const handleAssign = async (groupNo: number, studentId: number | null) => {
+    const s = students.find((x) => x.id === studentId);
+    try {
+      const r = await assignmentAPI.assignScanGroup(
+        assignmentId, batch!.batch_id, groupNo,
+        studentId, s ? (s.real_name || s.username) : ''
+      );
+      setBatch(r.data.batch);
+      message.success(studentId ? `已指派给 ${s ? (s.real_name || s.username) : ''}` : '已取消指派');
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || '指派失败');
+    }
+  };
+
+  // ===== 一键登记 =====
   const handleSaveAll = async () => {
     if (readyPapers.length === 0) {
       message.warning('没有可登记的学生（需要先指派姓名且该生尚未登记过）');
@@ -181,10 +173,10 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
     }
     setSaving(true);
     try {
-      const submissions = readyPapers.map(p => ({
+      const submissions = readyPapers.map((p) => ({
         student_id: p.student_id as number,
-        results: p.results.map(r => {
-          const q = questions.find(x => x.id === r.question_id);
+        results: p.results.map((r) => {
+          const q = questions.find((x) => x.id === r.question_id);
           // 后端对「判错且 score>0」会按百分比折算部分分，只允许主观题走这条路径，
           // 否则客观题会被 AI 误判的分值凭空给分
           const score = !r.is_correct && q && isSubjective(q.type) ? r.score : undefined;
@@ -201,10 +193,10 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
       const fail: any[] = res.data.failed || [];
       if (ok.length > 0) {
         message.success(`已登记 ${ok.length} 人，平均 ${res.data.total_score_avg} 分`);
-        setRegisteredIds(prev => [...prev, ...ok.map(x => x.student_id)]);
+        setRegisteredIds((prev) => [...prev, ...ok.map((x) => x.student_id)]);
       }
       if (fail.length > 0) {
-        message.warning(`${fail.length} 人未登记：${fail.map(f => f.reason).slice(0, 2).join('；')}`);
+        message.warning(`${fail.length} 人未登记：${fail.map((f) => f.reason).slice(0, 2).join('；')}`);
       }
       onSaved();
       if (fail.length === 0) onClose();
@@ -218,120 +210,241 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
   const studentOptions = useMemo(() => {
     const q = query.trim().toLowerCase();
     return students
-      .filter(s => !q || (s.real_name || s.username || '').toLowerCase().includes(q))
-      .map(s => ({ value: s.id, label: s.real_name || s.username }));
+      .filter((s) => !q || (s.real_name || s.username || '').toLowerCase().includes(q))
+      .map((s) => ({ value: s.id, label: s.real_name || s.username }));
   }, [students, query]);
+
+  // ===== 上传阶段 UI =====
+  const renderUploadPanel = () => (
+    <div style={{ border: '1px dashed #d9d9d9', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+        <Upload
+          accept="image/*"
+          multiple
+          showUploadList={false}
+          beforeUpload={(file) => { pickFiles([file as File]); return false; }}
+        >
+          <Button icon={<PictureOutlined />}>选择照片</Button>
+        </Upload>
+        <Button
+          type="primary"
+          icon={<InboxOutlined />}
+          loading={uploading}
+          disabled={pendingFiles.length === 0}
+          onClick={uploadAll}
+        >
+          {uploading
+            ? `上传中${notUploaded.length ? `（剩 ${notUploaded.length}）` : ''}`
+            : `上传全部（${notUploaded.length || pendingFiles.length} 张待传）`}
+        </Button>
+        <Tooltip title="每位学生的卷子有几张。改这个会重新分组，识别按组进行">
+          <span>
+            每人张数：
+            <NumInput
+              min={1}
+              max={10}
+              size="small"
+              value={groupSize}
+              style={{ width: 60, marginLeft: 4 }}
+              onChange={(v) => {
+                const n = Math.max(1, Math.min(10, parseInt(String(v || 1), 10) || 1));
+                setBatch((prev) => (prev ? { ...prev, group_size: n } : prev));
+                changeGroupSize(n);
+              }}
+            />
+          </span>
+        </Tooltip>
+
+        {scanning ? (
+          <Button danger icon={<StopOutlined />} onClick={cancelScan}>停止识别</Button>
+        ) : (
+          <Button
+            type="primary"
+            ghost
+            icon={<RobotOutlined />}
+            disabled={!canStart}
+            onClick={() => startScan(papers.length > 0 ? 'all' : undefined)}
+          >
+            {batch?.scan_status === 'cancelled' ? '继续识别' : (papers.length > 0 ? '重新识别' : '开始 AI 识别')}
+          </Button>
+        )}
+
+        <span style={{ flex: 1 }} />
+
+        {totalPhotos > 0 && (
+          <Popconfirm
+            title="丢弃这批照片？"
+            description="已上传的照片与识别结果都会删掉，无法恢复"
+            onConfirm={discardBatch}
+          >
+            <Button size="small" danger icon={<DeleteOutlined />}>丢弃本批</Button>
+          </Popconfirm>
+        )}
+      </div>
+
+      {/* 上传进度 */}
+      {totalPhotos > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          <Progress
+            percent={totalPhotos > 0 ? Math.round((uploadedPhotos / totalPhotos) * 100) : 0}
+            size="small"
+            status={uploadedPhotos >= totalPhotos ? 'success' : 'active'}
+          />
+          <div style={{ fontSize: 12, color: '#666' }}>
+            共 {totalPhotos} 张，已上传 {uploadedPhotos} 张
+            {uploadedPhotos < totalPhotos ? `（还有 ${totalPhotos - uploadedPhotos} 张没传完，可关掉弹窗稍后继续）` : ''}
+            {batch && <>，每 {groupSize} 张一份卷，共 {batch.total_groups} 份</>}
+          </div>
+        </div>
+      )}
+
+      {/* 识别进度 */}
+      {scanning && batch && (
+        <div style={{ marginBottom: 10, padding: '8px 10px', background: '#f6f8fa', borderRadius: 6 }}>
+          <Progress percent={scanPercent} size="small" status="active" />
+          <div style={{ fontSize: 12, color: '#666' }}>
+            正在识别第 {Math.min(batch.scanned_groups + 1, batch.total_groups)}/{batch.total_groups} 份卷子，可以关掉弹窗，识别会在后台继续
+          </div>
+        </div>
+      )}
+
+      {/* 照片网格：拖拽排序、显示所属组 */}
+      {pendingFiles.length > 0 && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(84px, 1fr))', gap: 8 }}>
+            {pendingFiles.map((p, i) => {
+              const url = p.imageId ? getThumb(p.imageId) : undefined;
+              const groupNo = batch?.images
+                ? batch.images.find((x) => x.image_id === p.imageId)?.group_no
+                : undefined;
+              return (
+                <div
+                  key={p.key}
+                  draggable={!scanning}
+                  onDragStart={() => setDragIndex(i)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    if (dragIndex === null || dragIndex === i) return;
+                    await moveImage(dragIndex, i);
+                    setDragIndex(null);
+                  }}
+                  style={{
+                    position: 'relative', border: dragIndex === i ? '2px dashed #1890ff' : '1px solid #e8e8e8',
+                    borderRadius: 6, overflow: 'hidden', cursor: scanning ? 'default' : 'grab', background: '#fafafa',
+                  }}
+                >
+                  {url
+                    ? <img src={url} alt="" style={{ width: '100%', height: 68, objectFit: 'cover', display: 'block' }} />
+                    : (
+                      <div style={{ height: 68, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb', fontSize: 11, textAlign: 'center', padding: 4 }}>
+                        {p.uploaded ? '' : (p.error ? '需重传' : '待上传')}
+                      </div>
+                    )}
+                  <span style={{ position: 'absolute', left: 0, top: 0, background: 'rgba(0,0,0,.55)', color: '#fff', fontSize: 10, padding: '0 4px', borderBottomRightRadius: 4 }}>
+                    #{i + 1}
+                  </span>
+                  {groupNo !== undefined && (
+                    <span style={{ position: 'absolute', right: 0, top: 0, background: groupNo % 2 ? '#1890ff' : '#52c41a', color: '#fff', fontSize: 10, padding: '0 4px', borderBottomLeftRadius: 4 }}>
+                      第{groupNo + 1}份
+                    </span>
+                  )}
+                  {p.uploaded && (
+                    <span style={{ position: 'absolute', right: 0, bottom: 0, background: 'rgba(82,196,26,.9)', color: '#fff', fontSize: 10, padding: '0 4px', borderTopLeftRadius: 4 }}>
+                      已传
+                    </span>
+                  )}
+                  {p.error && (
+                    <Tooltip title={p.error}>
+                      <span style={{ position: 'absolute', left: 0, bottom: 0, background: 'rgba(255,77,79,.95)', color: '#fff', fontSize: 10, padding: '0 4px', borderTopRightRadius: 4 }}>
+                        失败
+                      </span>
+                    </Tooltip>
+                  )}
+                  {!scanning && (
+                    <Button
+                      size="small"
+                      shape="circle"
+                      icon={<DeleteOutlined />}
+                      style={{ position: 'absolute', top: 16, right: 2, width: 18, height: 18, minWidth: 18, fontSize: 10 }}
+                      onClick={() => removeImage(i)}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
+            可拖动调整顺序；同一份卷子的照片请排在一起。照片直接上传到服务器，关掉弹窗也不会丢。
+          </div>
+        </>
+      )}
+
+      {pendingFiles.length === 0 && totalPhotos === 0 && (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="先选择作业照片，再点「上传全部」" style={{ margin: '12px 0' }} />
+      )}
+    </div>
+  );
 
   return (
     <Modal
       title={`📷 批量扫描纸质作业：${title}`}
       open={open}
       onCancel={onClose}
+      width={1120}
       zIndex={1100}
-      width={1080}
       destroyOnHidden
+      styles={{ body: { maxHeight: '74vh', overflowY: 'auto' } }}
       footer={
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ color: '#888', fontSize: 13 }}>
-            已识别 {papers.length} 份，已指派 {assignedCount} 份
-            {papers.length > 0 && assignedCount < papers.length && (
-              <span style={{ color: '#faad14', marginLeft: 8 }}>还有 {papers.length - assignedCount} 份待指派姓名</span>
-            )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ flex: 1, color: '#888', fontSize: 12 }}>
+            {papers.length > 0
+              ? `识别出 ${papers.length} 份卷子，已指派 ${assignedCount} 份，待登记 ${readyPapers.length} 人`
+              : (totalPhotos > 0 ? `共 ${totalPhotos} 张照片，${uploadedPhotos} 张已上传` : '尚未添加照片')}
+            {batch?.model ? `　使用模型：${batch.model}` : ''}
           </span>
-          <Space>
-            <Button onClick={onClose}>关闭</Button>
-            <Button
-              type="primary"
-              loading={saving}
-              disabled={readyPapers.length === 0}
-              onClick={handleSaveAll}
-            >
+          <Button onClick={onClose}>关闭</Button>
+          {readyPapers.length > 0 && (
+            <Button type="primary" loading={saving} onClick={handleSaveAll}>
               一键登记 {readyPapers.length} 人
             </Button>
-          </Space>
+          )}
         </div>
       }
-      styles={{ body: { maxHeight: '72vh', overflowY: 'auto' } }}
     >
-      <Spin spinning={loading}>
+      <Spin spinning={loading || scanLoading}>
         <Alert
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
           message="拍照前请确认"
-          description="每份卷子把姓名写在卷首显眼处，一叠卷子逐张拍照上传，AI 会识别姓名自动归到对应学生名下；认不出的会标为「待指派」，手动选一下即可。"
+          description="每份卷子把姓名写在卷首显眼处，一叠卷子逐张拍照上传，AI 会识别姓名自动归到对应学生名下；认不出的会标为「待指派」，手动选一下即可。指派与判分修正都会保存，关掉弹窗再打开还在。"
         />
 
-        {/* 照片区 + 批量识别 */}
-        <div style={{ border: '1px dashed #d9d9d9', borderRadius: 8, padding: 10, marginBottom: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <Upload
-              accept="image/*"
-              multiple
-              showUploadList={false}
-              beforeUpload={(file) => { handleAddPhoto(file as File); return false; }}
-            >
-              <Button icon={<PictureOutlined />}>添加作业照片</Button>
-            </Upload>
-            <Button
-              type="primary"
-              icon={<RobotOutlined />}
-              loading={judging}
-              disabled={photos.length === 0}
-              onClick={handleAIBatchJudge}
-            >
-              {judging ? 'AI识别中…' : `AI批量识别（${photos.length}张）`}
-            </Button>
-            {/* 识别进度：让老师看得见在做什么，而不是一个停不下来的转圈 */}
-            {judging && judgeProgress && (
-              <div style={{ flex: 1, minWidth: 180 }}>
-                <Progress percent={judgeProgress.percent} size="small" status="active" />
-                <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{judgeProgress.current}</div>
-              </div>
-            )}
-            {photos.length > 0 && (
-              <Popconfirm title="清空已上传的照片？" onConfirm={() => { setPhotos([]); setPapers([]); setActiveKey(null); }}>
-                <Button size="small" danger icon={<DeleteOutlined />}>清空照片</Button>
-              </Popconfirm>
-            )}
-            {photos.map((p, i) => (
-              <div key={i} style={{ position: 'relative' }}>
-                <img src={p} alt="" style={{ width: 46, height: 46, objectFit: 'cover', borderRadius: 4, border: '1px solid #ddd' }} />
-                <span style={{ position: 'absolute', left: 0, bottom: 0, background: 'rgba(0,0,0,.55)', color: '#fff', fontSize: 10, padding: '0 3px', borderBottomLeftRadius: 4 }}>
-                  #{i}
-                </span>
-                <Button
-                  size="small"
-                  shape="circle"
-                  icon={<DeleteOutlined />}
-                  style={{ position: 'absolute', top: -6, right: -6, width: 18, height: 18, minWidth: 18 }}
-                  onClick={() => setPhotos(prev => prev.filter((_, j) => j !== i))}
-                />
-              </div>
-            ))}
-          </div>
-          <div style={{ color: '#999', fontSize: 12, marginTop: 6 }}>
-            最多 {MAX_PHOTOS} 张，自动压缩后上传；识别较慢，请耐心等待（约需 1-2 分钟）。
-            {model && <span style={{ marginLeft: 8 }}>使用模型：{model}</span>}
-          </div>
-        </div>
+        {renderUploadPanel()}
+
+        {batch?.scan_status === 'failed' && batch.error && (
+          <Alert type="error" showIcon style={{ marginBottom: 12 }} message="识别失败" description={batch.error} />
+        )}
 
         {papers.length === 0 ? (
-          <Empty description={photos.length === 0 ? '先添加作业照片，再点「AI批量识别」' : '尚未识别，点击上方按钮开始'} />
+          !scanning && totalPhotos === 0 ? null : (
+            <Empty description={scanning ? '识别中，请稍候…' : '尚未识别，点击上方「开始 AI 识别」'} />
+          )
         ) : (
           <div style={{ display: 'flex', gap: 16 }}>
-            {/* 左侧：识别出的试卷列表 */}
-            <div style={{ width: 300, flexShrink: 0 }}>
+            {/* 左：识别出的试卷列表 */}
+            <div style={{ width: 290, flexShrink: 0 }}>
               <div style={{ fontWeight: 500, marginBottom: 8, fontSize: 13 }}>识别结果（按学生分组）</div>
-              <div style={{ maxHeight: 460, overflowY: 'auto' }}>
-                {papers.map(p => {
-                  const active = p.key === activeKey;
+              <div style={{ maxHeight: 420, overflowY: 'auto' }}>
+                {papers.map((p) => {
+                  const active = p.group_no === activeGroup;
                   const already = p.student_id != null && registeredIds.includes(p.student_id);
-                  const correctCount = p.results.filter(r => r.is_correct).length;
+                  const correctCount = p.results.filter((r) => r.is_correct).length;
                   return (
                     <div
-                      key={p.key}
-                      onClick={() => setActiveKey(p.key)}
+                      key={p.group_no}
+                      onClick={() => setActiveGroup(p.group_no)}
                       style={{
                         border: active ? '1px solid #1890ff' : '1px solid #f0f0f0',
                         background: active ? '#e6f7ff' : undefined,
@@ -347,71 +460,77 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
                         </Tag>
                         {already && <Tag color="default" style={{ marginRight: 0 }}>已登记</Tag>}
                         <span style={{ flex: 1 }} />
-                        <Button
-                          size="small"
-                          type="text"
-                          icon={<DeleteOutlined />}
-                          onClick={(e) => { e.stopPropagation(); removePaper(p.key); }}
-                        />
+                        <span style={{ fontSize: 11, color: '#bbb' }}>第{p.group_no + 1}份</span>
                       </div>
                       <div style={{ display: 'flex', gap: 4, marginBottom: 4, flexWrap: 'wrap' }}>
-                        {p.image_indexes.map(idx => (
-                          <img key={idx} src={photos[idx]} alt="" style={{ width: 34, height: 34, objectFit: 'cover', borderRadius: 3, border: '1px solid #eee' }} />
-                        ))}
+                        {(p.image_ids || []).map((id) => {
+                          const u = getThumb(id);
+                          return u
+                            ? <img key={id} src={u} alt="" style={{ width: 34, height: 34, objectFit: 'cover', borderRadius: 3, border: '1px solid #eee' }} />
+                            : <div key={id} style={{ width: 34, height: 34, background: '#f0f0f0', borderRadius: 3 }} />;
+                        })}
                       </div>
-                      <div style={{ fontSize: 12, color: '#888' }}>
-                        AI 读到姓名：{p.raw_name || '(未识别)'}　答对 {correctCount}/{p.results.length}
-                        {p.results.length > 0 && (
-                          <Progress
-                            percent={Math.round((correctCount / p.results.length) * 100)}
-                            size="small"
-                            style={{ marginTop: 2, marginBottom: 0 }}
-                          />
-                        )}
-                      </div>
+                      {p.error ? (
+                        <div style={{ fontSize: 12, color: '#ff4d4f' }}>该份识别失败：{p.error}</div>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: 12, color: '#888' }}>
+                            AI 读到姓名：{p.raw_name || '(未识别)'}　答对 {correctCount}/{p.results.length}
+                          </div>
+                          {p.results.length > 0 && (
+                            <Progress
+                              percent={Math.round((correctCount / p.results.length) * 100)}
+                              size="small"
+                              style={{ marginTop: 2, marginBottom: 0 }}
+                            />
+                          )}
+                        </>
+                      )}
                     </div>
                   );
                 })}
               </div>
             </div>
 
-            {/* 右侧：当前试卷的归属与逐题结果 */}
+            {/* 右：当前卷子的归属与逐题结果 */}
             <div style={{ flex: 1, minWidth: 0 }}>
               {!activePaper ? (
                 <Empty description="请在左侧选择一份试卷" />
               ) : (
                 <>
                   <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, marginBottom: 12 }}>
-                    <div style={{ marginBottom: 6, fontSize: 13 }}>
+                    <div style={{ marginBottom: 6, fontSize: 13, display: 'flex', alignItems: 'center' }}>
                       归属学生：
-                      {activePaper.matched ? (
-                        <Tag color="green" style={{ marginLeft: 6 }}>AI 已匹配</Tag>
-                      ) : (
-                        <Tag color="red" style={{ marginLeft: 6 }}>姓名未识别，请手动选择</Tag>
-                      )}
+                      {activePaper.matched
+                        ? <Tag color="green" style={{ marginLeft: 6 }}>已匹配</Tag>
+                        : <Tag color="red" style={{ marginLeft: 6 }}>姓名未识别，请手动选择</Tag>}
+                      <span style={{ flex: 1 }} />
+                      <Button
+                        size="small"
+                        type="text"
+                        icon={<ReloadOutlined />}
+                        onClick={() => persistResults(activePaper.group_no, activePaper.results.map((r) => ({ question_id: r.question_id, is_correct: r.is_correct, score: r.score })))}
+                      >
+                        保存修正
+                      </Button>
                     </div>
                     <Select
                       style={{ width: '100%' }}
-                      placeholder="选择该份作业属于哪位学生"
+                      placeholder="选择该份作业属于哪位学生（选完即保存）"
                       value={activePaper.student_id ?? undefined}
-                      onChange={(v) => {
-                        const s = students.find(x => x.id === v);
-                        updatePaper(activePaper.key, {
-                          student_id: v ?? null,
-                          student_name: s ? (s.real_name || s.username) : '',
-                        });
-                      }}
+                      onChange={(v) => handleAssign(activePaper.group_no, v ?? null)}
                       showSearch
                       optionFilterProp="label"
                       onSearch={setQuery}
                       filterOption={false}
                       options={studentOptions}
                       suffixIcon={<SearchOutlined />}
+                      allowClear
                     />
                   </div>
 
                   {questions.map((q, i) => {
-                    const r = activePaper.results.find(x => x.question_id === q.id);
+                    const r = activePaper.results.find((x) => x.question_id === q.id);
                     const correct = !!r?.is_correct;
                     return (
                       <div key={q.id} style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
@@ -426,7 +545,7 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
                               size="small"
                               type={correct ? 'primary' : 'default'}
                               icon={<CheckOutlined />}
-                              onClick={() => setResult(activePaper.key, q.id, { is_correct: true })}
+                              onClick={() => setResult(activePaper.group_no, q.id, { is_correct: true })}
                             >
                               对
                             </Button>
@@ -435,7 +554,7 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
                               type={!correct ? 'primary' : 'default'}
                               danger={!correct}
                               icon={<CloseOutlined />}
-                              onClick={() => setResult(activePaper.key, q.id, { is_correct: false, score: isSubjective(q.type) ? 50 : 0 })}
+                              onClick={() => setResult(activePaper.group_no, q.id, { is_correct: false, score: isSubjective(q.type) ? 50 : 0 })}
                             >
                               错
                             </Button>
@@ -457,7 +576,7 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
                               min={0}
                               max={100}
                               value={r.score ?? 0}
-                              onChange={(v) => setResult(activePaper.key, q.id, { score: v ?? 0 })}
+                              onChange={(v) => setResult(activePaper.group_no, q.id, { score: v ?? 0 })}
                               size="small"
                               style={{ width: 90 }}
                               suffix="%"
@@ -468,8 +587,9 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
                       </div>
                     );
                   })}
+                  <Divider style={{ margin: '10px 0' }} />
                   <div style={{ color: '#999', fontSize: 12 }}>
-                    逐题核对后可点右下角「一键登记」；同一学生已有提交记录的会被跳过。
+                    逐题核对后点右上「保存修正」写入服务器（不会丢）；再点右下「一键登记」写入成绩。同一学生已有提交记录的会被跳过。
                   </div>
                 </>
               )}
