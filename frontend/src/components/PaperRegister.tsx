@@ -83,15 +83,33 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
    *
    * 识别是在服务端跑的，老师可以在 A 识别期间去弄B、C、D。
    * 但切换学生会停掉「当前批次」的轮询，A 识别完的消息就收不到了。
-   * 这里单独开一个轻量轮询（只查汇总接口，不查单个批次），
-   * 只要有任何人正在识别就每2 秒刷一次，全部识别完就停。
-   * 这样「谁在跑、谁跑完了」始终准确，并且跑完会提示。
+   * 这里单独轮询汇总接口（只查状态，不查单个批次）。
+   *
+   * 频率随有没有人在识别而变：有人识别 2 秒一次（要跟上进度），
+   * 没人识别 15 秒一次（只兜底）。固定 2 秒的话，老师开着弹窗发呆
+   * 也在刷，半小时就是 900 个请求、上千行日志。
+   * 用递归 setTimeout 而非 setInterval：后者无法在某一轮回调里
+   * 决定「下一次隔多久」，而这里恰恰要按 running 状态切换节奏。
    */
   const runningRef = useRef(false);
+  // 点了「AI 识别判分」后自增，触发立刻查一次。
+  // 否则从空闲态（15 秒）切到识别中，最长要等 15 秒才看到「识别中」标签，体感很差。
+  const [pollWake, setPollWake] = useState(0);
   useEffect(() => {
     if (!open) { runningRef.current = false; return undefined; }
-    const timer = setInterval(async () => {
-      const list = await refreshAllProgress();
+    let stopped = false;
+    let timer: any = null;
+    const tick = async () => {
+      if (stopped) return;
+      let list: any[] = [];
+      try {
+        list = (await refreshAllProgress()) as any[];
+      } catch (e) {
+        // 网络抖动不该让监视停摆，按空闲频率重试即可
+        timer = setTimeout(tick, 15000);
+        return;
+      }
+      if (stopped) return;
       const map: Record<number, any> = {};
       (list as any[]).forEach((p) => {
         map[p.student_id] = {
@@ -109,9 +127,14 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
         message.success(`AI 识别完成，${doneCount} 位学生的结果已就绪，可点开查看`);
         loadAll();
       }
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [open, refreshAllProgress]);
+      // 有人跑就盯紧点，没人跑就降频——这次要修的核心：
+      // 固定 2 秒的话，老师开着弹窗发呆也在刷，半小时 900 个请求。
+      timer = setTimeout(tick, nowRunning ? 2000 : 15000);
+    };
+
+    tick();
+    return () => { stopped = true; if (timer) clearTimeout(timer); };
+  }, [open, refreshAllProgress, pollWake]);
 
   // 缩略图：鉴权图片要fetch 成 blob 才能显示
   const allImageIds = useMemo(() => (batch?.images || []).map((i) => i.image_id), [batch?.images]);
@@ -523,7 +546,12 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                     type="primary"
                     icon={<RobotOutlined />}
                     disabled={!canStart || !currentStudent}
-                    onClick={() => startScan(papers.length > 0 ? 'all' : undefined)}
+                    onClick={async () => {
+                      // 唤醒监视：识别一开始就该看到「识别中」标签，
+                      // 而不是等当前轮询周期（空闲时可能还有十几秒）结束
+                      setPollWake((n) => n + 1);
+                      await startScan(papers.length > 0 ? 'all' : undefined);
+                    }}
                   >
                     {myPaper ? '重新识别' : 'AI 识别判分'}
                   </Button>
