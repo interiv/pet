@@ -8,7 +8,7 @@ const { grantReward } = require('../services/rewards');
 const subjectiveReview = require('../services/subjectiveReview');
 const { updateTaskProgress } = require('./daily-tasks');
 const { checkAndAwardAchievement } = require('./achievements');
-const { getChinaDate } = require('../config/timezone');
+const { getChinaDate, getChinaDateOf } = require('../config/timezone');
 const { getPrompt, fillTemplate } = require('../config/prompts');
 const { isAnswerCorrect } = require('../utils/answerCheck');
 const { collectQuestions, normalizeQuestion } = require('../services/aiQuestion');
@@ -358,7 +358,7 @@ async function runGenerateLogic(req, res, hooks = {}) {
       return res.status(400).json({ error: `一次最多生成 ${maxQuestionsPerGen * 2} 道题目，请减少题型或数量` });
     }
 
-    const { getChinaDate } = require('../config/timezone');
+    const { getChinaDate, getChinaDateOf } = require('../config/timezone');
     const today = getChinaDate();
 
     const dailyTeacherLimit = getSystemSetting('daily_teacher_gen_limit', DEFAULT_DAILY_GEN_LIMIT);
@@ -2081,15 +2081,84 @@ router.get('/:id/statistics', authenticateToken, authorizeRole('teacher', 'admin
  * 把一位学生的纸质作答登记入库（线上提交与纸质登记同源）。
  * 校验失败时抛出带 message 的 Error，由调用方决定 400 还是逐条收集。
  */
-function registerPaperSubmission({ assignmentId, assignment, studentId, results, note }) {
+/**
+ * 撤销一次纸质登记，为「覆盖登记」做准备。
+ *
+ * 覆盖不是简单删掉重写——三处副作用必须先回滚，否则会出问题：
+ *   1. 金币：原先发的要扣回来。否则老师可以「登记 100 分 → 覆盖 0 分 →
+ *      再登记 100 分」反复刷金币。
+ *   2. 知识点掌握度：按旧答案逐条减回去，否则统计会随覆盖次数不断膨胀。
+ *   3. 通知：旧通知留着会让学生收到两条矛盾的「已登记」消息。
+ *
+ * 错题本刻意不动：它是累积本，多几道题不影响正确性，
+ * 而要精确撤回得记录每道题的来源，反而更容易出错。
+ */
+function rollbackPaperSubmission({ assignmentId, studentId, submissionId, title }) {
+  const oldQas = db.prepare(`
+    SELECT qa.question_bank_id, qa.is_correct, qa.answered_at, qb.knowledge_point
+    FROM question_answers qa
+    JOIN question_bank qb ON qb.id = qa.question_bank_id
+    WHERE qa.submission_id = ?
+  `).all(submissionId);
+
+  // 1) 回滚知识点统计：按每道题作答当天的日期减回去
+  for (const qa of oldQas) {
+    if (!qa.knowledge_point) continue;
+    const day = getChinaDateOf(qa.answered_at);
+    const stat = db.prepare(
+      'SELECT id, total_attempts, correct_attempts FROM knowledge_point_stats WHERE user_id = ? AND knowledge_point = ? AND date = ?'
+    ).get(studentId, qa.knowledge_point, day);
+    if (!stat) continue;
+    if (stat.total_attempts <= 1) {
+      // 只剩这一次，减完就是 0，直接删掉这行，别留一条 0/0 的脏数据
+      db.prepare('DELETE FROM knowledge_point_stats WHERE id = ?').run(stat.id);
+      continue;
+    }
+    const newCorrect = Math.max(0, stat.correct_attempts - (qa.is_correct ? 1 : 0));
+    const newTotal = stat.total_attempts - 1;
+    db.prepare(
+      'UPDATE knowledge_point_stats SET total_attempts = ?, correct_attempts = ?, accuracy = ? WHERE id = ?'
+    ).run(newTotal, newCorrect, Math.round((newCorrect / newTotal) * 100 * 100) / 100, stat.id);
+  }
+
+  // 2) 扣回金币（grantReward 传负数即扣减；total_gold_earned 是生涯累计，不回退）
+  const old = db.prepare('SELECT gold_reward FROM submissions WHERE id = ?').get(submissionId);
+  const oldGold = old && Number(old.gold_reward) ? Number(old.gold_reward) : 0;
+  if (oldGold > 0) {
+    try {
+      grantReward(studentId, {
+        gold: -oldGold,
+        source: 'paper_assignment_overwrite',
+        reason: `覆盖登记扣回：${title || '纸质作业'}`,
+      });
+    } catch (e) {
+      console.error('覆盖登记时扣回金币失败:', e.message);
+    }
+  }
+
+  // 3) 清掉旧答案与旧提交；通知留着，靠新登记那条覆盖语义
+  db.prepare('DELETE FROM question_answers WHERE submission_id = ?').run(submissionId);
+  db.prepare('DELETE FROM submissions WHERE id = ?').run(submissionId);
+
+  return { rollback_gold: oldGold, rollback_questions: oldQas.length };
+}
+
+function registerPaperSubmission({ assignmentId, assignment, studentId, results, note, overwrite = false, operatorId = null, operatorName = '' }) {
   const student = db.prepare('SELECT id, class_id, username, real_name FROM users WHERE id = ?').get(studentId);
   if (!student || student.class_id !== assignment.class_id) {
     throw new Error(`学生 ${student?.real_name || studentId} 不属于此作业的班级`);
   }
 
   const existing = db.prepare('SELECT id FROM submissions WHERE assignment_id = ? AND user_id = ?').get(assignmentId, studentId);
+  let rollbackInfo = null;
   if (existing) {
-    throw new Error(`${student.real_name || student.username} 已有提交记录（线上或纸质），不能重复登记`);
+    if (!overwrite) {
+      throw new Error(`${student.real_name || student.username} 已有提交记录（线上或纸质），不能重复登记`);
+    }
+    // 覆盖：先把上一次登记的副作用回滚干净，再重新登记
+    rollbackInfo = rollbackPaperSubmission({
+      assignmentId, studentId, submissionId: existing.id, title: assignment.title,
+    });
   }
 
   const questions = db.prepare(`
@@ -2197,33 +2266,97 @@ function registerPaperSubmission({ assignmentId, assignment, studentId, results,
     }
 
     db.prepare(`INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
-      VALUES (?, 'paper_graded', '纸质作业已登记', ?, 'assignment', ?)`)
-      .run(studentId, `作业「${assignment.title}」已由老师登记纸质作答，得分 ${finalScore} 分${goldReward > 0 ? `，获得 ${goldReward} 金币` : ''}。`, assignmentId);
+      VALUES (?, 'paper_graded', ?, ?, 'assignment', ?)`)
+      .run(
+        studentId,
+        rollbackInfo ? '纸质作业成绩已更正' : '纸质作业已登记',
+        `作业「${assignment.title}」${rollbackInfo ? '的成绩已被老师更正' : '已由老师登记纸质作答'}，得分 ${finalScore} 分${goldReward > 0 ? `，获得 ${goldReward} 金币` : ''}。`,
+        assignmentId
+      );
+
+    // 覆盖登记留痕：谁、什么时候、把成绩从多少改成了多少。
+    // 成绩是学生权益相关的记录，改动必须可追溯。
+    if (rollbackInfo && operatorId) {
+      try {
+        db.prepare(`INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
+          VALUES (?, 'paper_graded', '成绩更正记录', ?, 'assignment', ?)`)
+          .run(
+            studentId,
+            `老师 ${operatorName || ''} 更正了你的纸质作业成绩（${rollbackInfo.rollback_questions} 道题重判）。`,
+            assignmentId
+          );
+      } catch (e) { /* 留痕失败不影响主流程 */ }
+      console.log(`[paper-submit] 覆盖登记 assignment=${assignmentId} student=${studentId} by operator=${operatorId} rollbackGold=${rollbackInfo.rollback_gold}`);
+    }
 
     return submissionId;
   });
 
   const submissionId = submitTx();
-  return { submission_id: submissionId, total_score: finalScore, gold_reward: goldReward, student_name: student.real_name || student.username };
+  return {
+    submission_id: submissionId,
+    total_score: finalScore,
+    gold_reward: goldReward,
+    student_name: student.real_name || student.username,
+    overwritten: !!rollbackInfo,
+    rollback_gold: rollbackInfo ? rollbackInfo.rollback_gold : 0,
+  };
+}
+
+/**
+ * 校验当前教师有权操作这份作业。
+ *
+ * 「谁教的课谁评分」——范围与纸质扫描那边保持一致：
+ *   - 该班的任课老师（class_teachers里有记录即可，不是只认班主任）
+ *   - 这份作业的布置者
+ *   - 管理员
+ *
+ * 这个校验原先是缺的：paper-submit 只查了角色是 teacher，
+ * 结果任何老师都能给任意班级的学生登记/改成绩。现在补上。
+ */
+function requireAssignmentAccess(req, res, next) {
+  const assignmentId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(assignmentId)) return res.status(400).json({ error: '作业 id 无效' });
+  const assignment = db.prepare('SELECT id, class_id, teacher_id FROM assignments WHERE id = ?').get(assignmentId);
+  if (!assignment) return res.status(404).json({ error: '作业不存在' });
+  if (req.user.role !== 'admin') {
+    const teaches = db.prepare('SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?')
+      .get(req.user.userId, assignment.class_id);
+    if (!teaches && assignment.teacher_id !== req.user.userId) {
+      return res.status(403).json({ error: '你不是该班的任课老师，无法登记或更正纸质作业成绩' });
+    }
+  }
+  req.assignmentRow = assignment;
+  next();
 }
 
 // 教师代登记纸质作业（住校生等无设备场景），数据与线上提交同源
-router.post('/:id/paper-submit', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+router.post('/:id/paper-submit', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentAccess, (req, res) => {
   try {
     const { student_id, results, note } = req.body;
     if (!student_id || !Array.isArray(results) || results.length === 0) {
       return res.status(400).json({ error: '缺少学生或答题结果' });
     }
+    // overwrite：老师发现照片拍糊了、追加照片重新识别后要更正成绩。
+    // 这是教师端的正常操作（不是学生提交），所以允许覆盖；
+    // 但会先回滚上一次登记的金币与知识点统计，避免反复覆盖刷分。
+    const overwrite = req.body?.overwrite === true;
 
     const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
     if (!assignment) return res.status(404).json({ error: '作业不存在' });
     if (assignment.status === 'cancelled') return res.status(400).json({ error: '该作业已被取消' });
 
     const out = registerPaperSubmission({
-      assignmentId: req.params.id, assignment, studentId: student_id, results, note
+      assignmentId: req.params.id, assignment, studentId: student_id, results, note,
+      overwrite,
+      operatorId: req.user.userId,
+      operatorName: req.user.real_name || req.user.username || '',
     });
 
-    res.json({ message: '纸质作答登记成功', ...out });
+    res.json({
+      message: out.overwritten ? '纸质作答已覆盖更正' : '纸质作答登记成功',
+      ...out,
+    });
   } catch (error) {
     console.error('纸质作业登记失败:', error);
     const isBusiness = /不属于此作业|已有提交记录|没有有效的题目结果/.test(error.message || '');

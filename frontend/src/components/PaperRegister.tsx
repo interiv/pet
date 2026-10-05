@@ -283,13 +283,37 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
 
   const handleSave = async (andNext: boolean) => {
     if (!currentStudent) { message.warning('请先在左侧选择学生'); return; }
+    // 已经登记过的学生再点保存 = 更正成绩（老师追加照片重新识别后用）。
+    // 学生端自己提交走的是另一个接口，不经过这里，所以这里放开覆盖是安全的。
+    const isOverwrite = registeredIds.has(currentStudent.id);
+    if (isOverwrite) {
+      const ok = await new Promise<boolean>((resolve) => {
+        Modal.confirm({
+          title: '更正成绩',
+          content: `${currentStudent.real_name || currentStudent.username} 已经登记过（${registeredCount} 人已登记）。`
+            + '确定要覆盖之前的成绩吗？覆盖后会重新计算分数与金币，之前的记录将被替换。',
+          okText: '确定覆盖',
+          cancelText: '取消',
+          onOk: () => resolve(true),
+          onCancel: () => resolve(false),
+        });
+      });
+      if (!ok) { setSaving(false); return; }
+    }
     setSaving(true);
     try {
       const res = await assignmentAPI.paperSubmit(assignmentId, {
         student_id: currentStudent.id,
         results: buildResults(),
+        overwrite: isOverwrite,
       });
-      message.success(`${currentStudent.real_name || currentStudent.username} 登记成功：${res.data.total_score} 分${res.data.gold_reward > 0 ? `，+${res.data.gold_reward} 金币` : ''}`);
+      const name = currentStudent.real_name || currentStudent.username;
+      if (res.data.overwritten) {
+        message.success(`${name} 成绩已更正为 ${res.data.total_score} 分${res.data.gold_reward > 0 ? `，+${res.data.gold_reward} 金币` : ''}`
+          + (res.data.rollback_gold > 0 ? `（已扣回上次发放的 ${res.data.rollback_gold} 金币）` : ''));
+      } else {
+        message.success(`${name} 登记成功：${res.data.total_score} 分${res.data.gold_reward > 0 ? `，+${res.data.gold_reward} 金币` : ''}`);
+      }
       setRegisteredIds(prev => new Set(prev).add(currentStudent.id));
 
       // 标记批次已登记，但**不删**：
@@ -500,14 +524,16 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                   </Button>
                 )}
 
-                {/* 保存与识别放在同一组：这一组就是「处理一个人」的全过程，
-                    老师一眼能看出这里是逐个处理，与批量扫描不同 */}
+                {/* 保存与识别放在同一组：这一组就是「处理一个人」全过程，
+                    老师一眼能看出这里是逐个处理，与批量扫描不同。
+                    文案区分「登记」与「更正」——已登记的学生再点保存是改成绩，
+                    得让老师知道自己在做什么。 */}
                 <Button
                   disabled={!currentStudent || saving || !myPaper}
                   loading={saving}
                   onClick={() => handleSave(false)}
                 >
-                  保存
+                  {registeredIds.has(currentStudent?.id || 0) ? '更正成绩' : '保存'}
                 </Button>
                 <Button
                   type="primary"
@@ -515,7 +541,7 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                   loading={saving}
                   onClick={() => handleSave(true)}
                 >
-                  保存并登记下一个
+                  {registeredIds.has(currentStudent?.id || 0) ? '更正并登记下一个' : '保存并登记下一个'}
                 </Button>
 
                 <span style={{ flex: 1 }} />

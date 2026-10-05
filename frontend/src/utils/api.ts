@@ -147,7 +147,14 @@ export const assignmentAPI = {
   getStatistics: (id: number) =>
     api.get(`/assignments/${id}/statistics`),
 
-  paperSubmit: (id: number, data: { student_id: number; results: { question_id: number; is_correct: boolean; score?: number; student_answer?: string }[]; note?: string }) =>
+  /**
+   * 教师代登记纸质作业成绩。
+   *
+   * overwrite=true 时允许覆盖该学生已有的登记（老师追加照片重新识别后
+   * 要更正成绩）。后端会先回滚上一次登记发放的金币与知识点统计，
+   * 避免反复覆盖刷金币。
+   */
+  paperSubmit: (id: number, data: { student_id: number; results: { question_id: number; is_correct: boolean; score?: number; student_answer?: string }[]; note?: string; overwrite?: boolean }) =>
     api.post(`/assignments/${id}/paper-submit`, data),
 
   paperSubmitBatch: (id: number, data: { submissions: { student_id: number; results: { question_id: number; is_correct: boolean; score?: number; student_answer?: string }[]; note?: string }[]; note?: string }) =>
