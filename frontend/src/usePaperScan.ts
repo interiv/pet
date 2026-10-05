@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { message } from 'antd';
 import { assignmentAPI } from './utils/api';
+import { compressImagesBlobs, formatSize } from './utils/imageCompress';
 
 export interface ScanImage {
   image_id: number;
@@ -109,8 +110,18 @@ export function usePaperScan(
    * 必须记住它、不能靠下标去猜：本地列表和服务端images 一旦不同步
    * （删了但删除请求失败、草稿恢复后重新选的文件顺序不同），
    * 按下标取会张冠李戴，把甲的文件传到乙的记录上。
+   *
+   * blob 是压缩后的内容（不是原始 File）：手机随手一拍3~5MB，
+   * 一次扫半个班上百兆，原图全存在内存里会直接把标签页搞崩。
+   * 压缩后每张几百 KB，几十张也才十几兆。
+   * originalSize 留个原始体积，只用于给用户看「已从3.2MB 压到 420KB」。
    */
-  const [pendingFiles, setPendingFiles] = useState<Array<{ key: string; file: File; uploaded: boolean; percent: number; imageId?: number; error?: string }>>([]);
+  const [pendingFiles, setPendingFiles] = useState<Array<{
+    key: string; file: File; blob: Blob; originalSize: number;
+    uploaded: boolean; percent: number; imageId?: number; error?: string;
+  }>>([]);
+  const [compressing, setCompressing] = useState(false);
+  const [compressProgress, setCompressProgress] = useState<{ done: number; total: number } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -169,35 +180,68 @@ export function usePaperScan(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, assignmentId]);
   /**
-   * 选择照片：只放进本地列表，不立刻上传。
-   * 老师可以先在本地整理（删掉拍错的、调顺序、定分组），确认无误再点上传。
+   * 选择照片：先在客户端压缩，再放进本地列表，不立刻上传。
+   *
+   * 压缩放在这里而不是上传时，是有意为之：
+   * 一旦把原图存进 state，选 30 张就是 100MB+ 内存，移动端浏览器会直接崩。
+   * 压完只留几百 KB 的 Blob，几十张也才十几兆。
+   * 老师仍然可以先在本地整理（删掉拍错的、调顺序），确认无误再点上传。
    */
   const pickFiles = useCallback(async (files: File[]) => {
     if (!files || files.length === 0) return;
-    setPendingFiles((prev) => {
-      const exist = new Set(prev.map((p) => p.key));
+    setCompressing(true);
+    setCompressProgress({ done: 0, total: files.length });
+    try {
       // 服务端已有记录的照片按「文件名 + 大小」认回来。
       // 浏览器不允许程序读取 File 路径，刷新后只能靠用户重新选一次同一批文件，
-      // 这时若认不回就会全部重传一遍几百MB，得不偿失。
+      // 这时若认不回就会全部重传一遍几百 MB，得不偿失。
       const serverByName = new Map<string, ScanImage>();
       for (const img of batch?.images || []) {
-        if (img.file_name && !img.file_size) continue;
+        if (!img.file_name || !img.file_size) continue;
         serverByName.set(`${img.file_name}|${img.file_size}`, img);
       }
-      const added = files
-        .filter((f) => !exist.has(fingerprint(f)))
-        .map((f) => {
+
+      // 服务端已传过的跳过压缩：内容已经在服务器上了，压一遍是白费 CPU
+      const fresh = files.filter((f) => !serverByName.get(`${f.name}|${f.size}`)?.uploaded);
+      const skipped = files.length - fresh.length;
+
+      const compressed = await compressImagesBlobs(
+        fresh.map((f) => ({ file: f, key: fingerprint(f) })),
+        { onProgress: (d) => setCompressProgress({ done: skipped + d, total: files.length }) }
+      );
+      const blobByKey = new Map(compressed.map((c) => [c.key, c]));
+
+      setPendingFiles((prev) => {
+        const exist = new Set(prev.map((p) => p.key));
+        const added: typeof prev = [];
+        files.forEach((f) => {
+          const key = fingerprint(f);
+          if (exist.has(key)) return;
           const hit = serverByName.get(`${f.name}|${f.size}`);
-          return {
-            key: fingerprint(f),
+          const c = blobByKey.get(key);
+          added.push({
+            key,
             file: f,
+            blob: c?.blob || f,
+            originalSize: f.size,
             uploaded: Boolean(hit?.uploaded),
             percent: hit?.uploaded ? 100 : 0,
             imageId: hit?.image_id,
-          };
+          });
         });
-      return [...prev, ...added];
-    });
+        return [...prev, ...added];
+      });
+
+      const saved = compressed.reduce((sum, c) => sum + (c.originalSize - c.blob.size), 0);
+      if (saved > 0) {
+        message.success(`已压缩 ${files.length} 张，体积减少 ${formatSize(saved)}，上传会快很多`);
+      }
+    } catch (e: any) {
+      message.error(e?.message || '图片压缩失败');
+    } finally {
+      setCompressing(false);
+      setCompressProgress(null);
+    }
   }, [batch?.images]);
 
   /** 确保有一个批次（第一次上传时才创建，避免空批次堆积） */
@@ -236,9 +280,10 @@ export function usePaperScan(
         let imageId = item.imageId;
         if (!imageId) {
           const meta = await assignmentAPI.addScanImageMeta(assignmentId, bid, {
+            // 登记压缩后的实际体积：服务端据此判断单张是否超限
             file_name: item.file.name,
-            file_size: item.file.size,
-            mime_type: item.file.type,
+            file_size: item.blob.size,
+            mime_type: 'image/jpeg',
           });
           imageId = meta.data.image_id;
           b.images = meta.data.batch.images;
@@ -251,7 +296,8 @@ export function usePaperScan(
           continue;
         }
         try {
-          await assignmentAPI.uploadScanImage(assignmentId, bid, imageId, item.file, (percent) => {
+          // 传压缩后的 blob，不是原图：手机原图 3~5MB，压完几百 KB
+          await assignmentAPI.uploadScanImage(assignmentId, bid, imageId, item.blob, (percent) => {
             setPendingFiles((prev) => prev.map((p, idx) => (idx === i ? { ...p, percent } : p)));
           });
           setPendingFiles((prev) => prev.map((p, idx) => (idx === i ? { ...p, uploaded: true, percent: 100, error: undefined } : p)));
@@ -447,6 +493,10 @@ export function usePaperScan(
     uploading,
     scanning,
     loading,
+    /** 正在客户端压缩照片（此时还占着 CPU，别让用户以为界面死了） */
+    compressing,
+    /** 压缩进度 { done, total } */
+    compressProgress,
     pickFiles,
     uploadAll,
     startScan,

@@ -10,6 +10,7 @@ import {
 import { assignmentAPI, classroomQuizAPI } from '../utils/api';
 import { usePaperScan } from '../usePaperScan';
 import { useScanThumbnails } from '../utils/useScanThumbnails';
+import { formatSize } from '../utils/imageCompress';
 
 interface Q {
   id: number;
@@ -70,6 +71,7 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
   const scan = usePaperScan(assignmentId, open);
   const {
     batch, groupSize, pendingFiles, uploading, scanning, loading: scanLoading,
+    compressing, compressProgress,
     pickFiles, uploadAll, startScan, cancelScan, changeGroupSize,
     moveImage, removeImage, discardBatch, setBatch,
   } = scan;
@@ -224,13 +226,13 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
           showUploadList={false}
           beforeUpload={(file) => { pickFiles([file as File]); return false; }}
         >
-          <Button icon={<PictureOutlined />}>选择照片</Button>
+          <Button icon={<PictureOutlined />} loading={compressing}>选择照片</Button>
         </Upload>
         <Button
           type="primary"
           icon={<InboxOutlined />}
           loading={uploading}
-          disabled={pendingFiles.length === 0}
+          disabled={pendingFiles.length === 0 || compressing}
           onClick={uploadAll}
         >
           {uploading
@@ -281,6 +283,20 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
           </Popconfirm>
         )}
       </div>
+
+      {/* 压缩进度：压缩在本地跑，主线程会忙一会儿，得让用户知道在做什么 */}
+      {compressing && compressProgress && (
+        <div style={{ marginTop: 10, padding: '8px 10px', background: '#f6f8fa', borderRadius: 6 }}>
+          <Progress
+            percent={Math.round((compressProgress.done / Math.max(1, compressProgress.total)) * 100)}
+            size="small"
+            status="active"
+          />
+          <div style={{ fontSize: 12, color: '#666' }}>
+            正在压缩照片（{compressProgress.done}/{compressProgress.total}）——压完再上传，省流量也更快
+          </div>
+        </div>
+      )}
 
       {/* 上传进度 */}
       {totalPhotos > 0 && (
@@ -353,6 +369,14 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
                     <span style={{ position: 'absolute', right: 0, bottom: 0, background: 'rgba(82,196,26,.9)', color: '#fff', fontSize: 10, padding: '0 4px', borderTopLeftRadius: 4 }}>
                       已传
                     </span>
+                  )}
+                  {/* 压缩后体积：让老师直观看到省了多少流量 */}
+                  {p.blob.size > 0 && p.blob.size < p.originalSize && (
+                    <Tooltip title={`原图 ${formatSize(p.originalSize)} → 压缩后 ${formatSize(p.blob.size)}`}>
+                      <span style={{ position: 'absolute', left: 0, bottom: p.uploaded || p.error ? 14 : 0, background: 'rgba(0,0,0,.55)', color: '#fff', fontSize: 9, padding: '0 3px', borderTopRightRadius: 4 }}>
+                        {formatSize(p.blob.size)}
+                      </span>
+                    </Tooltip>
                   )}
                   {p.error && (
                     <Tooltip title={p.error}>

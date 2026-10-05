@@ -62,6 +62,7 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
   const scan = usePaperScan(assignmentId, open, { mode: 'single' });
   const {
     batch, pendingFiles, uploading, scanning, loading: scanLoading,
+    compressing, compressProgress,
     pickFiles, uploadAll, startScan, cancelScan, removeImage, discardBatch,
   } = scan;
 
@@ -327,12 +328,12 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                     return false;
                   }}
                 >
-                  <Button icon={<PictureOutlined />}>添加作业照片</Button>
+                  <Button icon={<PictureOutlined />} loading={compressing}>添加作业照片</Button>
                 </Upload>
                 <Button
                   icon={<InboxOutlined />}
                   loading={uploading}
-                  disabled={pendingFiles.length === 0}
+                  disabled={pendingFiles.length === 0 || compressing}
                   onClick={uploadAll}
                 >
                   {uploading ? `上传中（剩 ${notUploaded.length}）` : `上传全部${notUploaded.length ? `（${notUploaded.length}）` : ''}`}
@@ -368,6 +369,20 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                   </Popconfirm>
                 )}
               </div>
+
+              {/* 压缩进度：压缩在本地跑，界面会忙一会儿 */}
+              {compressing && compressProgress && (
+                <div style={{ marginTop: 10, padding: '8px 10px', background: '#f6f8fa', borderRadius: 6, marginBottom: 10 }}>
+                  <Progress
+                    percent={Math.round((compressProgress.done / Math.max(1, compressProgress.total)) * 100)}
+                    size="small"
+                    status="active"
+                  />
+                  <div style={{ fontSize: 12, color: '#666' }}>
+                    正在压缩照片（{compressProgress.done}/{compressProgress.total}）——压完再上传，省流量也更快
+                  </div>
+                </div>
+              )}
 
               {/* 上传进度 */}
               {totalPhotos > 0 && (

@@ -153,15 +153,7 @@ export const assignmentAPI = {
   paperSubmitBatch: (id: number, data: { submissions: { student_id: number; results: { question_id: number; is_correct: boolean; score?: number; student_answer?: string }[]; note?: string }[]; note?: string }) =>
     api.post(`/assignments/${id}/paper-submit-batch`, data),
 
-  // 以下两类都改为「提交任务 + 轮询进度」，提交请求本身很快，超时给30 秒足够
-  aiPaperJudge: (id: number, data: { images: string[] }, timeout?: number) =>
-    api.post(`/assignments/${id}/ai-paper-judge`, data, { timeout: (timeout || 30) * 1000 }),
-
-  // 批量识别：多张照片 → AI 识别卷面姓名 + 逐题判分，按学生分组返回
-  aiPaperJudgeBatch: (id: number, data: { images: string[] }, timeout?: number) =>
-    api.post(`/assignments/${id}/ai-paper-judge-batch`, data, { timeout: (timeout || 30) * 1000 }),
-
-  /**纸质作业识别进度（单张与批量共用） */
+  /** 纸质作业识别进度（出题与批量判分共用同一套任务查询） */
   getPaperJudgeProgress: (taskId: string) =>
     api.get(`/assignments/generate/${taskId}`, { timeout: 15000 }),
 
@@ -232,10 +224,15 @@ export const assignmentAPI = {
   addScanImageMeta: (assignmentId: number, batchId: number, meta: { file_name: string; file_size: number; mime_type?: string }) =>
     api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/images`, meta),
 
-  /** 上传某张照片的文件内容（multipart，单张，可回调进度） */
-  uploadScanImage: (assignmentId: number, batchId: number, imageId: number, file: File, onProgress?: (percent: number) => void) => {
+  /**
+   * 上传某张照片的内容（multipart，单张，可回调进度）。
+   *
+   * 传的是客户端压缩后的 Blob，不是原图：手机原图 3~5MB，
+   * 压完几百 KB，慢速网络下差别是「等半天」和「几秒」。
+   */
+  uploadScanImage: (assignmentId: number, batchId: number, imageId: number, file: Blob, onProgress?: (percent: number) => void) => {
     const fd = new FormData();
-    fd.append('file', file);
+    fd.append('file', file, 'photo.jpg');
     return api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/images/${imageId}/file`, fd, {
       timeout: 120000,
       onUploadProgress: (e) => {
