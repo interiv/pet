@@ -19,6 +19,8 @@ const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const petRoutes = require('./routes/pets');
 const assignmentRoutes = require('./routes/assignments');
+// 纸质作业扫描（批次制）：逐张上传 + 按组识别 + 进度落库
+const paperScanRoutes = require('./routes/paperScan');
 const battleRoutes = require('./routes/battles');
 const itemRoutes = require('./routes/items');
 const friendRoutes = require('./routes/friends');
@@ -163,6 +165,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/pets', petRoutes.router);
 app.use('/api/assignments', assignmentRoutes);
+// 纸质扫描挂在同一前缀下（路径自带 /:id/paper-scan/...），放在后面避免抢占原有路由
+app.use('/api/assignments', paperScanRoutes);
 app.use('/api/battles', battleRoutes);
 app.use('/api/items', itemRoutes);
 app.use('/api/friends', friendRoutes);

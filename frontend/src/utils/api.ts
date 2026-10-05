@@ -202,6 +202,57 @@ export const assignmentAPI = {
 
   getRetryQuestions: (id: number) =>
     api.get(`/assignments/${id}/retry-questions`),
+
+  // ===== 纸质作业扫描（批次制）=====
+  // 逐张上传 + 按组识别 + 进度落库：关掉弹窗或重启服务都不影响，
+  // 下次打开批次详情能看到「上次传了 12/20、识别到第 8 组」。
+  createScanBatch: (assignmentId: number, groupSize?: number) =>
+    api.post(`/assignments/${assignmentId}/paper-scan/batches`, { group_size: groupSize || 1 }),
+
+  listScanBatches: (assignmentId: number) =>
+    api.get(`/assignments/${assignmentId}/paper-scan/batches`),
+
+  getScanBatch: (assignmentId: number, batchId: number) =>
+    api.get(`/assignments/${assignmentId}/paper-scan/batches/${batchId}`),
+
+  /** 登记一张照片的占位（只记元信息，不传文件） */
+  addScanImageMeta: (assignmentId: number, batchId: number, meta: { file_name: string; file_size: number; mime_type?: string }) =>
+    api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/images`, meta),
+
+  /** 上传某张照片的文件内容（multipart，单张，可回调进度） */
+  uploadScanImage: (assignmentId: number, batchId: number, imageId: number, file: File, onProgress?: (percent: number) => void) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/images/${imageId}/file`, fd, {
+      timeout: 120000,
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100));
+      },
+    });
+  },
+
+  deleteScanImage: (assignmentId: number, batchId: number, imageId: number) =>
+    api.delete(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/images/${imageId}`),
+
+  setScanGroupSize: (assignmentId: number, batchId: number, groupSize: number) =>
+    api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/group-size`, { group_size: groupSize }),
+
+  reorderScanImages: (assignmentId: number, batchId: number, imageIds: number[]) =>
+    api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/reorder`, { image_ids: imageIds }),
+
+  /** 开始识别；restart='all' 表示清空上次结果重来 */
+  startScan: (assignmentId: number, batchId: number, restart?: 'all') =>
+    api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/start`, { restart }),
+
+  /** 取消识别：停止后续分组，已识别部分保留（不是回滚，因为还没登记） */
+  cancelScan: (assignmentId: number, batchId: number) =>
+    api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/cancel`),
+
+  resumeScan: (assignmentId: number, batchId: number) =>
+    api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/resume`),
+
+  deleteScanBatch: (assignmentId: number, batchId: number) =>
+    api.delete(`/assignments/${assignmentId}/paper-scan/batches/${batchId}`),
 };
 
 // ===== 学情报告（教师端）=====

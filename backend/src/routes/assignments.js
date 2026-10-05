@@ -69,9 +69,19 @@ try {
 }
 const multer = require('multer');
 
-const uploadsDir = path.join(__dirname, '../../uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+// 上传目录放在 data/ 下，而不是项目根的 uploads/。
+// 原因：Docker 部署只挂了 ./data:/app/data，而 uploads/ 既没进镜像也没挂卷——
+// 容器一重建，uploads 里已上传的文件会全部消失，但数据库里的记录还在，
+// 结果就是「记录说文件在，实际读不到」，纸质作业识别会集体失败。
+// data/ 目录本来就用于放数据库（已挂载卷），放这里天然跟着持久化。
+const uploadsDir = path.join(__dirname, '../../data/uploads');
+try {
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+} catch (e) {
+  // 目录建不出来时不能把整个服务拖垮：先记警告，等真正上传时再报错
+  console.warn('[uploads] 目录创建失败，上传功能将不可用:', e.message);
 }
 
 const storage = multer.diskStorage({
