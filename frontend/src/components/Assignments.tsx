@@ -1808,7 +1808,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         />
       )}
 
-      {/* 打印纸质作业纸 */}
+      {/* 打印纸质作业纸
+          宽度用 760（约 +36%）：原来的 560 太窄，学生名单一行只放得下 3 个人，
+          稍长的名字还被截断；加宽后打印内容能横排成一行，名单也能排 4 列 */}
       <Modal
         title={`🖨️ 打印作业纸：${printTarget?.title || ''}`}
         open={!!printTarget}
@@ -1821,7 +1823,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         }
         cancelText="取消"
         confirmLoading={printLoading}
-        width={isMobile ? '95vw' : 560}
+        width={isMobile ? '95vw' : 760}
         destroyOnHidden
       >
         {printLoading ? (
@@ -1853,7 +1855,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     <Button size="small" onClick={() => setPrintStudentIds(printClassStudents.filter(s => !printSubmittedIds.includes(s.id)).map(s => s.id))}>仅未提交</Button>
                     <Button size="small" onClick={() => setPrintStudentIds([])}>清空</Button>
                   </div>
-                  <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 6, padding: 8 }}>
+                  {/* 高度给到 260 是为了多显示两行——一个班四五十人，
+                      框子太矮的话老师要不停滚动才能确认名单 */}
+                  <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 6, padding: 8 }}>
                     {printClassStudents.length === 0 ? (
                       <Empty description="该班级暂无学生" image={Empty.PRESENTED_IMAGE_SIMPLE} />
                     ) : (
@@ -1864,7 +1868,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                       >
                         <Row>
                           {printClassStudents.map(s => (
-                            <Col span={8} key={s.id}>
+                            <Col span={6} key={s.id}>
                               <Checkbox
                                 value={s.id}
                                 style={{ color: printSubmittedIds.includes(s.id) ? '#bbb' : undefined }}
@@ -1883,30 +1887,27 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
               {/* 打印内容：试卷 / 答题卡 / 两者。
                   答题卡把答案集中到一处（选择判断填括号、主观题写格子），
-                  老师收上来扫一眼就能判分，也能二次批改；姓名同样印在页眉。 */}
+                  老师收上来扫一眼就能判分，也能二次批改；姓名同样印在页眉。
+
+                  必须是单选 Radio 而不是 Checkbox：三者互斥，
+                  而且 Checkbox.Group 的受控值语义是「勾选集合」，
+                  点第二项时数组变成 ['paper','sheet']，取 vals[0] 仍是 'paper'，
+                  状态等于没变——界面表现就是「怎么点都没反应」。 */}
               <Form.Item label="打印内容">
-                <Checkbox.Group
-                  value={[printContent]}
-                  onChange={(vals) => {
-                    const v = vals[0] as 'paper' | 'sheet' | 'both';
-                    // 取消所有勾选时兜底回「只印试卷」，避免出现「什么都不打印」
-                    setPrintContent(v || 'paper');
-                  }}
-                  style={{ width: '100%' }}
+                <Radio.Group
+                  value={printContent}
+                  onChange={(e) => setPrintContent(e.target.value)}
+                  style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}
                 >
-                  <Space direction="vertical" size={4}>
-                    <Checkbox value="paper">
-                      试卷（{printQuestions.length} 道题）{printMode === 'named' && ` ·${printStudentIds.length} 份带姓名`}
-                    </Checkbox>
-                    <Checkbox value="sheet">
-                      答题卡（答案集中填写，便于快速判分）
-                    </Checkbox>
-                    <Checkbox value="both">两者都打印（每人一组：试卷 + 答题卡）</Checkbox>
-                  </Space>
-                </Checkbox.Group>
+                  <Radio value="paper" title="学生在卷面直接作答">
+                    试卷（{printQuestions.length} 道题）{printMode === 'named' && ` · ${printStudentIds.length} 份带姓名`}
+                  </Radio>
+                  <Radio value="sheet" title="答案集中填写，便于快速判分">答题卡</Radio>
+                  <Radio value="both" title="每人一组：试卷页 + 答题卡页">两者都打印（试卷+答题卡）</Radio>
+                </Radio.Group>
                 <div style={{ color: '#999', fontSize: 12, marginTop: 6 }}>
                   {printContent === 'sheet'
-                    ? '只印答题卡：适合卷面已经发过、这次只补答题卡。'
+                    ? '只印答题卡：答案集中填写，便于快速判分；适合卷面已经发过、这次只补答题卡。'
                     : printContent === 'both'
                       ? '每人依次是「试卷页 → 答题卡页」，按人收上来就能对着判分。'
                       : '只印试卷：学生在卷面直接作答。'}
