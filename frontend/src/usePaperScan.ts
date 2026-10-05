@@ -108,6 +108,9 @@ const DRAFT_KEY = (assignmentId: number) => `paper_scan_draft_${assignmentId}`;
 
 export const fingerprint = (f: File) => `${f.name}|${f.size}|${f.lastModified}`;
 
+/** 「每人张数」的默认值：绝大多数作业是每人一份卷子，打开就该是这个数 */
+const DEFAULT_GROUP_SIZE = 1;
+
 /** 同一浏览器只保留一个作业的草稿，换作业时自动覆盖 */
 function saveDraft(d: Draft | null, assignmentId: number) {
   const key = DRAFT_KEY(assignmentId);
@@ -154,7 +157,7 @@ export function usePaperScan(
   const fixedGroupSize = mode === 'single';
   const [batch, setBatch] = useState<ScanBatch | null>(null);
   const [groupSize, setGroupSize] = useState(
-    fixedGroupSize ? 10 : Math.max(1, Math.min(10, options.initialGroupSize || 1))
+    fixedGroupSize ? 10 : Math.max(1, Math.min(10, options.initialGroupSize || DEFAULT_GROUP_SIZE))
   );
   /**
    * 本地待上传的文件，**按学生 id 分开存放**。
@@ -268,11 +271,25 @@ export function usePaperScan(
       const reusable = list.find((b) => b.upload_status !== 'uploaded' || b.scan_status === 'running' || b.scan_status === 'cancelled');
       if (reusable) {
         setBatch(reusable);
-        setGroupSize(reusable.group_size || 1);
+        /**
+         * 张数只在「批次里还没有照片」时回到默认值。
+         *
+         * 复用的可能是「上次没传完、这次接着传」的批次，如果它已经有照片，
+         * 必须沿用它的 group_size：那个数字是服务端分组的依据，
+         * 界面显示 1、实际按 3 张一组的话，老师会照错误的份数去发卷子。
+         * 空批次（含刚建的草稿）则回到默认——上回随手调过的数字不该一直留着，
+         * 每次打开都是默认值才符合直觉。
+         */
+        setGroupSize(
+          (reusable.total_images || 0) > 0
+            ? Math.max(1, Math.min(10, reusable.group_size || DEFAULT_GROUP_SIZE))
+            : DEFAULT_GROUP_SIZE
+        );
         dropPreviews();
         setPendingFiles([]);
       } else {
         setBatch(null);
+        setGroupSize(fixedGroupSize ? 10 : DEFAULT_GROUP_SIZE);
         dropPreviews();
         setPendingFiles([]);
       }

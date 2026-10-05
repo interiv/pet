@@ -107,6 +107,17 @@ const upload = multer({
 });
 
 /**
+ * 作答照片：原图 + 缩略图一次传完。
+ *
+ * 分成两次请求会出现「原图到了、缩略图没到」的半成品状态，预览只能拉原图。
+ * thumb 是可选字段：老前端、或缩略图生成失败时只有 file，接口会回退用原图。
+ */
+const uploadAnswerImages = upload.fields([
+  { name: 'file', maxCount: 1 },
+  { name: 'thumb', maxCount: 1 },
+]);
+
+/**
  * 学生个人题库：每次作答（线上提交 / 纸质登记）逐题 upsert。
  * 与错题本的区别：错题本只留做错的题，个人库保留做过的全部题目。
  * 表不存在时（迁移未执行）静默跳过，不影响主流程。
@@ -1867,6 +1878,21 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
         return res.status(400).json({ error: '主观题只能提交一次' });
       }
 
+      /**
+       * 混合题型作业（question_type = mixed，或题目类型与作业类型不一致）：
+       * 客观题有唯一答案，提交时直接按规则判分写库，**不送 AI**。
+       *
+       * 改造前整份作业都算「主观题」：10 道选择题 + 2 道作文会发起 12 次 AI 调用，
+       * 其中 10 次纯属浪费——又慢又烧额度，而且 AI 判选择题还可能和标准答案不一致。
+       * 现在只有真正的主观题才排队等 AI 评阅。
+       */
+      const objectiveQs = questions.filter((q) => isObjectiveType(q.type));
+      const objectiveIds = new Set(objectiveQs.map((q) => q.id));
+      // 每题满分：与纯客观题作业保持同一口径（100 / 总题数）
+      const perQuestionMax = questions.length > 0 ? 100 / questions.length : 0;
+      // 多选题前端可能给数组，直接绑到 SQLite 会崩，统一转成字符串
+      const answerToText = (v) => (Array.isArray(v) ? v.join(',') : (v === undefined || v === null ? '' : String(v)));
+
       const result = db.prepare(`
         INSERT INTO submissions (assignment_id, user_id, answers, attachments, status, total_max_score, review_status)
         VALUES (?, ?, ?, ?, 'submitted', 100, 'pending')
@@ -1874,12 +1900,49 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
 
       const newSubId = result.lastInsertRowid;
 
-      const insertQA = db.prepare(`
-        INSERT INTO question_answers (submission_id, question_bank_id, attempt_number, student_answer, image_url, answered_at)
-        VALUES (?, ?, 1, ?, ?, CURRENT_TIMESTAMP)
+      // 客观题：判分结果一次写全，reviewed_at 也写上——表示这题已判完、不需要 AI
+      const insertGraded = db.prepare(`
+        INSERT INTO question_answers
+          (submission_id, question_bank_id, attempt_number, student_answer, image_url, is_correct, score, max_score, duration_ms, answered_at, reviewed_at)
+        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `);
+      // 主观题：只落作答内容（含手写照片），等 AI 评阅
+      const insertPending = db.prepare(`
+        INSERT INTO question_answers
+          (submission_id, question_bank_id, attempt_number, student_answer, image_url, duration_ms, answered_at)
+        VALUES (?, ?, 1, ?, ?, ?, CURRENT_TIMESTAMP)
+      `);
+
       for (const ans of answers) {
-        insertQA.run(newSubId, ans.question_id, ans.answer || '', ans.image_url || '');
+        const q = objectiveQs.find((x) => x.id === Number(ans.question_id));
+        if (!q) {
+          insertPending.run(newSubId, ans.question_id, answerToText(ans.answer), ans.image_url || '', durationOf(ans.question_id));
+          continue;
+        }
+
+        const isCorrect = isAnswerCorrect(q.type, ans.answer, q.answer);
+        const userText = answerToText(ans.answer);
+        insertGraded.run(
+          newSubId, q.id, userText, ans.image_url || '',
+          isCorrect ? 1 : 0, isCorrect ? perQuestionMax : 0, perQuestionMax, durationOf(q.id)
+        );
+
+        // 错题本口径与纯客观题作业一致：答错记账、答对清账
+        if (isCorrect) {
+          db.prepare('DELETE FROM wrong_questions WHERE user_id = ? AND question_id = ?').run(req.user.userId, q.id);
+        } else {
+          const existingWQ = db.prepare('SELECT id FROM wrong_questions WHERE user_id = ? AND question_id = ?')
+            .get(req.user.userId, q.id);
+          if (existingWQ) {
+            db.prepare('UPDATE wrong_questions SET wrong_count = wrong_count + 1, wrong_answer = ?, correct_answer = ?, reviewed = 0 WHERE id = ?')
+              .run(userText, q.answer, existingWQ.id);
+          } else {
+            writeWrongQuestion({
+              userId: req.user.userId, assignmentId: req.params.id, questionId: q.id,
+              wrongAnswer: userText, correctAnswer: q.answer, analysis: q.analysis,
+            });
+          }
+        }
       }
 
       setImmediate(async () => {
@@ -2873,21 +2936,30 @@ router.get('/stats/type-summary', authenticateToken, authorizeRole('teacher', 'a
   }
 });
 
-router.post('/upload/image', authenticateToken, paperUpOff, upload.single('file'), (req, res) => {
+router.post('/upload/image', authenticateToken, paperUpOff, uploadAnswerImages, (req, res) => {
   try {
-    if (!req.file) {
+    const file = (req.files && req.files.file && req.files.file[0]) || null;
+    const thumb = (req.files && req.files.thumb && req.files.thumb[0]) || null;
+    if (!file) {
+      // 只收到缩略图说明调用方有问题，别把没主的文件留在磁盘上
+      if (thumb) { try { fs.unlinkSync(thumb.path); } catch (e) { /* ignore */ } }
       return res.status(400).json({ error: '请选择要上传的图片' });
     }
 
     const result = db.prepare(`
-      INSERT INTO upload_files (user_id, original_name, stored_name, file_path, file_size, mime_type, upload_type)
-      VALUES (?, ?, ?, ?, ?, ?, 'assignment')
-    `).run(req.user.userId, req.file.originalname, req.file.filename, `/uploads/${req.file.filename}`, req.file.size, req.file.mimetype);
+      INSERT INTO upload_files (user_id, original_name, stored_name, file_path, file_size, mime_type, upload_type, thumb_path, thumb_size)
+      VALUES (?, ?, ?, ?, ?, ?, 'assignment', ?, ?)
+    `).run(
+      req.user.userId, file.originalname, file.filename, `/uploads/${file.filename}`, file.size, file.mimetype,
+      thumb ? `/uploads/${thumb.filename}` : '', thumb ? thumb.size : 0
+    );
 
     res.json({
-      url: `/uploads/${req.file.filename}`,
+      url: `/uploads/${file.filename}`,
+      // 没有缩略图就回退原图：前端不必自己判断该用哪个
+      thumb_url: thumb ? `/uploads/${thumb.filename}` : `/uploads/${file.filename}`,
       file_id: result.lastInsertRowid,
-      original_name: req.file.originalname
+      original_name: file.originalname
     });
   } catch (error) {
     console.error('上传错误:', error);

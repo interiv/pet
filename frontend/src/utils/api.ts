@@ -202,10 +202,14 @@ export const assignmentAPI = {
   /**
    * 上传作答照片。传的是客户端压缩后的 Blob（长边 2000 / JPEG 0.82），
    * 手机原图直传有 3~5MB，压缩后通常只有几百 KB。
+   *
+   * thumb 是本地生成的小图（长边 320）：作答页面上的预览只有 200px 宽，
+   * 用原图当预览就是白下几百 KB。同一次请求传上去，要么都有要么都没有。
    */
-  uploadImage: (file: Blob) => {
+  uploadImage: (file: Blob, thumb?: Blob | null) => {
     const formData = new FormData();
     formData.append('file', file, 'answer.jpg');
+    if (thumb) formData.append('thumb', thumb, 'thumb.jpg');
     return api.post('/assignments/upload/image', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 60000,

@@ -154,13 +154,15 @@ app.use(morgan('dev', {
 app.use(express.json()); // JSON 解析
 app.use(express.urlencoded({ extended: true }));
 
-// 静态文件目录（上传的文件和前端图片）
-// 指向 data/uploads 而不是项目根的 uploads/：上传接口实际写在 data/uploads 下
-// （见 routes/assignments.js 的 uploadsDir），挂错目录会让所有上传的图片 404。
-// data/ 在 Docker 部署时是挂载卷，容器重建后文件仍在。
-app.use('/uploads', express.static(path.join(__dirname, '../../data/uploads')));
-// 兼容：若确实存在旧目录（早期版本把文件放在项目根 uploads/），也一并提供
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// 注意：data/uploads 下的文件**刻意不再挂成公开静态目录**。
+//
+// 那里放的是学生的手写作答照片（含姓名、笔迹），属于个人数据。
+// 以前 /uploads/<文件名> 谁拿到名字谁就能下载，没有任何鉴权——
+// 虽然文件名是随机的，但一旦链接被转发、被浏览器历史记录保存，就等于泄露。
+//
+// 现在这些文件只供服务端自己读取（主观题评阅是直接读磁盘，不走 HTTP），
+// 前端展示用学生本机压缩出来的图，不经过网络。
+// 万一以后要在页面上回顾历史作答，请加带 token 的读取接口，不要再挂静态目录。
 // 优先从 public/images 读取图片（生产环境），如果不存在则从原路径读取
 app.use('/images', express.static(path.join(__dirname, '../public/images')));
 app.use('/images', express.static(path.join(__dirname, '../../frontend/public/images')));

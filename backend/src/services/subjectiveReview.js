@@ -24,6 +24,11 @@
  * 4. **不给兜底分数**
  *    原先 AI 少返回一题就按 60 分记，学生交白卷也是 60 分。
  *    现在失败就是失败，标记出来交老师人工批改。
+ *
+ * 5. **只评主观题**
+ *    客观题（选择/判断/填空）本身有标准答案，提交时服务端已经规则判分，
+ *    再送去 AI 是纯浪费：一份 10 选择 + 2 作文的作业会白打 10 次请求，
+ *    又慢又费额度，还可能与标准答案给出不一致的判定。
  */
 const fs = require('fs');
 const path = require('path');
@@ -32,6 +37,13 @@ const { db } = require('../config/database');
 const { getAIConfig, isAIConfigured } = require('../config/ai');
 const { getPrompt, fillTemplate } = require('../config/prompts');
 const { grantReward } = require('./rewards');
+
+/**
+ * 客观题题型：这些题有唯一答案，提交时已由服务端按规则判好，不再送 AI。
+ * 与 routes/assignments.js 的 isObjectiveType 必须保持一致。
+ */
+const OBJECTIVE_TYPES = ['choice_single', 'choice_multi', 'judgment', 'fill_blank'];
+const OBJECTIVE_PLACEHOLDERS = OBJECTIVE_TYPES.map(() => '?').join(',');
 
 /** 上传目录，必须与 routes/assignments.js 的 uploadsDir 一致 */
 const uploadsDir = path.join(__dirname, '../../data/uploads');
@@ -166,6 +178,7 @@ async function reviewSubmission(submissionId, assignmentId, userId, opts = {}) {
     return { total: 0, done: 0, failed: [], avgScore: submission.total_score || 0, skipped: true };
   }
 
+  // 只看主观题：客观题提交时就判好了，送 AI 既浪费额度又可能与标准答案不一致
   const rows = db.prepare(`
     SELECT qa.id, qa.question_bank_id, qa.student_answer, qa.image_url, qa.reviewed_at,
            qa.score, qa.is_correct,
@@ -174,12 +187,17 @@ async function reviewSubmission(submissionId, assignmentId, userId, opts = {}) {
     FROM question_answers qa
     JOIN question_bank qb ON qa.question_bank_id = qb.id
     WHERE qa.submission_id = ?
+      AND qb.type NOT IN (${OBJECTIVE_PLACEHOLDERS})
     ORDER BY qa.id
-  `).all(submissionId);
+  `).all(submissionId, ...OBJECTIVE_TYPES);
 
   if (rows.length === 0) {
-    db.prepare("UPDATE submissions SET review_status = 'completed', total_score = 0, graded_at = CURRENT_TIMESTAMP WHERE id = ?").run(submissionId);
-    return { total: 0, done: 0, failed: [], avgScore: 0 };
+    // 没有主观题可评（例如一份 mixed 作业里其实只放了选择题）。
+    // 客观题提交时已经判好，这里把总分收尾即可，否则提交会永远卡在 pending。
+    const { score } = computeFinalScore(submissionId, 0, 0);
+    db.prepare("UPDATE submissions SET review_status = 'completed', total_score = ?, graded_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .run(score, submissionId);
+    return { total: 0, done: 0, failed: [], avgScore: score };
   }
 
   db.prepare("UPDATE submissions SET review_status = 'reviewing' WHERE id = ?").run(submissionId);
@@ -246,17 +264,22 @@ async function reviewSubmission(submissionId, assignmentId, userId, opts = {}) {
     if (opts.onProgress) opts.onProgress({ done, total: rows.length, questionId: qa.question_bank_id });
   }
 
-  const avgScore = rows.length > 0 ? Math.round(scoreSum / rows.length) : 0;
-  const goldReward = Math.floor((avgScore / 100) * (submission.max_exp || 30));
+  /**
+   * 总分口径统一为「每题等权」，把客观题的得分一起算进来：
+   * 纯主观作业下它等价于原来的「各题平均分」，所以老行为不变；
+   * 混合题型作业里客观题提交时就判好了，这里合到一起再结算。
+   */
+  const { score: totalScore } = computeFinalScore(submissionId, scoreSum, rows.length);
+  const goldReward = Math.floor((totalScore / 100) * (submission.max_exp || 30));
 
   if (failed.length > 0) {
     // 有题没评出来：绝不能标 completed，否则学生会以为已经判完。
     // 留在 pending 让老师看到「待批改」，由人工补。
     db.prepare(`
       UPDATE submissions SET total_score = ?, review_status = 'pending' WHERE id = ?
-    `).run(avgScore, submissionId);
+    `).run(totalScore, submissionId);
     console.log(`[主观题评阅] submission=${submissionId} 完成 ${rows.length - failed.length}/${rows.length}，未评：${failed.join(', ')}`);
-    return { total: rows.length, done, failed, avgScore };
+    return { total: rows.length, done, failed, avgScore: totalScore };
   }
 
   db.prepare(`
@@ -264,7 +287,7 @@ async function reviewSubmission(submissionId, assignmentId, userId, opts = {}) {
     SET total_score = ?, gold_reward = ?, review_status = 'completed',
         graded_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).run(avgScore, goldReward, submissionId);
+  `).run(totalScore, goldReward, submissionId);
 
   if (goldReward > 0) {
     try {
@@ -278,8 +301,33 @@ async function reviewSubmission(submissionId, assignmentId, userId, opts = {}) {
     }
   }
 
-  console.log(`[主观题评阅] submission=${submissionId} 全部完成，均分 ${avgScore}，金币 ${goldReward}`);
-  return { total: rows.length, done, failed: [], avgScore };
+  console.log(`[主观题评阅] submission=${submissionId} 全部完成，总分 ${totalScore}，金币 ${goldReward}`);
+  return { total: rows.length, done, failed: [], avgScore: totalScore };
+}
+
+/**
+ * 算这份提交的最终总分（0~100），口径是「每题等权」：
+ *   - 客观题：答对记 1、答错记 0（提交时已由规则判好，落在 is_correct 上）
+ *   - 主观题：把 0~100 的得分折算成 0~1
+ *
+ * 为什么不用「分数相加」：客观题每题满分是 100/总题数，主观题每题满分是 100，
+ * 直接相加会把两种量纲混在一起。用得分率就没有这个问题。
+ */
+function computeFinalScore(submissionId, subjectiveScoreSum, subjectiveCount) {
+  const obj = db.prepare(`
+    SELECT COUNT(*) AS n, SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS c
+    FROM question_answers qa
+    JOIN question_bank qb ON qa.question_bank_id = qb.id
+    WHERE qa.submission_id = ? AND qb.type IN (${OBJECTIVE_PLACEHOLDERS})
+  `).get(submissionId, ...OBJECTIVE_TYPES);
+
+  const objCount = (obj && obj.n) || 0;
+  const objCorrect = (obj && obj.c) || 0;
+  const totalCount = objCount + subjectiveCount;
+  if (totalCount === 0) return { score: 0, totalCount: 0 };
+
+  const ratioSum = objCorrect + (subjectiveScoreSum / 100);
+  return { score: Math.round((ratioSum / totalCount) * 100), totalCount };
 }
 
 /** 标记某题评阅失败，把原因写进 feedback，前端点开就能看到 */

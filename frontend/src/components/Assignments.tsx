@@ -1,11 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space, Radio, Checkbox, Progress, Card, Alert, Upload, Image, Divider, Empty, Statistic, Row, Col, Tabs, Badge, Popconfirm, Tooltip } from 'antd';
 import { assignmentAPI, adminAPI, classroomQuizAPI } from '../utils/api';
 import { pollAiTask } from '../utils/aiTask';
 import { useAuthStore } from '../store/authStore';
 import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
-import { compressImageBlob, formatSize } from '../utils/imageCompress';
+import { compressImageWithThumb, formatSize } from '../utils/imageCompress';
 import dayjs from 'dayjs';
 import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import CelebrationAnimation from './CelebrationAnimation';
@@ -190,7 +190,54 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [genLimit, setGenLimit] = useState<{ daily_limit: number; daily_used: number; daily_remaining: number; global_tokens_remaining: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [studentAnswers, setStudentAnswers] = useState<Record<number, any>>({});
-  const [uploadedImages, setUploadedImages] = useState<Record<number, string>>({});
+  /**
+   * 每题已上传的作答照片（key 是题目 id）。
+   *
+   *   url      服务端保存的原图路径，提交时随答案交给后端；AI 评阅是直接读磁盘，
+   *            不走 HTTP，所以这个地址不需要、也不应该能公开访问
+   *   thumbUrl 本机小图（长边 320）的 objectURL，页面上的预览用它
+   *   fullUrl  本机原图的 objectURL，点开放大时才用
+   *
+   * 预览刻意用本机图而不是服务端地址：作答照片是个人数据，已不再挂在公开
+   * 静态目录下（拿不到就直接看不到），本机图反而更快、也不多发一次请求。
+   */
+  const [uploadedImages, setUploadedImages] = useState<Record<number, {
+    url: string;
+    thumbUrl: string;
+    fullUrl: string;
+  }>>({});
+
+  /**
+   * 释放本机预览的 objectURL。
+   *
+   * objectURL 不释放就一直占着内存（原图一张几百 KB），
+   * 换图、清空、离开页面时都必须调用。
+   * 重复释放是安全的，所以不必去重。
+   */
+  const releaseUploadPreview = (rec?: { thumbUrl?: string; fullUrl?: string } | null) => {
+    if (!rec) return;
+    [rec.thumbUrl, rec.fullUrl].forEach((u) => {
+      if (!u) return;
+      try { URL.revokeObjectURL(u); } catch (e) { /* ignore */ }
+    });
+  };
+
+  /** 清空所有题的照片预览（开始新一轮作答时用），顺带释放 objectURL */
+  const clearUploadedImages = useCallback(() => {
+    setUploadedImages((prev) => {
+      Object.values(prev).forEach((rec) => releaseUploadPreview(rec));
+      return {};
+    });
+  }, []);
+
+  // 离开作答页面时释放本机预览：objectURL 不会自动回收，一张原图就是几百 KB
+  const uploadedImagesRef = useRef(uploadedImages);
+  useEffect(() => { uploadedImagesRef.current = uploadedImages; });
+  useEffect(() => () => {
+    Object.values(uploadedImagesRef.current).forEach((rec) => releaseUploadPreview(rec));
+    // releaseUploadPreview 是纯函数，不依赖 props/state，只在卸载时跑一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   /** 正在压缩+上传的题号，用于在对应位置显示进度（多题同时传也不串） */
   const [uploadingImageFor, setUploadingImageFor] = useState<number | null>(null);
   const [progressMilestones, setProgressMilestones] = useState<Set<number>>(new Set());
@@ -612,7 +659,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       } else {
         setStudentAnswers({});
       }
-      setUploadedImages({});
+      clearUploadedImages();
       setProgressMilestones(new Set());
       resetQuestionTimers();
       setIsDoModalVisible(true);
@@ -660,7 +707,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       answers.push({
         question_id: q.id,
         answer: ans,
-        image_url: uploadedImages[q.id] || '',
+        // 交原图：AI 评阅要读手写笔迹，缩略图会读不清
+        image_url: uploadedImages[q.id]?.url || '',
         // 逐题作答耗时（毫秒）。后端只接受 0.5s~30min 的合理区间，异常值会被忽略。
         duration_ms: getQuestionDuration(q.id),
       });
@@ -779,9 +827,22 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     const questionNo = (currentAssignment?.questions || []).findIndex((x: any) => x.id === questionId) + 1;
     setUploadingImageFor(questionId);
     try {
-      const blob = await compressImageBlob(file);
-      const res = await assignmentAPI.uploadImage(blob);
-      setUploadedImages(prev => ({ ...prev, [questionId]: res.data.url }));
+      // 一次解码同时产出「上传用的原图」和「预览用的小图」，
+      // 页面上的预览只有 200px 宽，没必要为了它下载几百 KB
+      const { blob, thumb } = await compressImageWithThumb(file);
+      const res = await assignmentAPI.uploadImage(blob, thumb);
+      // 预览就用本机这两张图，不再向服务端取：
+      // 作答照片已是鉴权资源、公开地址不再可用，本机图还省一次下载
+      const thumbUrl = URL.createObjectURL(thumb || blob);
+      const fullUrl = URL.createObjectURL(blob);
+      setUploadedImages(prev => {
+        // 换图时先把上一张释放掉，否则每换一次就漏掉一两个 objectURL
+        releaseUploadPreview(prev[questionId]);
+        return {
+          ...prev,
+          [questionId]: { url: res.data.url, thumbUrl, fullUrl },
+        };
+      });
       const saved = file.size > 0 ? file.size - blob.size : 0;
       message.success(
         `第 ${questionNo} 题作答照片已上传` +
@@ -971,7 +1032,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       isRetryMode: true
     }));
     setStudentAnswers({});
-    setUploadedImages({});
+    clearUploadedImages();
     setIsResultModalVisible(false);
     resetQuestionTimers();
     setIsDoModalVisible(true);
@@ -1015,7 +1076,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         isRetryMode: true
       });
       setStudentAnswers({});
-      setUploadedImages({});
+      clearUploadedImages();
       setProgressMilestones(new Set());
       resetQuestionTimers();
       setIsDoModalVisible(true);
@@ -1189,7 +1250,14 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                   <div style={{ fontSize: 12, color: '#52c41a', marginBottom: 4 }}>
                     ✓ 已上传第 {index + 1} 题的作答照片
                   </div>
-                  <Image src={uploadedImages[q.id!]} width={200} style={{ borderRadius: 6 }} />
+                  {/* 列表里用缩略图（十几 KB）；点开放大时才去取原图，
+                      想核对笔迹看得清，平时又不白下几百 KB */}
+                  <Image
+                    src={uploadedImages[q.id!]?.thumbUrl}
+                    preview={{ src: uploadedImages[q.id!]?.fullUrl }}
+                    width={200}
+                    style={{ borderRadius: 6 }}
+                  />
                 </div>
               )}
             </div>

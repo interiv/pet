@@ -101,11 +101,15 @@ export function buildPaperHtml(params: {
   /**
    * 每名学生一组：[试卷页][答题卡页]。
    * both 模式下答题卡紧跟在该学生的试卷后面，方便一起发下去、按人收上来。
-   * 页与页之间统一插分页符，最后一页后面不插（多插会多出一张空白页）。
+   *
+   * 分页不在这里手动插空 div，而是由 CSS 的 page-break-after 统一控制：
+   * 每份内容结束都强制换页，最后一份再由 :last-child 取消。
+   * 手动插分页符时只在「人和人之间」插，试卷与答题卡之间就没插——
+   * 试卷内容不满一页时，答题卡会紧跟着排在同一页的下半部分。
    */
   const blocks: string[] = [];
   const people: Array<PaperStudent | null> = namedStudents.length > 0 ? namedStudents : [null];
-  people.forEach((s, idx) => {
+  people.forEach((s) => {
     if (wantPaper) {
       blocks.push(
         `<div class="page">${buildHeaderHtml(a, s)}<h2>${escapeHtml(a.title)}${
@@ -116,7 +120,6 @@ export function buildPaperHtml(params: {
     if (wantSheet) {
       blocks.push(buildAnswerSheetHtml(a, s, questions));
     }
-    if (idx < people.length - 1) blocks.push('<div class="pb"></div>');
   });
   const pages = blocks.join('');
 
@@ -136,13 +139,17 @@ h2 { text-align: center; margin: 0 0 2mm; font-size: 16px; }
 .opts { margin-left: 6mm; }
 .opt { margin: 1mm 0; }
 .answer-lines { margin-top: 2mm; background: repeating-linear-gradient(to bottom, transparent 0, transparent 30px, #bbb 30px, #bbb 31px); }
-.pb { page-break-after: always; }
 .ans-block { margin-top: 6mm; border-top: 1px dashed #999; padding-top: 3mm; }
 .ans-title { font-weight: bold; margin-bottom: 2mm; }
 .ans-item { margin: 1mm 0; color: #333; }
 /* ===== 答题卡===== */
-.sheet { page-break-after: always; }
-.sheet:last-child { page-break-after: auto; }
+/* 每一份内容（试卷 .page、答题卡 .page.sheet）结束后都强制换页。
+   少了这条，试卷内容不满一页时答题卡会跟着排在同一页下半部分。
+   答题卡自身可能跨两页，page-break-after 作用在整块之后，
+   也就是只在它最后一页结束时换页，下一页不会混进别的内容。 */
+.page, .sheet { page-break-after: always; }
+/* 最后一份后面不能再分页，否则打印机要多吐一张空白页 */
+.page:last-child, .sheet:last-child { page-break-after: auto; }
 .tip { font-size: 11px; color: #666; margin-bottom: 3mm; }
 .sec-title { font-weight: bold; margin: 4mm 0 2mm; font-size: 13px; }
 .obj { width: 100%; border-collapse: collapse; }
@@ -157,7 +164,7 @@ h2 { text-align: center; margin: 0 0 2mm; font-size: 16px; }
 .write-area { border: 1px solid #bbb; min-height: 26mm; margin: 1mm 0 4mm 12mm; background: repeating-linear-gradient(to bottom, transparent 0, transparent 30px, #e5e5e5 30px, #e5e5e5 31px); }
 .toolbar { position: fixed; top: 8px; right: 8px; z-index: 99; }
 .toolbar button { font-size: 13px; padding: 6px 14px; cursor: pointer; }
-@media print { .toolbar { display: none; } .pb { page-break-after: always; } }
+@media print { .toolbar { display: none; } }
 </style></head><body>
 <div class="toolbar"><button onclick="window.print()">打印</button></div>
 ${pages}
