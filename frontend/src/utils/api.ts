@@ -17,6 +17,17 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    // FormData 必须让浏览器自己设Content-Type（它会附带 boundary=...）。
+    //
+    // 上面给实例设了 application/json 默认头，而 axios 遇到 FormData
+    // 只会原样透传、不会删掉已存在的头。结果浏览器看到 application/json，
+    // 就把FormData 当 JSON 序列化——File 对象没有可序列化的属性，
+    // 实际发出去的是 {"file":{}}，服务端multer 拿不到文件，返回 400。
+    //
+    // 这里统一抹掉，避免每写一个上传接口都要记得手动覆盖。
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      delete config.headers['Content-Type'];
+    }
     return config;
   },
   (error) => {
@@ -260,11 +271,22 @@ export const assignmentAPI = {
    * 上传某张照片的内容（multipart，单张，可回调进度）。
    *
    * 传的是客户端压缩后的 Blob，不是原图：手机原图 3~5MB，
-   * 压完几百 KB，慢速网络下差别是「等半天」和「几秒」。
+   * 压完几百KB，慢速网络下差别是「等半天」和「几秒」。
+   *
+   * fileName 必须传真实文件名。服务端会用 multer 的 originalname
+   * 覆盖 file_name，写死成 photo.jpg 会让所有照片都叫同一个名字，
+   * 之后「刷新后认回已上传照片」就分不清谁是谁了。
    */
-  uploadScanImage: (assignmentId: number, batchId: number, imageId: number, file: Blob, onProgress?: (percent: number) => void) => {
+  uploadScanImage: (
+    assignmentId: number,
+    batchId: number,
+    imageId: number,
+    file: Blob,
+    fileName: string,
+    onProgress?: (percent: number) => void,
+  ) => {
     const fd = new FormData();
-    fd.append('file', file, 'photo.jpg');
+    fd.append('file', file, fileName || 'photo.jpg');
     return api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/images/${imageId}/file`, fd, {
       timeout: 120000,
       onUploadProgress: (e) => {

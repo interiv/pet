@@ -253,17 +253,40 @@ export function usePaperScan(
     setCompressing(true);
     setCompressProgress({ done: 0, total: files.length });
     try {
-      // 服务端已有记录的照片按「文件名 + 大小」认回来。
+      // 认回服务端已有的照片，避免重传。
       // 浏览器不允许程序读取 File 路径，刷新后只能靠用户重新选一次同一批文件，
-      // 这时若认不回就会全部重传一遍几百 MB，得不偿失。
-      const serverByName = new Map<string, ScanImage>();
+      // 认不回就会把这批照片全部重传一遍，手机上等于白等几十分钟。
+      //
+      // 只能按「文件名」认，不能带大小：服务端 file_size 记的是**压缩后**的体积
+      // （服务端据此判断单张是否超限），而本地 f.size 是原图体积，
+      // 3MB 原图对300KB 压缩结果是永远配不上，认回会静默失效。
+      // 同名的可能有几张（两台手机拍的照片都叫 IMG_0001.jpg），
+      // 所以按出现顺序一一配对，且同一条服务端记录只认领一次。
+      const byName = new Map<string, ScanImage[]>();
       for (const img of batch?.images || []) {
-        if (!img.file_name || !img.file_size) continue;
-        serverByName.set(`${img.file_name}|${img.file_size}`, img);
+        if (!img.file_name) continue;
+        const arr = byName.get(img.file_name);
+        if (arr) arr.push(img);
+        else byName.set(img.file_name, [img]);
       }
+      const claimed = new Set<number>();
+      const matchServer = (name: string): ScanImage | undefined => {
+        const arr = byName.get(name);
+        if (!arr) return undefined;
+        for (const img of arr) {
+          if (claimed.has(img.image_id)) continue;
+          claimed.add(img.image_id);
+          return img;
+        }
+        return undefined;
+      };
+      // 先统一匹配一次并记下结果：matchServer 有「认领」副作用，
+      // 每个文件只能调一次，否则后面取结果时顺序不同会配错。
+      const hits = new Map<string, ScanImage | undefined>();
+      files.forEach((f) => { hits.set(fingerprint(f), matchServer(f.name)); });
 
       // 服务端已传过的跳过压缩：内容已经在服务器上了，压一遍是白费 CPU
-      const fresh = files.filter((f) => !serverByName.get(`${f.name}|${f.size}`)?.uploaded);
+      const fresh = files.filter((f) => !hits.get(fingerprint(f))?.uploaded);
       const skipped = files.length - fresh.length;
 
       const compressed = await compressImagesBlobs(
@@ -278,7 +301,7 @@ export function usePaperScan(
         files.forEach((f) => {
           const key = fingerprint(f);
           if (exist.has(key)) return;
-          const hit = serverByName.get(`${f.name}|${f.size}`);
+          const hit = hits.get(key);
           const c = blobByKey.get(key);
           added.push({
             key,
@@ -376,8 +399,10 @@ export function usePaperScan(
           continue;
         }
         try {
-          // 传压缩后的 blob，不是原图：手机原图 3~5MB，压完几百 KB
-          await assignmentAPI.uploadScanImage(assignmentId, bid, imageId, item.blob, (percent) => {
+          // 传压缩后的 blob，不是原图：手机原图 3~5MB，压完几百 KB。
+          // 第三个参数是真实文件名：写死会让服务端把所有照片的 file_name
+          // 都记成同一个名字，之后刷新页面就认不回哪张是哪张。
+          await assignmentAPI.uploadScanImage(assignmentId, bid, imageId, item.blob, item.file.name, (percent) => {
             setPendingFiles((prev) => prev.map((p, idx) => (idx === i ? { ...p, percent } : p)));
           });
           setPendingFiles((prev) => prev.map((p, idx) => (idx === i ? { ...p, uploaded: true, percent: 100, error: undefined } : p)));
