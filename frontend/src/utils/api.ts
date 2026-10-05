@@ -254,9 +254,26 @@ export const assignmentAPI = {
    * 某张照片的可访问地址，用在 <img src> 上。
    * 走带 token 的请求：照片是学生的作答，不能当成公开静态资源直接暴露。
    * 用 fetch + blob 而不是 img 直链，是因为 img 标签带不上 Authorization 头。
+   *
+   * 注意这是**原图**，几百 KB，放大核对时才用；
+   * 列表/网格的小图请用 fetchScanThumb。
    */
   fetchScanImage: async (assignmentId: number, batchId: number, imageId: number): Promise<string> => {
     const res = await api.get(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/images/${imageId}/file`, {
+      responseType: 'blob',
+      timeout: 30000,
+    });
+    return URL.createObjectURL(res.data as Blob);
+  },
+
+  /**
+   * 某张照片的小缩略图地址（长边 320，十几 KB），网格与列表一律用这个。
+   *
+   * 服务端存了前端上传时生成的小图就发小图；
+   * 改造前上传的老照片没有小图，服务端会回退发原图，功能不受影响。
+   */
+  fetchScanThumb: async (assignmentId: number, batchId: number, imageId: number): Promise<string> => {
+    const res = await api.get(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/images/${imageId}/thumb`, {
       responseType: 'blob',
       timeout: 30000,
     });
@@ -276,6 +293,10 @@ export const assignmentAPI = {
    * fileName 必须传真实文件名。服务端会用 multer 的 originalname
    * 覆盖 file_name，写死成 photo.jpg 会让所有照片都叫同一个名字，
    * 之后「刷新后认回已上传照片」就分不清谁是谁了。
+   *
+   * thumb 是本地生成的小图（长边 320），和原图同一次请求传上去。
+   * 分成两次请求会出现「原图到了、小图没到」的半成品状态，
+   * 网格就只能去拉原图；同一次落库，要么都有、要么都没有。
    */
   uploadScanImage: (
     assignmentId: number,
@@ -284,9 +305,11 @@ export const assignmentAPI = {
     file: Blob,
     fileName: string,
     onProgress?: (percent: number) => void,
+    thumb?: Blob | null,
   ) => {
     const fd = new FormData();
     fd.append('file', file, fileName || 'photo.jpg');
+    if (thumb) fd.append('thumb', thumb, 'thumb.jpg');
     return api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/images/${imageId}/file`, fd, {
       timeout: 120000,
       onUploadProgress: (e) => {

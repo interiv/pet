@@ -21,6 +21,11 @@ export interface PendingFile {
   file: File;
   /** 压缩后的内容（上传用的是它，不是原图） */
   blob: Blob;
+  /**
+   * 长边 320 的小图，与 blob 一起上传。
+   * 网格只用几十像素，没有它就得让服务端回原图，一张几百 KB。
+   */
+  thumb?: Blob;
   /** 压缩前的原始体积，用于提示「已从 3.2MB 压到 420KB」 */
   originalSize: number;
   uploaded: boolean;
@@ -29,6 +34,28 @@ export interface PendingFile {
   imageId?: number;
   /** 这一张的失败原因 */
   error?: string;
+  /**
+   * 本地预览地址（objectURL，指向 thumb，压缩时顺手生成）。
+   *
+   * 有它就不必等远端：选完照片立刻能看到缩略图，
+   * 刚上传完也不必再去服务端拉一遍——那正是曾经 404、以及白下几 MB 的根源。
+   * objectURL 不会自动释放，删除/清空/卸载时必须 revoke（见 revokePreviews）。
+   */
+  previewUrl?: string;
+}
+
+/** 建预览地址；隐私模式或不支持时返回 undefined，调用方会回退到远端缩略图 */
+function makePreviewUrl(blob?: Blob): string | undefined {
+  if (!blob) return undefined;
+  try { return URL.createObjectURL(blob); } catch (e) { return undefined; }
+}
+
+/** 释放一批照片的预览地址。重复 revoke 无副作用，无需去重 */
+function revokePreviews(list: PendingFile[] | undefined) {
+  (list || []).forEach((p) => {
+    if (!p.previewUrl) return;
+    try { URL.revokeObjectURL(p.previewUrl); } catch (e) { /* ignore */ }
+  });
 }
 
 export interface ScanImage {
@@ -38,6 +65,8 @@ export interface ScanImage {
   uploaded: boolean;
   file_name: string;
   file_size: number;
+  /** 服务端是否存了缩略图。老照片为 false，读取接口会回退发原图 */
+  has_thumb?: boolean;
   status: string;
   student_id: number | null;
   raw_name: string;
@@ -150,6 +179,23 @@ export function usePaperScan(
   const bucketKey: number | 'batch' = (mode === 'single' && studentId) ? studentId : 'batch';
   const pendingFiles = filesByStudent.get(bucketKey) || [];
 
+  /**
+   * 状态最新值的镜像，给「异步完成后」和「卸载清理」用。
+   *
+   * 不能靠闭包里的 pendingFiles：pickFiles 里要 await 压缩，等在途时
+   * 用户可能又选了一批，闭包捕获的是旧列表，去重会漏判——
+   * 结果是同一张照片被压两次、建两个 objectURL，其中一个永远没人释放。
+   */
+  const pendingRef = useRef<PendingFile[]>(pendingFiles);
+  const filesRef = useRef(filesByStudent);
+  useEffect(() => {
+    pendingRef.current = pendingFiles;
+    filesRef.current = filesByStudent;
+  });
+
+  /** 释放当前学生本地照片的预览地址（整批丢弃、覆盖时用） */
+  const dropPreviews = useCallback(() => revokePreviews(pendingRef.current), []);
+
   /** 写当前学生的照片列表 */
   const setPendingFiles = useCallback((updater: PendingFile[] | ((prev: PendingFile[]) => PendingFile[])) => {
     const key = bucketKey;
@@ -209,6 +255,8 @@ export function usePaperScan(
       // 这样切学生时才有机会换成另一个学生的批次。
       if (mode === 'single') {
         setBatch(null);
+        // 本地照片列表被丢弃，预览地址必须一起释放，否则每开关一次弹窗就漏一批
+        dropPreviews();
         setPendingFiles([]);
         setGroupSize(10);
         saveDraft(null, assignmentId);
@@ -221,9 +269,11 @@ export function usePaperScan(
       if (reusable) {
         setBatch(reusable);
         setGroupSize(reusable.group_size || 1);
+        dropPreviews();
         setPendingFiles([]);
       } else {
         setBatch(null);
+        dropPreviews();
         setPendingFiles([]);
       }
       saveDraft(readDraft(assignmentId) && reusable ? readDraft(assignmentId) : null, assignmentId);
@@ -232,7 +282,7 @@ export function usePaperScan(
     } finally {
       setLoading(false);
     }
-  }, [assignmentId, mode]);
+  }, [assignmentId, mode, dropPreviews, setPendingFiles]);
 
   // 弹窗打开时恢复现场
   useEffect(() => {
@@ -250,8 +300,16 @@ export function usePaperScan(
    */
   const pickFiles = useCallback(async (files: File[]) => {
     if (!files || files.length === 0) return;
+    // 已经在本地列表里的先摘掉：同一批照片被重复选中（或用户连点两次「添加」）时，
+    // 不该再压一遍、也不该再建一个 objectURL——后者没人释放，直接就漏了
+    const existKeys = new Set((pendingRef.current || []).map((p) => p.key));
+    const incoming = files.filter((f) => !existKeys.has(fingerprint(f)));
+    if (incoming.length === 0) {
+      message.info('这几张已经在列表里了');
+      return;
+    }
     setCompressing(true);
-    setCompressProgress({ done: 0, total: files.length });
+    setCompressProgress({ done: 0, total: incoming.length });
     try {
       // 认回服务端已有的照片，避免重传。
       // 浏览器不允许程序读取 File 路径，刷新后只能靠用户重新选一次同一批文件，
@@ -283,22 +341,38 @@ export function usePaperScan(
       // 先统一匹配一次并记下结果：matchServer 有「认领」副作用，
       // 每个文件只能调一次，否则后面取结果时顺序不同会配错。
       const hits = new Map<string, ScanImage | undefined>();
-      files.forEach((f) => { hits.set(fingerprint(f), matchServer(f.name)); });
+      incoming.forEach((f) => { hits.set(fingerprint(f), matchServer(f.name)); });
 
       // 服务端已传过的跳过压缩：内容已经在服务器上了，压一遍是白费 CPU
-      const fresh = files.filter((f) => !hits.get(fingerprint(f))?.uploaded);
-      const skipped = files.length - fresh.length;
+      const fresh = incoming.filter((f) => !hits.get(fingerprint(f))?.uploaded);
+      const skipped = incoming.length - fresh.length;
 
+      /**
+       * 压缩并顺手生成缩略图。
+       *
+       * withThumb：登记网格只用几十像素，本地这张小图既当预览（选完就能看见，
+       * 不必等远端），又上传给服务端（以后网格读它，不再拉几百 KB 的原图）。
+       * 画布已经解好了，缩一张几乎不额外花时间。
+       */
       const compressed = await compressImagesBlobs(
         fresh.map((f) => ({ file: f, key: fingerprint(f) })),
-        { onProgress: (d) => setCompressProgress({ done: skipped + d, total: files.length }) }
+        { withThumb: true, onProgress: (d) => setCompressProgress({ done: skipped + d, total: incoming.length }) }
       );
       const blobByKey = new Map(compressed.map((c) => [c.key, c]));
+
+      // 预览地址在进入 state 之前建好：放进 updater 里建会在开发模式下
+      // 被 React 重复调用，多出来的那个 URL 没人持有，也就永远释放不掉
+      const thumbs = new Map<string, Blob | undefined>();
+      const previews = new Map<string, string | undefined>();
+      compressed.forEach((c) => {
+        thumbs.set(c.key, c.thumb);
+        previews.set(c.key, makePreviewUrl(c.thumb || c.blob));
+      });
 
       setPendingFiles((prev) => {
         const exist = new Set(prev.map((p) => p.key));
         const added: typeof prev = [];
-        files.forEach((f) => {
+        incoming.forEach((f) => {
           const key = fingerprint(f);
           if (exist.has(key)) return;
           const hit = hits.get(key);
@@ -307,6 +381,8 @@ export function usePaperScan(
             key,
             file: f,
             blob: c?.blob || f,
+            thumb: thumbs.get(key),
+            previewUrl: previews.get(key),
             originalSize: f.size,
             uploaded: Boolean(hit?.uploaded),
             percent: hit?.uploaded ? 100 : 0,
@@ -318,7 +394,7 @@ export function usePaperScan(
 
       const saved = compressed.reduce((sum, c) => sum + (c.originalSize - c.blob.size), 0);
       if (saved > 0) {
-        message.success(`已压缩 ${files.length} 张，体积减少 ${formatSize(saved)}，上传会快很多`);
+        message.success(`已压缩 ${incoming.length} 张，体积减少 ${formatSize(saved)}，上传会快很多`);
       }
     } catch (e: any) {
       message.error(e?.message || '图片压缩失败');
@@ -326,7 +402,7 @@ export function usePaperScan(
       setCompressing(false);
       setCompressProgress(null);
     }
-  }, [batch?.images]);
+  }, [batch?.images, setPendingFiles]);
 
   /** 确保有一个批次（第一次上传时才创建，避免空批次堆积） */
   const ensureBatch = useCallback(async () => {
@@ -402,9 +478,10 @@ export function usePaperScan(
           // 传压缩后的 blob，不是原图：手机原图 3~5MB，压完几百 KB。
           // 第三个参数是真实文件名：写死会让服务端把所有照片的 file_name
           // 都记成同一个名字，之后刷新页面就认不回哪张是哪张。
+          // 末尾再带一张本地小图：以后网格读它，不必拉原图。
           await assignmentAPI.uploadScanImage(assignmentId, bid, imageId, item.blob, item.file.name, (percent) => {
             setPendingFiles((prev) => prev.map((p, idx) => (idx === i ? { ...p, percent } : p)));
-          });
+          }, item.thumb);
           setPendingFiles((prev) => prev.map((p, idx) => (idx === i ? { ...p, uploaded: true, percent: 100, error: undefined } : p)));
           ok += 1;
         } catch (e: any) {
@@ -614,6 +691,8 @@ export function usePaperScan(
     // 原先这里和「识别中」共用一句提示，导致刚选完还没上传时
     // 删照片也报「识别中不能删除」，与实际情况完全不符。
     if (!b?.batch_id) {
+      const gone = pendingFiles[index];
+      if (gone) revokePreviews([gone]);
       setPendingFiles((prev) => prev.filter((_, idx) => idx !== index));
       return;
     }
@@ -630,12 +709,16 @@ export function usePaperScan(
         return;
       }
     }
+    // 删除成功（或本来就没上传过）才释放预览地址；上面 catch 里提前 return，
+    // 照片还在列表上，图还得继续显示
+    revokePreviews(target ? [target] : []);
     setPendingFiles((prev) => prev.filter((_, idx) => idx !== index));
-  }, [batch, assignmentId, pendingFiles]);
+  }, [batch, assignmentId, pendingFiles, setPendingFiles]);
 
   /** 丢弃整个批次（连同已上传的文件） */
   const discardBatch = useCallback(async () => {
     if (!batch?.batch_id) {
+      dropPreviews();
       setPendingFiles([]);
       setBatch(null);
       saveDraft(null, assignmentId);
@@ -648,16 +731,27 @@ export function usePaperScan(
     try {
       await assignmentAPI.deleteScanBatch(assignmentId, batch.batch_id);
       setBatch(null);
+      dropPreviews();
       setPendingFiles([]);
       saveDraft(null, assignmentId);
       message.success('已清空本次扫描');
     } catch (e: any) {
       message.error(e?.response?.data?.error || '清空失败');
     }
-  }, [batch, assignmentId]);
+  }, [batch, assignmentId, dropPreviews, setPendingFiles]);
 
   // 组件卸载时停掉轮询，避免内存泄漏
   useEffect(() => () => stopPolling(), [stopPolling]);
+
+  /**
+   * 组件卸载时释放所有学生的照片预览地址。
+   *
+   * 照片是按学生分桶留着的（切来切去还在），卸载前必须把每个桶都清一遍；
+   * 只清当前桶的话，其他学生的 objectURL 连同 Blob 会一直占着内存。
+   */
+  useEffect(() => () => {
+    filesRef.current.forEach((list) => revokePreviews(list));
+  }, []);
 
   return {
     batch, setBatch,

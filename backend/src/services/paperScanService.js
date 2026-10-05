@@ -195,6 +195,8 @@ function toPublicBatch(batch) {
     images: images.map((i) => ({
       image_id: i.id, group_no: i.group_no, seq: i.seq,
       uploaded: !!i.file_path, file_name: i.file_name, file_size: i.file_size,
+      /** 是否已有小缩略图：false 的是改造前上传的老照片，前端会回退拉原图 */
+      has_thumb: !!i.thumb_path,
       status: i.status, student_id: i.student_id, raw_name: i.raw_name,
     })),
   };
@@ -215,8 +217,27 @@ function addImagePlaceholder(batchId, o) {
 
 function markUploaded(imageId, o) {
   const opt = o || {};
-  db.prepare("UPDATE paper_scan_images SET file_path = ?, file_name = COALESCE(NULLIF(?, ''), file_name), file_size = COALESCE(NULLIF(?, 0), file_size), mime_type = COALESCE(NULLIF(?, ''), mime_type), status = 'pending', error = NULL, updated_at = ? WHERE id = ?")
-    .run(opt.filePath || '', opt.fileName || '', opt.fileSize || 0, opt.mimeType || '', nowIso(), imageId);
+  const before = db.prepare('SELECT batch_id, file_path, thumb_path FROM paper_scan_images WHERE id = ?').get(imageId);
+  // 缩略图两个字段是「直接覆盖」而不是 COALESCE 保留旧值：
+  // 这次没传缩略图（生成失败/老前端）就应该回到「没有缩略图」，
+  // 让读取接口回退原图；保留旧值的话，下面会删掉旧文件，
+  // 数据库却还指着它，反而变成一个稳定的 404。
+  db.prepare("UPDATE paper_scan_images SET file_path = ?, file_name = COALESCE(NULLIF(?, ''), file_name), file_size = COALESCE(NULLIF(?, 0), file_size), mime_type = COALESCE(NULLIF(?, ''), mime_type), thumb_path = ?, thumb_size = ?, status = 'pending', error = NULL, updated_at = ? WHERE id = ?")
+    .run(opt.filePath || '', opt.fileName || '', opt.fileSize || 0, opt.mimeType || '',
+      opt.thumbPath || '', opt.thumbSize || 0, nowIso(), imageId);
+
+  // 重传同一张时旧文件会被新文件名顶掉，旧文件不清就成了磁盘上的孤儿，
+  // 传错再传几次就白占几百 KB。新文件与旧文件不同名才删。
+  const dropOld = (name) => {
+    if (!name || name === opt.filePath || name === opt.thumbPath) return;
+    const abs = imageAbsolutePath(name);
+    try { if (fs.existsSync(abs)) fs.unlinkSync(abs); } catch (e) { /* 删不掉不影响本次上传 */ }
+  };
+  if (before) {
+    dropOld(before.file_path);
+    dropOld(before.thumb_path);
+  }
+
   const img = db.prepare('SELECT batch_id FROM paper_scan_images WHERE id = ?').get(imageId);
   if (img) refreshBatchCounters(img.batch_id);
 }
@@ -247,13 +268,15 @@ function reorder(batchId, orderedIds) {
 function deleteImage(imageId) {
   const img = db.prepare('SELECT * FROM paper_scan_images WHERE id = ?').get(imageId);
   if (!img) return;
-  if (img.file_path) {
+  // 原图与缩略图各一个文件，漏删其中一个就会留下孤儿文件
+  [img.file_path, img.thumb_path].forEach((name) => {
+    if (!name) return;
     // 必须用 imageAbsolutePath：照片存在paper-scan/ 子目录下，
     // 直接拼 uploadsDir 会算出一个不存在的路径，unlink 静默失败，
     // 结果是「记录删了、文件还在」，磁盘上不断堆积孤儿照片。
-    const abs = imageAbsolutePath(img.file_path);
+    const abs = imageAbsolutePath(name);
     try { if (fs.existsSync(abs)) fs.unlinkSync(abs); } catch (e) { /* 删文件失败不阻塞 */ }
-  }
+  });
   db.prepare('DELETE FROM paper_scan_images WHERE id = ?').run(imageId);
   refreshBatchCounters(img.batch_id);
 }
@@ -440,9 +463,12 @@ function clearScanResult(batchId) {
 function deleteBatch(batchId) {
   const images = listImages(batchId);
   for (const img of images) {
-    if (!img.file_path) continue;
-    const abs = imageAbsolutePath(img.file_path);
-    try { if (fs.existsSync(abs)) fs.unlinkSync(abs); } catch (e) { /* 删文件失败不阻塞 */ }
+    // 原图和缩略图都要删，否则「丢弃照片」之后磁盘上还留着同一张的两个副本
+    for (const name of [img.file_path, img.thumb_path]) {
+      if (!name) continue;
+      const abs = imageAbsolutePath(name);
+      try { if (fs.existsSync(abs)) fs.unlinkSync(abs); } catch (e) { /* 删文件失败不阻塞 */ }
+    }
   }
   db.prepare('DELETE FROM paper_scan_images WHERE batch_id = ?').run(batchId);
   db.prepare('DELETE FROM paper_scan_batches WHERE id = ?').run(batchId);

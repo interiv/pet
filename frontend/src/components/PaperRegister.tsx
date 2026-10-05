@@ -136,8 +136,13 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
     return () => { stopped = true; if (timer) clearTimeout(timer); };
   }, [open, refreshAllProgress, pollWake]);
 
-  // 缩略图：鉴权图片要fetch 成 blob 才能显示
-  const allImageIds = useMemo(() => (batch?.images || []).map((i) => i.image_id), [batch?.images]);
+  // 缩略图：鉴权图片要fetch 成 blob 才能显示。
+  // 只取「已上传」的：占位记录（还没传文件）服务端必然 404，
+  // 传上去只会刷一屏红色报错，对老师毫无用处
+  const allImageIds = useMemo(
+    () => (batch?.images || []).filter((i) => i.uploaded).map((i) => i.image_id),
+    [batch?.images]
+  );
   const getThumb = useScanThumbnails(assignmentId, batch?.batch_id, allImageIds);
 
   const papers: Paper[] = useMemo(() => (batch?.result?.papers || []) as Paper[], [batch?.result]);
@@ -640,7 +645,9 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
               {pendingFiles.length > 0 && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(84px, 1fr))', gap: 8, marginTop: 10 }}>
                   {pendingFiles.map((p, i) => {
-                    const url = p.imageId ? getThumb(p.imageId) : undefined;
+                    // 优先用本地小图：选完就能看见，上传后也不必再去服务端拉一遍
+                    // （那一次拉取以前正是在这里 404 的）。本地没有才回退远端缩略图。
+                    const url = p.previewUrl || (p.imageId ? getThumb(p.imageId) : undefined);
                     return (
                       <div
                         key={p.key}

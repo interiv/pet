@@ -78,8 +78,13 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
     moveImage, removeImage, discardBatch, setBatch,
   } = scan;
 
-  // 缩略图：把服务端 image_id 映射成可显示的 URL
-  const allImageIds = useMemo(() => (batch?.images || []).map((i) => i.image_id), [batch?.images]);
+  // 缩略图：把服务端 image_id 映射成可显示的 URL。
+  // 只取「已上传」的：占位记录（还没传文件）服务端必然 404，
+  // 传上去只会刷一屏红色报错，对老师毫无用处
+  const allImageIds = useMemo(
+    () => (batch?.images || []).filter((i) => i.uploaded).map((i) => i.image_id),
+    [batch?.images]
+  );
   const getThumb = useScanThumbnails(assignmentId, batch?.batch_id, allImageIds);
 
   /** 作业题目 / 学生名单 / 已登记名单——逐题核对与登记都依赖这些 */
@@ -331,7 +336,9 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(84px, 1fr))', gap: 8 }}>
             {pendingFiles.map((p, i) => {
-              const url = p.imageId ? getThumb(p.imageId) : undefined;
+              // 优先用本地小图：选完就能看见，上传后也不必再去服务端拉一遍
+              // （那一次拉取以前正是在这里 404 的）。本地没有才回退远端缩略图。
+              const url = p.previewUrl || (p.imageId ? getThumb(p.imageId) : undefined);
               const groupNo = batch?.images
                 ? batch.images.find((x) => x.image_id === p.imageId)?.group_no
                 : undefined;

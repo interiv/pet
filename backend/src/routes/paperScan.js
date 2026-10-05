@@ -49,6 +49,17 @@ const upload = multer({
   },
 });
 
+/**
+ * 一次请求同时收原图与小缩略图。
+ * 分成两次请求会让「原图到了、缩略图没到」这种半成品状态出现，
+ * 同一次写盘、同一次 markUploaded，要么都有要么都没有。
+ * thumb 是可选字段：老版本前端、或缩略图生成失败时只有 file。
+ */
+const uploadImage = upload.fields([
+  { name: 'file', maxCount: 1 },
+  { name: 'thumb', maxCount: 1 },
+]);
+
 /** 取出路径里的作业 id 并校验是班主任/管理员，且作业属于他 */
 function requireAssignmentOwner(req, res, next) {
   const assignmentId = parseInt(req.params.id, 10);
@@ -239,34 +250,40 @@ router.post('/:id/paper-scan/batches/:batchId/images', authenticateToken, author
 
 /** 上传某张照片的文件内容（单张，multipart） */
 router.post('/:id/paper-scan/batches/:batchId/images/:imageId/file', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, loadBatch, paperUpOff, (req, res) => {
-  upload.single('file')(req, res, (err) => {
+  uploadImage(req, res, (err) => {
     if (err) {
       const msg = err.code === 'LIMIT_FILE_SIZE'
         ? '单张照片不能超过 8MB'
         : (err.message || '上传失败');
       return res.status(400).json({ error: msg });
     }
-    if (!req.file) return res.status(400).json({ error: '没有收到文件' });
+    const file = (req.files && req.files.file && req.files.file[0]) || null;
+    const thumb = (req.files && req.files.thumb && req.files.thumb[0]) || null;
+    if (!file) return res.status(400).json({ error: '没有收到文件' });
 
     const imageId = parseInt(req.params.imageId, 10);
     const image = db.prepare('SELECT * FROM paper_scan_images WHERE id = ? AND batch_id = ?').get(imageId, req.batch.id);
     if (!image) {
-      try { fs.unlinkSync(req.file.path); } catch (e) { /* ignore */ }
+      // 记录不存在时两个文件都要清掉，只删原图会留下一个没主的缩略图
+      [file, thumb].forEach((f) => { if (f) { try { fs.unlinkSync(f.path); } catch (e) { /* ignore */ } } });
       return res.status(404).json({ error: '照片记录不存在' });
     }
 
     scanSvc.markUploaded(imageId, {
-      filePath: req.file.filename,
-      fileName: req.file.originalname,
-      fileSize: req.file.size,
-      mimeType: req.file.mimetype,
+      filePath: file.filename,
+      fileName: file.originalname,
+      fileSize: file.size,
+      mimeType: file.mimetype,
+      // 缩略图是可选字段：前端生成失败时传不上来，网格会回退去拉原图
+      thumbPath: thumb ? thumb.filename : '',
+      thumbSize: thumb ? thumb.size : 0,
     });
     res.json({ image_id: imageId, batch: scanSvc.toPublicBatch(scanSvc.getBatch(req.batch.id)) });
   });
 });
 
 /**
- * 读取某张照片的内容（缩略图预览、放大核对都要用）
+ * 读取某张照片的原图（放大核对用）
  *
  * 没有它的话，新流程上传完就看不到任何东西——上传接口只往磁盘写文件，
  * 前端拿到的只有 file_name，无法渲染<img>。旧流程把图片塞在请求体里、
@@ -274,6 +291,9 @@ router.post('/:id/paper-scan/batches/:batchId/images/:imageId/file', authenticat
  *
  * 权限沿用 loadBatch：只有该作业的班主任/管理员、且能操作这个批次的人能看。
  * 照片本身是学生的作答，不做公开访问。
+ *
+ * 注意：网格里的几十像素小图**不要**用这个接口，走 /thumb——
+ * 一张原图几百 KB，一个班就是十几 MB，纯粹是白下的。
  */
 router.get('/:id/paper-scan/batches/:batchId/images/:imageId/file', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, loadBatch, (req, res) => {
   const imageId = parseInt(req.params.imageId, 10);
@@ -289,7 +309,37 @@ router.get('/:id/paper-scan/batches/:batchId/images/:imageId/file', authenticate
   }
 
   res.type(image.mime_type || 'image/jpeg');
-  // 缩略图内容不变，可缓存；带 hash 的文件名保证了内容变了 URL 也会变
+  // 内容不变可缓存；文件名带时间戳+随机数，内容变了 URL 也会变
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.sendFile(abs);
+});
+
+/**
+ * 读取某张照片的小缩略图——列表与网格用这个，不要用 /file。
+ *
+ * 为什么要单独一个接口：网格每格只有几十像素，原图动辄几百 KB，
+ * 扫一个班要白下十几 MB，慢速网络下就是几十秒的空白格。
+ * 缩略图是前端上传时顺手生成的（长边 320，约十几 KB），随原图一起传上来。
+ *
+ * 老照片（这个改造之前上传的）没有缩略图，回退发原图——功能不退化，
+ * 只是那几张仍然偏大，重传一次即可变小。
+ */
+router.get('/:id/paper-scan/batches/:batchId/images/:imageId/thumb', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, loadBatch, (req, res) => {
+  const imageId = parseInt(req.params.imageId, 10);
+  const image = db.prepare('SELECT * FROM paper_scan_images WHERE id = ? AND batch_id = ?').get(imageId, req.batch.id);
+  if (!image) return res.status(404).json({ error: '照片不存在' });
+
+  const hasThumb = !!image.thumb_path;
+  const name = hasThumb ? image.thumb_path : image.file_path;
+  if (!name) return res.status(404).json({ error: '照片尚未上传' });
+
+  // name 来自数据库，这里再用 basename 兜一次，防止读到批次目录以外的文件
+  const abs = path.join(scanSvc.scanImageDir(), path.basename(name));
+  if (!fs.existsSync(abs)) {
+    return res.status(404).json({ error: '照片文件已丢失，请重新上传' });
+  }
+
+  res.type(hasThumb ? 'image/jpeg' : (image.mime_type || 'image/jpeg'));
   res.set('Cache-Control', 'private, max-age=86400');
   res.sendFile(abs);
 });
