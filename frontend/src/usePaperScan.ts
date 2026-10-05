@@ -14,6 +14,23 @@ import { message } from 'antd';
 import { assignmentAPI } from './utils/api';
 import { compressImagesBlobs, formatSize } from './utils/imageCompress';
 
+/** 本地待上传的一张照片 */
+export interface PendingFile {
+  /** 指纹（文件名|大小|修改时间），用于去重 */
+  key: string;
+  file: File;
+  /** 压缩后的内容（上传用的是它，不是原图） */
+  blob: Blob;
+  /** 压缩前的原始体积，用于提示「已从 3.2MB 压到 420KB」 */
+  originalSize: number;
+  uploaded: boolean;
+  percent: number;
+  /** 在服务端对应的记录 id，补占位后拿到；靠它而不是下标定位 */
+  imageId?: number;
+  /** 这一张的失败原因 */
+  error?: string;
+}
+
 export interface ScanImage {
   image_id: number;
   group_no: number;
@@ -111,22 +128,40 @@ export function usePaperScan(
     fixedGroupSize ? 10 : Math.max(1, Math.min(10, options.initialGroupSize || 1))
   );
   /**
-   * 本地待上传的文件：key 是指纹，顺序即展示顺序。
+   * 本地待上传的文件，**按学生 id 分开存放**。
    *
-   * imageId 是这张文件在服务端对应的那条记录（补占位后拿到的）。
-   * 必须记住它、不能靠下标去猜：本地列表和服务端images 一旦不同步
-   * （删了但删除请求失败、草稿恢复后重新选的文件顺序不同），
-   * 按下标取会张冠李戴，把甲的文件传到乙的记录上。
+   * 为什么不用单个数组 + 切学生时存档/恢复：
+   * 那样要维护两份状态（当前视图 + 存档），切来切去容易漏同步。
+   * 直接按 student_id 分桶，每个学生一份，天然隔离——
+   * 老师给 A 选好 3 张、切去 B 选 2 张、再切回 A，3 张还在。
+   * 批量模式 studentId 为 null，统一起落到 null 桶，行为与从前一致。
    *
-   * blob 是压缩后的内容（不是原始 File）：手机随手一拍3~5MB，
-   * 一次扫半个班上百兆，原图全存在内存里会直接把标签页搞崩。
-   * 压缩后每张几百 KB，几十张也才十几兆。
-   * originalSize 留个原始体积，只用于给用户看「已从3.2MB 压到 420KB」。
+   * 字段说明：
+   *   key     指纹（文件名|大小|修改时间），去重用
+   *   blob    压缩后的内容。手机随手一拍 3~5MB，一次扫半个班上百兆，
+   *           原图全存内存会把标签页搞崩；压完每张几百 KB
+   *   imageId 这张在服务端对应的那条记录。必须记住、不能靠下标去猜：
+   *           本地与服务端不同步时会张冠李戴，把甲的文件传到乙的记录上
    */
-  const [pendingFiles, setPendingFiles] = useState<Array<{
-    key: string; file: File; blob: Blob; originalSize: number;
-    uploaded: boolean; percent: number; imageId?: number; error?: string;
-  }>>([]);
+  //键是学生 id；批量模式用 'batch' 兜底。用Map 语义更直白，
+  // 避免 Record<number | string, T> 这种混合键类型在索引签名上报错
+  const [filesByStudent, setFilesByStudent] = useState<Map<number | 'batch', PendingFile[]>>(() => new Map());
+  // 批量模式没有 studentId，统一落到 'batch' 桶，行为与从前一致
+  const bucketKey: number | 'batch' = (mode === 'single' && studentId) ? studentId : 'batch';
+  const pendingFiles = filesByStudent.get(bucketKey) || [];
+
+  /** 写当前学生的照片列表 */
+  const setPendingFiles = useCallback((updater: PendingFile[] | ((prev: PendingFile[]) => PendingFile[])) => {
+    const key = bucketKey;
+    setFilesByStudent((prevAll) => {
+      const next = new Map(prevAll);
+      const cur = next.get(key) || [];
+      const updated = typeof updater === 'function' ? updater(cur) : updater;
+      next.set(key, updated);
+      return next;
+    });
+  }, [bucketKey]);
+
   const [compressing, setCompressing] = useState(false);
   const [compressProgress, setCompressProgress] = useState<{ done: number; total: number } | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -344,17 +379,19 @@ export function usePaperScan(
   /**
    * 切换到另一个学生（单人登记用）。
    *
-   * 换人时必须调用：结束当前批次的轮询、清空本地列表，
+   * 换人时必须调用：结束当前批次的轮询、清掉批次视图，
    * 再按新学生的 studentId 去服务端取回「他已经传过的照片与识别结果」。
    * 不这么做，两个人的照片会落进同一个批次，
    * 被当成一份卷子送去 AI 识别——两份卷面混在一起。
+   *
+   * 注意这里**不碰本地照片**：它们按学生分桶存放，
+   * 切走时留着，切回来自动读回该学生的桶（见 filesByStudent）。
    */
   const switchStudent = useCallback(async (nextStudentId: number | null) => {
     if (mode !== 'single') return;
     stopPolling();
     setScanning(false);
     setBatch(null);
-    setPendingFiles([]);
     setCompressing(false);
     setCompressProgress(null);
     if (!nextStudentId) return null;

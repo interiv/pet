@@ -148,6 +148,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [printSubmittedIds, setPrintSubmittedIds] = useState<number[]>([]);
   const [printMode, setPrintMode] = useState<'blank' | 'named'>('named');
   const [printShowAnswer, setPrintShowAnswer] = useState(false);
+ /** 打印内容：试卷 / 答题卡 / 两者。答题卡把答案集中到一处，方便快速判分 */
+ const [printContent, setPrintContent] = useState<'paper' | 'sheet' | 'both'>('paper');
   const [printLoading, setPrintLoading] = useState(false);
 
   // ===== 逐题作答计时 =====
@@ -550,13 +552,17 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       questions: printQuestions,
       namedStudents: named.map(s => ({ id: s.id, real_name: s.real_name, username: s.username })),
       showAnswer: printShowAnswer,
+      content: printContent,
     });
     const ok = openPaperPrintWindow(html, true);
     if (!ok) {
       message.warning('浏览器拦截了弹出窗口，请允许弹窗后重试');
       return;
     }
-    message.success(named.length > 0 ? `已生成 ${named.length} 份带姓名的作业纸，请在打印窗口确认` : '已生成空白作业纸，请在打印窗口确认');
+    const what = printContent === 'both' ? '试卷 + 答题卡' : (printContent === 'sheet' ? '答题卡' : '试卷');
+    message.success(
+      `${named.length > 0 ? `已生成 ${named.length} 份带姓名的${what}` : `已生成空白${what}`}，请在打印窗口确认`
+    );
   };
 
   const handleStartDoing = async (record: any) => {
@@ -1808,7 +1814,11 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         open={!!printTarget}
         onCancel={() => setPrintTarget(null)}
         onOk={handlePrintPaper}
-        okText="生成并打印"
+        okText={
+          printContent === 'both' ? '生成并打印（试卷+答题卡）'
+            : printContent === 'sheet' ? '生成并打印（答题卡）'
+              : '生成并打印（试卷）'
+        }
         cancelText="取消"
         confirmLoading={printLoading}
         width={isMobile ? '95vw' : 560}
@@ -1870,6 +1880,38 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                   </div>
                 </Form.Item>
               )}
+
+              {/* 打印内容：试卷 / 答题卡 / 两者。
+                  答题卡把答案集中到一处（选择判断填括号、主观题写格子），
+                  老师收上来扫一眼就能判分，也能二次批改；姓名同样印在页眉。 */}
+              <Form.Item label="打印内容">
+                <Checkbox.Group
+                  value={[printContent]}
+                  onChange={(vals) => {
+                    const v = vals[0] as 'paper' | 'sheet' | 'both';
+                    // 取消所有勾选时兜底回「只印试卷」，避免出现「什么都不打印」
+                    setPrintContent(v || 'paper');
+                  }}
+                  style={{ width: '100%' }}
+                >
+                  <Space direction="vertical" size={4}>
+                    <Checkbox value="paper">
+                      试卷（{printQuestions.length} 道题）{printMode === 'named' && ` ·${printStudentIds.length} 份带姓名`}
+                    </Checkbox>
+                    <Checkbox value="sheet">
+                      答题卡（答案集中填写，便于快速判分）
+                    </Checkbox>
+                    <Checkbox value="both">两者都打印（每人一组：试卷 + 答题卡）</Checkbox>
+                  </Space>
+                </Checkbox.Group>
+                <div style={{ color: '#999', fontSize: 12, marginTop: 6 }}>
+                  {printContent === 'sheet'
+                    ? '只印答题卡：适合卷面已经发过、这次只补答题卡。'
+                    : printContent === 'both'
+                      ? '每人依次是「试卷页 → 答题卡页」，按人收上来就能对着判分。'
+                      : '只印试卷：学生在卷面直接作答。'}
+                </div>
+              </Form.Item>
 
               <Form.Item label="参考答案">
                 <Checkbox checked={printShowAnswer} onChange={(e) => setPrintShowAnswer(e.target.checked)}>

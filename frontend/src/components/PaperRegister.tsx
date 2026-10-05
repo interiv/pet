@@ -397,7 +397,11 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                 const active = currentStudent?.id === s.id;
                 const prog = studentProgress[s.id];
                 // 未上传的本地张数：只有正在处理这个学生时才有意义
-                const localCount = active ? pendingFiles.length : 0;
+                // 「选N」= 本机已选但还没上传的张数。与「传N」分开统计，
+                // 老师才能一眼看出「还剩几张没传」，而不是把已传的也算进去。
+                // 非当前学生时看不到他的本地暂存（那在本机内存里，切过去才知道），
+                // 所以只有正在处理的人才显示「选N」。
+                const notUploadedCount = active ? pendingFiles.filter((p) => !p.uploaded).length : 0;
                 const uploadedCount = prog?.uploaded || 0;
                 return (
                   <div
@@ -417,15 +421,16 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                     <span style={{ flex: 1, fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {s.real_name || s.username}
                     </span>
-                    {/* 三类状态标记：已传张数 / 已识别 / 已登记。
-                        老师扫一眼就知道全班还剩多少人没弄完，不用点进去逐个看。 */}
-                    {localCount > 0 && (
-                      <Tooltip title={`本地已选 ${localCount} 张（还没上传）`}>
-                        <Tag color="orange" style={{ marginRight: 2, fontSize: 11, padding: '0 4px' }}>选{localCount}</Tag>
+                    {/* 三个数字各代表一件事，可叠加出现：
+                        选N=本机已选还没传　传N=已到服务器　识N/已判=AI 判完
+                        例：选1传1= 又加了一张还没传、之前传过一张 */}
+                    {notUploadedCount > 0 && (
+                      <Tooltip title={`本机已选 ${notUploadedCount} 张，还没点「上传全部」`}>
+                        <Tag color="orange" style={{ marginRight: 2, fontSize: 11, padding: '0 4px' }}>选{notUploadedCount}</Tag>
                       </Tooltip>
                     )}
                     {uploadedCount > 0 && (
-                      <Tooltip title={`已上传 ${uploadedCount} 张`}>
+                      <Tooltip title={`已上传到服务器 ${uploadedCount} 张`}>
                         <Tag color="blue" style={{ marginRight: 2, fontSize: 11, padding: '0 4px' }}>传{uploadedCount}</Tag>
                       </Tooltip>
                     )}
@@ -439,8 +444,8 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                       </Tooltip>
                     )}
                     {prog?.scanned && !registered && !prog?.running && (
-                      <Tooltip title="AI 已识别，还没登记成绩">
-                        <Tag color="gold" style={{ marginRight: 2, fontSize: 11, padding: '0 4px' }}>已判</Tag>
+                      <Tooltip title="AI 已识别判分完成，还没登记成绩。点这个学生可以核对后保存">
+                        <Tag color="gold" style={{ marginRight: 2, fontSize: 11, padding: '0 4px' }}>识1</Tag>
                       </Tooltip>
                     )}
                     {registered && <Tag color="default" style={{ marginRight: 0, fontSize: 11, padding: '0 4px' }}>已登记</Tag>}
@@ -644,6 +649,17 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                             onClick={() => removeImage(i)}
                           />
                         )}
+                        {/* 文件名：手机拍照都是 IMG_2026xxxx，看序号根本分不清谁是谁 */}
+                        <div
+                          title={`${p.file.name}\n完整路径：${(p.file as any).webkitRelativePath || p.file.name}`}
+                          style={{
+                            fontSize: 9, color: '#888', padding: '2px 3px', lineHeight: 1.3,
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            borderTop: '1px solid #eee', background: '#fff',
+                          }}
+                        >
+                          {p.file.name}
+                        </div>
                       </div>
                     );
                   })}

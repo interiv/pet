@@ -67,6 +67,8 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState('');
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  /** 拖拽中的插入位置（插到第几张之前）。null=未在拖拽 */
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
 
   const scan = usePaperScan(assignmentId, open);
   const {
@@ -333,20 +335,51 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
               const groupNo = batch?.images
                 ? batch.images.find((x) => x.image_id === p.imageId)?.group_no
                 : undefined;
+              // 正在被拖动的那张：半透明，让它像「被拿起来了」
+              const isDragging = dragIndex === i;
+              // 插入线画在这张的左边。拖到最后一张之后的情况由网格末尾单独画一条
+              const showLineBefore = dropIndex === i && dragIndex !== null && dragIndex !== i;
               return (
                 <div
                   key={p.key}
+                  style={{ position: 'relative', opacity: isDragging ? 0.4 : 1 }}
+                >
+                {/* 插入位置指示：一条竖向虚线，明确「松手会插到这里」 */}
+                {showLineBefore && (
+                  <div style={{
+                    position: 'absolute', left: -5, top: 0, bottom: 0, width: 0,
+                    borderLeft: '2px dashed #1890ff', zIndex: 3, pointerEvents: 'none',
+                  }} />
+                )}
+                <div
                   draggable={!scanning}
                   onDragStart={() => setDragIndex(i)}
-                  onDragOver={(e) => e.preventDefault()}
+                  onDragEnd={() => { setDragIndex(null); setDropIndex(null); }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    // 落在左半边插到它前面，右半边插到它后面——
+                    // 网格里相邻两张挨得近，只按「谁被悬停」判断会插错方向
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const after = e.clientX > rect.left + rect.width / 2;
+                    setDropIndex(after ? i + 1 : i);
+                  }}
+                  onDragLeave={() => { /* 移到子元素上也会触发，用下面的 dragenter 抵消 */ }}
                   onDrop={async (e) => {
                     e.preventDefault();
-                    if (dragIndex === null || dragIndex === i) return;
-                    await moveImage(dragIndex, i);
+                    const from = dragIndex;
+                    const at = dropIndex;
                     setDragIndex(null);
+                    setDropIndex(null);
+                    if (from === null || at === null) return;
+                    let to = at;
+                    // 从前往后移时，移除源会让后面的下标前移一位
+                    if (from < to) to -= 1;
+                    if (from === to) return;
+                    await moveImage(from, to);
                   }}
                   style={{
-                    position: 'relative', border: dragIndex === i ? '2px dashed #1890ff' : '1px solid #e8e8e8',
+                    position: 'relative', border: '1px solid #e8e8e8',
                     borderRadius: 6, overflow: 'hidden', cursor: scanning ? 'default' : 'grab', background: '#fafafa',
                   }}
                 >
@@ -394,12 +427,33 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
                       onClick={() => removeImage(i)}
                     />
                   )}
+                {/* 文件名：手机上文件名往往是一串 IMG_2026...，不看全分不清谁是谁。
+                    窄格子里放不下完整名，这里截断显示、悬停出完整名与路径。 */}
+                <div
+                  title={`${p.file.name}\n完整路径：${(p.file as any).webkitRelativePath || p.file.name}`}
+                  style={{
+                    fontSize: 9, color: '#888', padding: '2px 3px', lineHeight: 1.3,
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    borderTop: '1px solid #eee', background: '#fff',
+                  }}
+                >
+                  {p.file.name}
+                </div>
+                </div>
                 </div>
               );
             })}
+            {/* 拖到最后一张之后时的插入线（网格没有「末尾」这一格可挂靠） */}
+            {dropIndex === pendingFiles.length && dragIndex !== null && (
+              <div style={{
+                gridColumn: '1 / -1', height: 0,
+                borderTop: '2px dashed #1890ff', marginTop: -4,
+              }} />
+            )}
           </div>
           <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
-            可拖动调整顺序；同一份卷子的照片请排在一起。照片直接上传到服务器，关掉弹窗也不会丢。
+            可拖动调整顺序，拖动时会出现竖向虚线指示插入位置；同一份卷子的照片请排在一起。
+            照片上传到服务器后关掉弹窗也不会丢。
           </div>
         </>
       )}
