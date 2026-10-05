@@ -203,8 +203,28 @@ export const assignmentAPI = {
   // ===== 纸质作业扫描（批次制）=====
   // 逐张上传 + 按组识别 + 进度落库：关掉弹窗或重启服务都不影响，
   // 下次打开批次详情能看到「上次传了 12/20、识别到第 8 组」。
-  createScanBatch: (assignmentId: number, groupSize?: number) =>
-    api.post(`/assignments/${assignmentId}/paper-scan/batches`, { group_size: groupSize || 1 }),
+  /**
+   * 创建扫描批次。
+   *
+   * @param studentId 只有单人登记会传：批次绑定到这个学生，
+   *   后端会优先复用该学生未完成的批次。批量扫描不传（一个批次装着全班）。
+   */
+  createScanBatch: (assignmentId: number, groupSize?: number, studentId?: number | null) =>
+    api.post(`/assignments/${assignmentId}/paper-scan/batches`, {
+      group_size: groupSize || 1,
+      ...(studentId ? { student_id: studentId } : {}),
+    }),
+
+  /** 单人登记：各学生的扫描进度（左侧列表显示「谁传了几张、谁判完了」） */
+  getScanStudentProgress: (assignmentId: number) =>
+    api.get(`/assignments/${assignmentId}/paper-scan/student-progress`),
+
+  /**
+   * 标记批次已登记（成绩已写入）。
+   * 登记后不删批次——老师发现判错还要回来改。
+   */
+  markScanRegistered: (assignmentId: number, batchId: number) =>
+    api.post(`/assignments/${assignmentId}/paper-scan/batches/${batchId}/registered`),
 
   listScanBatches: (assignmentId: number) =>
     api.get(`/assignments/${assignmentId}/paper-scan/batches`),

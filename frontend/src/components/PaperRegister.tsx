@@ -57,13 +57,24 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
   const [saving, setSaving] = useState(false);
   const [recognized, setRecognized] = useState<Record<number, { answer: string; comment: string }>>({});
   const pyCache = useRef<Map<number, string>>(new Map());
+  /**
+   * 各学生的扫描进度：student_id -> { uploaded, total, scanned, registered }
+   * 左侧列表用它显示「谁传了几张 / 谁已识别 / 谁已登记」。
+   * 不逐个学生去查批次，那样会变成 N+1 次请求。
+   */
+  const [studentProgress, setStudentProgress] = useState<Record<number, {
+    uploaded: number; total: number; scanned: boolean; registered: boolean;
+  }>>({});
 
-  // 单人模式：每次开新批次、照片按一份卷子处理
-  const scan = usePaperScan(assignmentId, open, { mode: 'single' });
+  // 单人模式：批次绑定到当前学生，切换学生会换成那个学生自己的批次
+  const scan = usePaperScan(assignmentId, open, {
+    mode: 'single',
+    studentId: currentStudent?.id ?? null,
+  });
   const {
     batch, pendingFiles, uploading, scanning, loading: scanLoading,
     compressing, compressProgress,
-    pickFiles, uploadAll, startScan, cancelScan, removeImage, discardBatch,
+    pickFiles, uploadAll, startScan, cancelScan, removeImage, discardBatch, switchStudent,
   } = scan;
 
   // 缩略图：鉴权图片要fetch 成 blob 才能显示
@@ -108,6 +119,17 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
         catch (e) { return na.localeCompare(nb, 'zh'); }
       });
       setStudents(list);
+
+      // 各学生的扫描进度：左侧列表要显示「谁传了几张、谁判完了」
+      const progRes = await assignmentAPI.getScanStudentProgress(assignmentId).catch(() => null);
+      const map: typeof studentProgress = {};
+      (progRes?.data?.progress || []).forEach((p: any) => {
+        map[p.student_id] = {
+          uploaded: p.uploaded || 0, total: p.total || 0,
+          scanned: !!p.scanned, registered: !!p.registered,
+        };
+      });
+      setStudentProgress(map);
     } catch (e: any) {
       message.error(e?.response?.data?.error || '加载失败');
     } finally {
@@ -176,26 +198,51 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
   });
 
   const unregistered = students.filter(s => !registeredIds.has(s.id));
+  // 全班已上传的照片总数，用于在列表底部给个总数
+  const uploadedSummary = useMemo(
+    () => Object.values(studentProgress).reduce((sum, p) => sum + (p.uploaded || 0), 0),
+    [studentProgress]
+  );
 
   /**
-   * 切换学生时不再直接丢弃照片。
+   * 切换学生。
    *
-   * 以前是 setPhotos([])：老师给 A 拍完、切到 B 看一眼、切回来发现要重拍，
-   * 而拍照这件事本身成本很高。现在照片和识别结果保留，
-   * 由顶部「当前照片归属」明确标出属于谁，避免误用到别的学生名下。
-   *
-   * 但判分结果必须清：它对应的是上一位学生的卷面，
-   * 留着会被老师当成新学生的判分一起保存出去。
+   * 三件事一起做，缺一不可：
+   *   1. 让 hook 换成这个学生自己的批次——不做的话两个人的照片会混进同一份卷子
+   *   2. 暂存当前学生的判分到内存，切回来时还原（未上传的照片无法保留，
+   *      但已上传的在服务端；已判分的在 question_answers 表）
+   *   3. 清空 marks/recognized，避免把上一个学生的判分存到新学生名下
    */
-  const handleSelectStudent = useCallback((s: any) => {
-    if (currentStudent && currentStudent.id !== s.id && myPaper && myPaper.results.length > 0) {
-      message.warning('已切换学生，判分结果已清空（照片会保留，需要重新识别）');
-      setMarks({});
-      setRecognized({});
-      appliedRef.current = null;
+  const savedMarksRef = useRef<Map<number, { marks: any; recognized: any }>>(new Map());
+  const handleSelectStudent = useCallback(async (s: any) => {
+    if (currentStudent?.id === s.id) return;
+    if (currentStudent) {
+      savedMarksRef.current.set(currentStudent.id, { marks, recognized });
     }
     setCurrentStudent(s);
-  }, [currentStudent, myPaper]);
+    setMarks({});
+    setRecognized({});
+    appliedRef.current = null;
+    // 换成新学生的批次（顺带清掉本地待传列表）
+    const b = await switchStudent(s.id);
+    if (!b) return;
+    // 该学生之前已经识别过：把服务端的结果读回来，
+    // 老师切回来就能接着核对/保存，不用重新识别
+    const p = (b.result?.papers || [])[0];
+    if (p && Array.isArray(p.results) && p.results.length > 0) {
+      const nextMarks: Record<number, { correct: boolean; score?: number }> = {};
+      const rec: Record<number, { answer: string; comment: string }> = {};
+      p.results.forEach((r: any) => {
+        nextMarks[r.question_id] = {
+          correct: !!r.is_correct,
+          score: (!r.is_correct && r.score > 0) ? r.score : undefined,
+        };
+        rec[r.question_id] = { answer: r.recognized_answer || '', comment: r.comment || '' };
+      });
+      setMarks(nextMarks);
+      setRecognized(rec);
+    }
+  }, [currentStudent, marks, recognized, switchStudent]);
 
   const handleSave = async (andNext: boolean) => {
     if (!currentStudent) { message.warning('请先在左侧选择学生'); return; }
@@ -208,19 +255,34 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
       message.success(`${currentStudent.real_name || currentStudent.username} 登记成功：${res.data.total_score} 分${res.data.gold_reward > 0 ? `，+${res.data.gold_reward} 金币` : ''}`);
       setRegisteredIds(prev => new Set(prev).add(currentStudent.id));
 
-      // 登记完这批照片就没用了，连带磁盘文件一起清掉，避免堆积
+      // 标记批次已登记，但**不删**：
+      // 删了的话左侧的「已登记」标记会消失，老师发现某题判错也没法回来改。
+      // 想清掉照片和记录，让老师点「丢弃照片」。
       if (batch?.batch_id) {
-        try { await discardBatch(); } catch (e) { /* 清理失败不阻塞登记结果 */ }
+        try {
+          await assignmentAPI.markScanRegistered(assignmentId, batch.batch_id);
+        } catch (e) { /* 标记失败只影响列表标记，不影响登记结果 */ }
       }
+      setStudentProgress((prev) => ({
+        ...prev,
+        [currentStudent.id]: {
+          ...(prev[currentStudent.id] || { uploaded: 0, total: 0, scanned: false }),
+          registered: true,
+        },
+      }));
       setMarks({});
       setRecognized({});
       appliedRef.current = null;
 
       if (andNext) {
         const next = students.find(s => s.id !== currentStudent.id && !registeredIds.has(s.id));
-        setCurrentStudent(next || null);
-        setMarks({});
-        if (!next) message.info('全班已登记完成');
+        if (next) {
+          await handleSelectStudent(next);
+        } else {
+          setCurrentStudent(null);
+          setMarks({});
+          message.info('全班已登记完成');
+        }
       } else {
         onSaved();
         onClose();
@@ -247,11 +309,11 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
             已登记 {registeredCount}/{students.length} 人
             {currentStudent && <span style={{ color: '#52c41a', marginLeft: 12 }}>当前：{currentStudent.real_name || currentStudent.username}</span>}
           </span>
-          <Space>
-            <Button onClick={onClose}>关闭</Button>
-            <Button disabled={!currentStudent} loading={saving} onClick={() => handleSave(true)}>保存并登记下一个</Button>
-            <Button type="primary" disabled={!currentStudent} loading={saving} onClick={() => handleSave(false)}>保存</Button>
-          </Space>
+          {/* 底部只留「关闭」。
+              「保存 / 保存并登记下一个」放在识别按钮那一组里——
+              那一组是「处理一个人」的完整动作，放在一起才看得出是逐个处理的，
+              和「批量扫描」（一次处理全班）在界面上明确区分开。 */}
+          <Button onClick={onClose}>关闭</Button>
         </div>
       }
       styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
@@ -272,23 +334,46 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
               {filteredStudents.map(s => {
                 const registered = registeredIds.has(s.id);
                 const active = currentStudent?.id === s.id;
+                const prog = studentProgress[s.id];
+                // 未上传的本地张数：只有正在处理这个学生时才有意义
+                const localCount = active ? pendingFiles.length : 0;
+                const uploadedCount = prog?.uploaded || 0;
                 return (
                   <div
                     key={s.id}
                     onClick={() => handleSelectStudent(s)}
                     style={{
-                      display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
+                      display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px',
                       borderRadius: 6, cursor: 'pointer', marginBottom: 4,
                       background: active ? '#e6f7ff' : undefined,
                       border: active ? '1px solid #1890ff' : '1px solid #f0f0f0',
-                      opacity: registered ? 0.55 : 1,
+                      opacity: registered ? 0.6 : 1,
                     }}
                   >
                     <Avatar size={26} style={{ background: registered ? '#bfbfbf' : '#1890ff' }}>
                       {(s.real_name || s.username || '?').slice(0, 1)}
                     </Avatar>
-                    <span style={{ flex: 1, fontSize: 13 }}>{s.real_name || s.username}</span>
-                    {registered && <Tag color="default" style={{ marginRight: 0 }}>已登记</Tag>}
+                    <span style={{ flex: 1, fontSize: 13, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {s.real_name || s.username}
+                    </span>
+                    {/* 三类状态标记：已传张数 / 已识别 / 已登记。
+                        老师扫一眼就知道全班还剩多少人没弄完，不用点进去逐个看。 */}
+                    {localCount > 0 && (
+                      <Tooltip title={`本地已选 ${localCount} 张（还没上传）`}>
+                        <Tag color="orange" style={{ marginRight: 2, fontSize: 11, padding: '0 4px' }}>选{localCount}</Tag>
+                      </Tooltip>
+                    )}
+                    {uploadedCount > 0 && (
+                      <Tooltip title={`已上传 ${uploadedCount} 张`}>
+                        <Tag color="blue" style={{ marginRight: 2, fontSize: 11, padding: '0 4px' }}>传{uploadedCount}</Tag>
+                      </Tooltip>
+                    )}
+                    {prog?.scanned && !registered && (
+                      <Tooltip title="AI 已识别，还没登记成绩">
+                        <Tag color="gold" style={{ marginRight: 2, fontSize: 11, padding: '0 4px' }}>已判</Tag>
+                      </Tooltip>
+                    )}
+                    {registered && <Tag color="default" style={{ marginRight: 0, fontSize: 11, padding: '0 4px' }}>已登记</Tag>}
                   </div>
                 );
               })}
@@ -296,6 +381,7 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
             </div>
             <div style={{ color: '#999', fontSize: 12, marginTop: 6 }}>
               未登记 {unregistered.length} 人
+              {uploadedSummary > 0 && <span style={{ marginLeft: 8 }}>已拍照 {uploadedSummary} 张</span>}
             </div>
           </div>
 
@@ -314,12 +400,28 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
             )}
 
             <div style={{ border: '1px dashed #d9d9d9', borderRadius: 8, padding: 10, marginBottom: 12 }}>
+              {/* 顶部先说清「现在在给谁拍照」——照片归属错了后面全错 */}
+              <div style={{ fontSize: 13, marginBottom: 8, color: '#555' }}>
+                {currentStudent ? (
+                  <>当前处理：<strong style={{ color: '#1890ff' }}>{currentStudent.real_name || currentStudent.username}</strong>
+                    <span style={{ color: '#999', fontSize: 12 }}>（照片与判分都只属于这个学生）</span>
+                  </>
+                ) : (
+                  <span style={{ color: '#fa8c16' }}>请先在左侧点一个学生，再为 TA 拍照 —— 照片要记在谁名下</span>
+                )}
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <Upload
                   accept="image/*"
                   multiple
                   showUploadList={false}
+                  // 没选学生时禁止添加：否则照片不知道该记在谁名下
+                  disabled={!currentStudent || scanning}
                   beforeUpload={(file) => {
+                    if (!currentStudent) {
+                      message.warning('请先在左侧选择学生');
+                      return false;
+                    }
                     if (pendingFiles.length >= MAX_SINGLE_PHOTOS) {
                       message.warning(`一次最多 ${MAX_SINGLE_PHOTOS} 张照片`);
                       return false;
@@ -328,12 +430,12 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                     return false;
                   }}
                 >
-                  <Button icon={<PictureOutlined />} loading={compressing}>添加作业照片</Button>
+                  <Button icon={<PictureOutlined />} loading={compressing} disabled={!currentStudent}>添加照片</Button>
                 </Upload>
                 <Button
                   icon={<InboxOutlined />}
                   loading={uploading}
-                  disabled={pendingFiles.length === 0 || compressing}
+                  disabled={pendingFiles.length === 0 || compressing || !currentStudent}
                   onClick={uploadAll}
                 >
                   {uploading ? `上传中（剩 ${notUploaded.length}）` : `上传全部${notUploaded.length ? `（${notUploaded.length}）` : ''}`}
@@ -351,6 +453,24 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                     {myPaper ? '重新识别' : 'AI 识别判分'}
                   </Button>
                 )}
+
+                {/* 保存与识别放在同一组：这一组就是「处理一个人」的全过程，
+                    老师一眼能看出这里是逐个处理，与批量扫描不同 */}
+                <Button
+                  disabled={!currentStudent || saving || !myPaper}
+                  loading={saving}
+                  onClick={() => handleSave(false)}
+                >
+                  保存
+                </Button>
+                <Button
+                  type="primary"
+                  disabled={!currentStudent || saving || !myPaper}
+                  loading={saving}
+                  onClick={() => handleSave(true)}
+                >
+                  保存并登记下一个
+                </Button>
 
                 <span style={{ flex: 1 }} />
 
@@ -458,8 +578,14 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                 </div>
               )}
 
-              <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
-                最多 {MAX_SINGLE_PHOTOS} 张，直接上传到服务器（关掉弹窗不丢）。识别后请务必逐题核对再保存。
+              {/* 分步骤说明。原先一句「直接上传到服务器（关掉弹窗不丢）」
+                  有歧义：读者分不清「添加照片」到底写没写库。这里按三步说清楚：
+                  添加只在本机；点上传才落库；点保存才登记成绩。 */}
+              <div style={{ color: '#888', fontSize: 12, marginTop: 8, lineHeight: 1.8 }}>
+                <div>① <strong>添加照片</strong>：只存在本机，关掉弹窗会丢失，请确认选好了再传。</div>
+                <div>② <strong>上传全部</strong>：照片存到服务器，之后关掉弹窗、重启服务都还在。</div>
+                <div>③ <strong>AI 识别判分 → 保存</strong>：识别结果会先存下来，确认无误再点「保存」把成绩登记进去。</div>
+                <div style={{ color: '#bbb', marginTop: 2 }}>单个学生最多 {MAX_SINGLE_PHOTOS} 张（这几张会当作一份卷子一起识别）。</div>
               </div>
             </div>
 

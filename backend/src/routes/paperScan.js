@@ -88,17 +88,75 @@ function loadBatch(req, res, next) {
 /** 新建批次。group_size = 每人几张，后续可改 */
 router.post('/:id/paper-scan/batches', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, (req, res) => {
   try {
+    // student_id 只有单人登记会传；批量扫描不传（一个批次装着全班）
+    let studentId = req.body?.student_id ? parseInt(req.body.student_id, 10) : null;
+    if (studentId !== null) {
+      if (!Number.isFinite(studentId)) {
+        return res.status(400).json({ error: '学生 id 无效' });
+      }
+      // 必须是这份作业所在班级的学生，否则会把别班学生挂进来
+      const inClass = db.prepare(
+        "SELECT id FROM users WHERE id = ? AND class_id = ? AND role = 'student'"
+      ).get(studentId, req.assignment.class_id);
+      if (!inClass) return res.status(400).json({ error: '该学生不在本班' });
+    }
+
+    // 单人登记：优先复用该学生未完成的批次，避免每次切人都新建一批空批次
+    if (studentId !== null) {
+      const existing = scanSvc.findStudentBatch(
+        req.assignment.id, studentId, req.user.userId, req.user.role === 'admin'
+      );
+      if (existing) {
+        return res.json({ batch: scanSvc.toPublicBatch(existing), reused: true });
+      }
+    }
+
     const batch = scanSvc.createBatch({
       assignmentId: req.assignment.id,
       userId: req.user.userId,
       title: req.assignment.title,
       subject: req.assignment.subject,
       groupSize: req.body?.group_size,
+      studentId,
     });
-    res.json({ batch: scanSvc.toPublicBatch(batch) });
+    res.json({ batch: scanSvc.toPublicBatch(batch), reused: false });
   } catch (e) {
     console.error('创建扫描批次失败:', e.message);
     res.status(500).json({ error: '创建批次失败' });
+  }
+});
+
+/**
+ * 标记批次已登记（成绩已写入 submissions）。
+ *
+ * 登记后**不删批次**：老师可能发现某题判错了要改，
+ * 保留批次才能看到「已登记」标记、复用已识别的结果。
+ * 想彻底清掉照片和记录，让老师点「丢弃照片」即可。
+ */
+router.post('/:id/paper-scan/batches/:batchId/registered', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, loadBatch, (req, res) => {
+  try {
+    scanSvc.markRegistered(req.batch.id);
+    res.json({ message: '已标记为登记完成', batch: scanSvc.toPublicBatch(scanSvc.getBatch(req.batch.id)) });
+  } catch (e) {
+    console.error('标记登记状态失败:', e.message);
+    res.status(500).json({ error: '标记失败' });
+  }
+});
+
+/** 单人登记：各学生的扫描进度汇总。
+ *
+ * 左侧学生列表要显示「谁传了几张 / 谁已识别 / 谁已登记」，
+ * 没有这个接口就只能逐个学生去查批次。
+ */
+router.get('/:id/paper-scan/student-progress', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, (req, res) => {
+  try {
+    const map = scanSvc.studentProgressMap(req.assignment.id, req.user.userId, req.user.role === 'admin');
+    // 转成数组并带上 student_id，前端直接遍历
+    const list = Object.keys(map).map((sid) => ({ student_id: Number(sid), ...map[sid] }));
+    res.json({ progress: list });
+  } catch (e) {
+    console.error('读取学生扫描进度失败:', e.message);
+    res.status(500).json({ error: '读取进度失败' });
   }
 });
 

@@ -40,6 +40,11 @@ export interface ScanBatch {
   error: string | null;
   /** 本次识别用的模型名，可能为空 */
   model?: string | null;
+  /** 这个批次是为哪个学生扫的；null/缺省表示批量扫描（装着全班） */
+  student_id?: number | null;
+  /** 成绩是否已登记（写入 submissions）；区分「已识别」与「已登记」 */
+  registered?: boolean;
+  registered_at?: string | null;
   images: ScanImage[];
 }
 
@@ -86,16 +91,18 @@ export function readDraft(assignmentId: number): Draft | null {
  * @param enabled 弹窗是否打开
  * @param options.mode
  *   - 'batch'（默认）：批量扫描。会复用上次没传完的批次，关窗再打开能接着传
- *   - 'single'：单人登记。每次开新批次、用完即弃，
- *     否则会误复用批量扫描的批次，把别人的照片混进这个学生名下
- * @param options.initialGroupSize 批量模式下的初始「每人张数」；单人模式固定按一份卷子处理
+ *   - 'single'：单人登记。一个学生一个批次，切学生会切到那个学生自己的批次，
+ *     避免两个人的照片混进同一份卷子
+ * @param options.studentId 单人模式下当前处理的学生。切换它会切批次。
+ * @param options.initialGroupSize 批量模式下的初始「每人张数」
  */
 export function usePaperScan(
   assignmentId: number,
   enabled: boolean,
-  options: { mode?: 'batch' | 'single'; initialGroupSize?: number } = {}
+  options: { mode?: 'batch' | 'single'; studentId?: number | null; initialGroupSize?: number } = {}
 ) {
   const mode = options.mode || 'batch';
+  const studentId = options.studentId ?? null;
   // 单人登记只服务一个学生，所有照片必须落在同一组里，
   // 所以分组数直接顶到上限（1~10 张都算一份卷子）
   const fixedGroupSize = mode === 'single';
@@ -145,7 +152,9 @@ export function usePaperScan(
     setLoading(true);
     try {
       // 单人模式不查历史、每次从空批次开始：
-      // 复用到的批次可能属于批量扫描，混进来会导致照片张冠李戴
+      // 单人登记：不查批量扫描的批次列表。
+      // 批次由「ensureBatch」按当前 studentId 惰性创建或复用，
+      // 这样切学生时才有机会换成另一个学生的批次。
       if (mode === 'single') {
         setBatch(null);
         setPendingFiles([]);
@@ -247,10 +256,14 @@ export function usePaperScan(
   /** 确保有一个批次（第一次上传时才创建，避免空批次堆积） */
   const ensureBatch = useCallback(async () => {
     if (batch?.batch_id) return batch;
-    const r = await assignmentAPI.createScanBatch(assignmentId, groupSize);
+    // 单人登记把student_id 传上去，后端会为这个学生复用未完成的批次；
+    // 不传则建成批量批次（装着全班）。
+    const r = mode === 'single' && studentId
+      ? await assignmentAPI.createScanBatch(assignmentId, groupSize, studentId)
+      : await assignmentAPI.createScanBatch(assignmentId, groupSize);
     setBatch(r.data.batch);
     return r.data.batch as ScanBatch;
-  }, [batch, assignmentId, groupSize]);
+  }, [batch, assignmentId, groupSize, mode, studentId]);
 
   /**
    * 逐张上传。未上传成功的会标 error，下次可以只重传这些。
@@ -327,6 +340,35 @@ export function usePaperScan(
       pollTimer.current = null;
     }
   }, []);
+
+  /**
+   * 切换到另一个学生（单人登记用）。
+   *
+   * 换人时必须调用：结束当前批次的轮询、清空本地列表，
+   * 再按新学生的 studentId 去服务端取回「他已经传过的照片与识别结果」。
+   * 不这么做，两个人的照片会落进同一个批次，
+   * 被当成一份卷子送去 AI 识别——两份卷面混在一起。
+   */
+  const switchStudent = useCallback(async (nextStudentId: number | null) => {
+    if (mode !== 'single') return;
+    stopPolling();
+    setScanning(false);
+    setBatch(null);
+    setPendingFiles([]);
+    setCompressing(false);
+    setCompressProgress(null);
+    if (!nextStudentId) return null;
+    try {
+      // 后端在该学生有未完成批次时会直接返回它（reused=true），没有才新建
+      const r = await assignmentAPI.createScanBatch(assignmentId, 10, nextStudentId);
+      setBatch(r.data.batch);
+      return r.data.batch as ScanBatch;
+    } catch (e: any) {
+      // 取不到就先不建批次，等老师点上传时再试
+      message.error(e?.response?.data?.error || '加载该学生的扫描进度失败');
+      return null;
+    }
+  }, [assignmentId, mode, stopPolling]);
 
   /** 识别进度轮询：进度在服务端，这里只负责读 */
   const startPolling = useCallback((batchId: number) => {
@@ -440,8 +482,16 @@ export function usePaperScan(
   /** 删掉一张（服务端记录 + 磁盘文件一起删） */
   const removeImage = useCallback(async (index: number) => {
     const b = batch;
-    if (!b?.batch_id || b.scan_status === 'running') {
-      message.warning('识别中不能删除照片');
+    // 识别中不能删：照片正在被 AI 读取，删了会导致这组识别结果对不上
+    if (b?.batch_id && b.scan_status === 'running') {
+      message.warning('正在识别中，请先停止识别再删除照片');
+      return;
+    }
+    // 没有批次 = 照片还在本地（没上传过），直接从本地列表移除即可。
+    // 原先这里和「识别中」共用一句提示，导致刚选完还没上传时
+    // 删照片也报「识别中不能删除」，与实际情况完全不符。
+    if (!b?.batch_id) {
+      setPendingFiles((prev) => prev.filter((_, idx) => idx !== index));
       return;
     }
     // 用本地记住的 imageId，而不是 batch.images[index]：
@@ -507,5 +557,7 @@ export function usePaperScan(
     removeImage,
     discardBatch,
     refresh,
+    /** 单人登记：切换学生（会换成那个学生自己的批次） */
+    switchStudent,
   };
 }

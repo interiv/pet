@@ -45,11 +45,45 @@ function getBatch(id) {
   return db.prepare('SELECT * FROM paper_scan_batches WHERE id = ?').get(id) || null;
 }
 
-function createBatch({ assignmentId, userId, title, subject, groupSize }) {
+function createBatch({ assignmentId, userId, title, subject, groupSize, studentId }) {
   const gs = Math.max(1, Math.min(10, parseInt(groupSize, 10) || 1));
-  const info = db.prepare("INSERT INTO paper_scan_batches (assignment_id, user_id, title, subject, group_size, upload_status, scan_status) VALUES (?, ?, ?, ?, ?, 'draft', 'idle')")
-    .run(assignmentId, userId, title || '', subject || '', gs);
+  const sid = studentId ? parseInt(studentId, 10) : null;
+  // student_id 为空 = 批量扫描（一个批次装着全班，AI 靠姓名自动归属）
+  // 有值 = 单人登记（这个批次只服务这一个学生）
+  const info = db.prepare("INSERT INTO paper_scan_batches (assignment_id, user_id, title, subject, group_size, upload_status, scan_status, student_id) VALUES (?, ?, ?, ?, ?, 'draft', 'idle', ?)")
+    .run(assignmentId, userId, title || '', subject || '', gs, Number.isFinite(sid) ? sid : null);
   return getBatch(info.lastInsertRowid);
+}
+
+/**
+ * 找某个学生在某份作业下未完成的批次。
+ *
+ * 单人登记切回一个学生时用它恢复现场。已登记（registered_at 非空）的批次
+ * 不复用——那个学生已经登记完了，再开新批次重新扫。
+ */
+function findStudentBatch(assignmentId, studentId, userId, isAdmin) {
+  if (!studentId) return null;
+  const row = isAdmin
+    ? db.prepare(`
+        SELECT * FROM paper_scan_batches
+        WHERE assignment_id = ? AND student_id = ?
+        ORDER BY id DESC LIMIT 1
+      `).get(assignmentId, studentId)
+    : db.prepare(`
+        SELECT * FROM paper_scan_batches
+        WHERE assignment_id = ? AND student_id = ? AND user_id = ?
+        ORDER BY id DESC LIMIT 1
+      `).get(assignmentId, studentId, userId);
+  if (!row) return null;
+  // 已登记的批次不再复用
+  if (row.registered_at) return null;
+  return row;
+}
+
+/** 标记批次已登记（成绩已写入 submissions） */
+function markRegistered(batchId) {
+  db.prepare("UPDATE paper_scan_batches SET registered_at = ?, updated_at = ? WHERE id = ?")
+    .run(nowIso(), nowIso(), batchId);
 }
 
 const countImages = (batchId) =>
@@ -67,6 +101,53 @@ function listBatches(assignmentId, userId, isAdmin) {
   return rows.map(toPublicBatch);
 }
 
+/**
+ * 单人登记模式用：一次拿到每个学生的扫描进度。
+ *
+ * 左侧学生列表要显示「谁传了几张、谁判完了、谁已登记」，
+ * 逐个查批次会变成 N+1 次查询，这里一次聚合出来。
+ *
+ * @returns {Object<number, {batch_id:number, uploaded:number, total:number, scanned:boolean, registered:boolean}>}
+ *          key 是 student_id
+ */
+function studentProgressMap(assignmentId, userId, isAdmin) {
+  const rows = isAdmin
+    ? db.prepare(`
+        SELECT id, student_id, registered_at, scan_status,
+               (SELECT COUNT(*) FROM paper_scan_images WHERE batch_id = paper_scan_batches.id AND file_path IS NOT NULL) AS uploaded,
+               (SELECT COUNT(*) FROM paper_scan_images WHERE batch_id = paper_scan_batches.id) AS total
+        FROM paper_scan_batches
+        WHERE assignment_id = ? AND student_id IS NOT NULL
+      `).all(assignmentId)
+    : db.prepare(`
+        SELECT id, student_id, registered_at, scan_status,
+               (SELECT COUNT(*) FROM paper_scan_images WHERE batch_id = paper_scan_batches.id AND file_path IS NOT NULL) AS uploaded,
+               (SELECT COUNT(*) FROM paper_scan_images WHERE batch_id = paper_scan_batches.id) AS total
+        FROM paper_scan_batches
+        WHERE assignment_id = ? AND student_id IS NOT NULL AND user_id = ?
+      `).all(assignmentId, userId);
+
+  const map = {};
+  for (const r of rows) {
+    const sid = r.student_id;
+    // 一个学生理论上只有一个未登记批次；若有多条（历史遗留），取信息最全的那条：
+    // 已登记 > 已识别 > 照片多
+    const prev = map[sid];
+    const score = (x) => (x.registered ? 2 : 0) + (x.scanned ? 1 : 0) + (x.uploaded || 0) / 1000;
+    if (!prev || score(r) > score(prev)) {
+      map[sid] = {
+        batch_id: r.id,
+        uploaded: r.uploaded || 0,
+        total: r.total || 0,
+        // scan_status 为 done 才算「已识别」；识别过但有题失败时后端会退回 pending
+        scanned: r.scan_status === 'done',
+        registered: !!r.registered_at,
+      };
+    }
+  }
+  return map;
+}
+
 function toPublicBatch(batch) {
   if (!batch) return null;
   const images = listImages(batch.id);
@@ -76,6 +157,11 @@ function toPublicBatch(batch) {
   return {
     batch_id: batch.id,
     assignment_id: batch.assignment_id,
+    /** 这个批次是为哪个学生扫的；null 表示批量扫描（装着全班） */
+    student_id: batch.student_id ?? null,
+    /** 是否已登记成绩：区分「已识别」与「已识别且已登记」 */
+    registered: !!batch.registered_at,
+    registered_at: batch.registered_at || null,
     title: batch.title,
     subject: batch.subject,
     group_size: batch.group_size,
@@ -295,6 +381,8 @@ module.exports = {
   /** 目录是否可用，用于把「无法写入」翻译成用户看得懂的原因 */
   isUploadsReady: () => uploadsReady,
   createBatch, getBatch, listBatches, listImages, toPublicBatch, countImages,
+  /** 单人登记：按学生找未完成批次 / 标记已登记 / 各学生进度汇总 */
+  findStudentBatch, markRegistered, studentProgressMap,
   addImagePlaceholder, markUploaded, regroup, reorder, deleteImage, refreshBatchCounters,
   markScanRunning, reportProgress, markScanDone, markScanFailed,
   attachStudentToGroup, imageAbsolutePath,
