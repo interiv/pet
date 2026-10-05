@@ -181,11 +181,16 @@ export const assignmentAPI = {
 
   getWrongMastery: () => api.get('/assignments/wrong/mastery'),
   
-  uploadImage: (file: File) => {
+  /**
+   * 上传作答照片。传的是客户端压缩后的 Blob（长边 2000 / JPEG 0.82），
+   * 手机原图直传有 3~5MB，压缩后通常只有几百 KB。
+   */
+  uploadImage: (file: Blob) => {
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', file, 'answer.jpg');
     return api.post('/assignments/upload/image', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000,
     });
   },
 

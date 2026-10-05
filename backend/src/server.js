@@ -155,6 +155,11 @@ app.use(express.json()); // JSON 解析
 app.use(express.urlencoded({ extended: true }));
 
 // 静态文件目录（上传的文件和前端图片）
+// 指向 data/uploads 而不是项目根的 uploads/：上传接口实际写在 data/uploads 下
+// （见 routes/assignments.js 的 uploadsDir），挂错目录会让所有上传的图片 404。
+// data/ 在 Docker 部署时是挂载卷，容器重建后文件仍在。
+app.use('/uploads', express.static(path.join(__dirname, '../../data/uploads')));
+// 兼容：若确实存在旧目录（早期版本把文件放在项目根 uploads/），也一并提供
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // 优先从 public/images 读取图片（生产环境），如果不存在则从原路径读取
 app.use('/images', express.static(path.join(__dirname, '../public/images')));

@@ -5,8 +5,9 @@ import { pollAiTask } from '../utils/aiTask';
 import { useAuthStore } from '../store/authStore';
 import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
+import { compressImageBlob, formatSize } from '../utils/imageCompress';
 import dayjs from 'dayjs';
-import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import CelebrationAnimation from './CelebrationAnimation';
 import PaperRegister from './PaperRegister';
 import PaperBatchRegister from './PaperBatchRegister';
@@ -118,6 +119,14 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [currentAssignment, setCurrentAssignment] = useState<any>(null);
   const [generatedData, setGeneratedData] = useState<GeneratedResult | null>(null);
   const [submitResult, setSubmitResult] = useState<any>(null);
+  /**
+   * 本次提交是否在等AI 评阅。
+   * 用它替代原先「message 里是否含『等待』」的字符串嗅探——
+   * 那种写法一改文案就失效，而且会把 total_score 缺失的异常情况也当成正常。
+   */
+  const [submitResultAwaitingReview, setSubmitResultAwaitingReview] = useState(false);
+  /** 点「刷新结果」时的 loading */
+  const [checkingResult, setCheckingResult] = useState(false);
   const [statsData, setStatsData] = useState<any>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [assignmentTablePage, setAssignmentTablePage] = useState(1);
@@ -180,6 +189,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [submitting, setSubmitting] = useState(false);
   const [studentAnswers, setStudentAnswers] = useState<Record<number, any>>({});
   const [uploadedImages, setUploadedImages] = useState<Record<number, string>>({});
+  /** 正在压缩+上传的题号，用于在对应位置显示进度（多题同时传也不串） */
+  const [uploadingImageFor, setUploadingImageFor] = useState<number | null>(null);
   const [progressMilestones, setProgressMilestones] = useState<Set<number>>(new Set());
   const [shuffledOptionMap, setShuffledOptionMap] = useState<Record<number, number[]>>({});
   const [shuffledQuestionOrder, setShuffledQuestionOrder] = useState<number[]>([]);
@@ -661,11 +672,15 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       setIsDoModalVisible(false);
       setIsResultModalVisible(true);
       loadAssignments();
-      
-      if (res.data.success && !res.data.message?.includes('等待')) {
+
+      // 用后端给的明确标记判断，不再靠 message 文本里有没有「等待」两个字——
+      // 那种嗅探方式一改文案就失效。这里判断「总分是否已就绪」。
+      const gradedNow = typeof res.data.total_score === 'number' && res.data.total_score > 0;
+      setSubmitResultAwaitingReview(!gradedNow);
+      if (res.data.success && gradedNow) {
         message.success(`提交成功！得分：${res.data.total_score}分，获得 ${res.data.gold_reward} 金币`);
         checkAuth();
-        
+
         setCelebrationData({
           expReward: res.data.exp_reward || 0,
           goldReward: res.data.gold_reward || 0,
@@ -675,13 +690,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           newStage: res.data.levelUp?.newStage || ''
         });
         setShowCelebration(true);
-        
-        // 5秒后自动隐藏
-        setTimeout(() => {
-          setShowCelebration(false);
-        }, 5000);
+        setTimeout(() => { setShowCelebration(false); }, 5000);
       } else {
-        message.info(res.data.message || '已提交');
+        // 主观题：已提交，AI 在后台评阅。让学生该干嘛干嘛，别守着等。
+        message.info('已提交！主观题正在由 AI 评阅，完成后可在作业列表看到分数');
       }
     } catch (e: any) {
       message.error(e.response?.data?.error || '提交失败');
@@ -690,13 +702,89 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     }
   };
 
-  const handleUploadImage = async (questionId: number, file: File) => {
+  /**
+   * 打开某份提交的结果。
+   *
+   * 主观题是异步评阅的，学生点开时可能还没判完。
+   * 这里不自动轮询——学生可能开着页面不管，轮询既费流量又没意义；
+   * 改成给一个「刷新结果」按钮，想看的时候点一下。
+   */
+  const handleViewResult = async (record: any) => {
     try {
-      const res = await assignmentAPI.uploadImage(file);
+      const res = await assignmentAPI.getSubmissionDetail(record.my_submission_id);
+      const sub = res.data.submission || {};
+      const answers = res.data.answers || [];
+      const awaiting = sub.review_status === 'pending' || sub.review_status === 'reviewing';
+      setSubmitResult({
+        results: answers,
+        total_score: sub.total_score,
+        total_max_score: sub.total_max_score,
+        gold_reward: sub.gold_reward,
+        correct_count: answers.filter((a: any) => a.is_correct).length,
+        total_count: answers.length,
+      });
+      setSubmitResultAwaitingReview(awaiting);
+      setIsResultModalVisible(true);
+    } catch (e) {
+      message.error('获取结果失败');
+    }
+  };
+
+  /** 结果弹窗里点「刷新结果」：重新拉一次，判完了就更新分数 */
+  const handleRefreshResult = async () => {
+    const record = assignments.find((a: any) => a.my_submission_id === submitResult?.submission_id)
+      || assignments.find((a: any) => a.my_submission_id);
+    const sid = record?.my_submission_id || submitResult?.submission_id;
+    if (!sid) { message.info('请先提交作业'); return; }
+    setCheckingResult(true);
+    try {
+      const res = await assignmentAPI.getSubmissionDetail(sid);
+      const sub = res.data.submission || {};
+      const answers = res.data.answers || [];
+      const awaiting = sub.review_status === 'pending' || sub.review_status === 'reviewing';
+      setSubmitResult((prev: any) => ({
+        ...(prev || {}),
+        results: answers,
+        total_score: sub.total_score,
+        total_max_score: sub.total_max_score,
+        gold_reward: sub.gold_reward,
+        correct_count: answers.filter((a: any) => a.is_correct).length,
+        total_count: answers.length,
+        submission_id: sub.id,
+      }));
+      setSubmitResultAwaitingReview(awaiting);
+      loadAssignments();
+      if (!awaiting) message.success(`评阅完成，得分 ${sub.total_score}分`);
+      else message.info('还在评阅中，请稍候再试');
+    } catch (e) {
+      message.error('刷新失败');
+    } finally {
+      setCheckingResult(false);
+    }
+  };
+
+  /**
+   * 上传某道题的手写作答照片。
+   *
+   * 先在客户端压缩再传：手机拍一张 3~5MB，直接传既慢又占服务器带宽，
+   * 而这已经是项目里现成的做法（纸质扫描那条路在用同一套）。
+   */
+  const handleUploadImage = async (questionId: number, file: File) => {
+    const questionNo = (currentAssignment?.questions || []).findIndex((x: any) => x.id === questionId) + 1;
+    setUploadingImageFor(questionId);
+    try {
+      const blob = await compressImageBlob(file);
+      const res = await assignmentAPI.uploadImage(blob);
       setUploadedImages(prev => ({ ...prev, [questionId]: res.data.url }));
-      message.success('图片上传成功');
+      const saved = file.size > 0 ? file.size - blob.size : 0;
+      message.success(
+        `第 ${questionNo} 题作答照片已上传` +
+        (saved > 100 * 1024 ? `（已压缩 ${formatSize(file.size)} → ${formatSize(blob.size)}）` : '')
+      );
     } catch (e: any) {
-      message.error(e.response?.data?.error || '上传失败');
+      message.error(e.response?.data?.error || e?.message || '上传失败');
+    } finally {
+      setUploadingImageFor(null);
     }
   };
   
@@ -950,6 +1038,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     // 只写 ref、不触发渲染，因此可在渲染期直接调用（不能在此用 useEffect，那会违反 Hooks 规则）。
     if (isDoModalVisible && !isTeacher && q.id != null) markQuestionViewed(q.id);
     const isEssay = q.type === 'essay';
+    // 学生端需要拍照上传的题型：简答题与作文题。
+    // 原先只判 essay，导致作文（composition）没有上传入口——
+    // 而作文恰恰是最需要拍照的题型，手写一篇要几百字。
+    const isSubjectiveForAnswer = q.type === 'essay' || q.type === 'composition';
     const isChoiceSingle = q.type === 'choice_single';
     const isChoiceMulti = q.type === 'choice_multi';
     const isJudgment = q.type === 'judgment';
@@ -1052,37 +1144,55 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           </div>
         )}
 
-        {isEssay && !isTeacher && (
+        {isSubjectiveForAnswer && !isTeacher && (
           <>
-            <TextArea 
-              rows={4} 
-              placeholder="在此输入你的答案..."
+            <TextArea
+              rows={4}
+              placeholder="在此输入你的答案（手写作文可以直接拍照上传，不用打字）"
               value={studentAnswers[q.id!] || ''}
               onChange={(e) => setStudentAnswers(prev => ({ ...prev, [q.id!]: e.target.value }))}
               style={{ marginBottom: 8 }}
             />
-            <div>
+            {/* 图片入口必须写清「本题」。
+                作文题往往排在整份作业的最后，按钮又在文字框下面，
+                很容易被当成「上传整份作业的卷子」。 */}
+            <div style={{
+              border: '1px dashed #d9d9d9', borderRadius: 8, padding: 10, background: '#fafafa',
+            }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
+                手写方便？拍下<strong>本题</strong>的作答照片，AI 会读出内容来评分。
+                <br />
+                <span style={{ color: '#999' }}>
+                  只针对<strong>第 {index + 1} 题</strong>，与其他题目无关；不需要联网时可以先离线写好再拍照。
+                </span>
+              </div>
               <Upload
                 beforeUpload={(file) => { handleUploadImage(q.id!, file); return false; }}
                 showUploadList={false}
                 accept="image/*"
               >
                 <Button icon={<CameraOutlined />} size="small">
-                  {uploadedImages[q.id!] ? '更换图片' : '上传作答图片'}
+                  {uploadedImages[q.id!] ? `更换第 ${index + 1} 题的作答照片` : `上传第 ${index + 1} 题作答照片`}
                 </Button>
               </Upload>
+              {uploadingImageFor === q.id && (
+                <span style={{ marginLeft: 10, fontSize: 12, color: '#1890ff' }}>正在压缩并上传…</span>
+              )}
               {uploadedImages[q.id!] && (
-                <div style={{ marginTop: 8 }}>
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 12, color: '#52c41a', marginBottom: 4 }}>
+                    ✓ 已上传第 {index + 1} 题的作答照片
+                  </div>
                   <Image src={uploadedImages[q.id!]} width={200} style={{ borderRadius: 6 }} />
                 </div>
               )}
-              <Alert 
-                type="warning" 
-                showIcon 
-                message="主观题仅有一次提交机会，请确认答案后提交" 
-                style={{ marginTop: 8 }} 
-              />
             </div>
+            <Alert
+              type="warning"
+              showIcon
+              message="主观题仅有一次提交机会，请确认答案后提交"
+              style={{ marginTop: 8 }}
+            />
           </>
         )}
 
@@ -1274,6 +1384,14 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     return null;
   };
 
+  /**
+   * 作业状态标签。
+   *
+   * 关键：必须先判AI 评阅状态。
+   * 主观题提交后是异步评阅的，此时 my_score 还是 null，
+   * 之前直接 formatScore(null) = 0，于是「正在评阅」被显示成红色的
+   * 「需努力 0分」——学生看到的是自己答错了一大片。
+   */
   const getStatusTag = (record: any) => {
     if (record.status === 'cancelled') return <Tag color="default" icon={<StopOutlined />}>已取消</Tag>;
     if (!record.my_submission_id) {
@@ -1281,6 +1399,20 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       return <Tag color="processing">待完成</Tag>;
     }
     if (record.my_submission_status === 'retry_available') return <Tag color="warning" icon={<ReloadOutlined />}>可重做</Tag>;
+
+    // 已提交但AI 还没判完：pending=排队中/有题未评完，reviewing=正在评
+    const reviewStatus = record.my_review_status;
+    if (reviewStatus === 'reviewing') {
+      return <Tag color="processing" icon={<LoadingOutlined />}>AI 评阅中</Tag>;
+    }
+    if (reviewStatus === 'pending') {
+      return (
+        <Tag color="processing" icon={<ClockCircleOutlined />}>
+          待评阅
+        </Tag>
+      );
+    }
+
     const score = formatScore(record.my_score);
     if (score >= 90) return <Tag color="success" icon={<CheckCircleOutlined />}>优秀 {score}分</Tag>;
     if (score >= 60) return <Tag color="blue">及格 {score}分</Tag>;
@@ -1378,13 +1510,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             <Button type="primary" size="small" style={{ background: '#faad14', borderColor: '#faad14' }} onClick={() => handleRetryWrongFromList(record)}>重做错题</Button>
           )}
           {!isTeacher && record.my_submission_id && (
-            <Button size="small" icon={<EyeOutlined />} onClick={async () => {
-              try {
-                const res = await assignmentAPI.getSubmissionDetail(record.my_submission_id);
-                setSubmitResult({ results: res.data.answers, total_score: res.data.submission.total_score, total_max_score: res.data.submission.total_max_score, gold_reward: res.data.submission.gold_reward, correct_count: res.data.answers.filter((a: any) => a.is_correct).length, total_count: res.data.answers.length });
-                setIsResultModalVisible(true);
-              } catch(e) { message.error('获取结果失败'); }
-            }}>查看结果</Button>
+            <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewResult(record)}>查看结果</Button>
           )}
           {isTeacher && (
             <>
@@ -1597,13 +1723,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                   <Button type="primary" size="small" style={{ background: '#faad14', borderColor: '#faad14' }} onClick={() => handleRetryWrongFromList(record)}>重做错题</Button>
                 )}
                 {!isTeacher && record.my_submission_id && (
-                  <Button size="small" icon={<EyeOutlined />} onClick={async () => {
-                    try {
-                      const res = await assignmentAPI.getSubmissionDetail(record.my_submission_id);
-                      setSubmitResult({ results: res.data.answers, total_score: res.data.submission.total_score, total_max_score: res.data.submission.total_max_score, gold_reward: res.data.submission.gold_reward, correct_count: res.data.answers.filter((a: any) => a.is_correct).length, total_count: res.data.answers.length });
-                      setIsResultModalVisible(true);
-                    } catch(e) { message.error('获取结果失败'); }
-                  }}>查看结果</Button>
+                  <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewResult(record)}>查看结果</Button>
                 )}
                 {isTeacher && record.teacher_id === user?.id && (
                   <>
@@ -2212,7 +2332,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
       {/* 作答结果弹窗 */}
       <Modal
-        title={submitResult?.message?.includes('等待') ? '📝 提交成功' : '✅ 作答完成！'}
+        title={submitResultAwaitingReview ? '📝 已提交，等待 AI 评阅' : '✅ 作答完成！'}
         open={isResultModalVisible}
         onCancel={() => setIsResultModalVisible(false)}
         width={isMobile ? '95vw' : 680}
@@ -2231,7 +2351,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       >
         {submitResult && (
           <div>
-            {!submitResult.message?.includes('等待') && (
+            {!submitResultAwaitingReview && (
               <>
                 <Alert
                   type={submitResult.total_score >= 60 ? 'success' : 'warning'}
@@ -2298,8 +2418,26 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             <div style={{ maxHeight: 400, overflowY: 'auto' }}>
               {submitResult.results?.map((r: any, i: number) => renderResultItem(r, i))}
 
-              {submitResult.message?.includes('等待') && (
-                <Alert type="info" showIcon message="你的主观题已提交，AI正在评阅中，稍后可在'查看结果'中查看评分。" style={{ marginTop: 12 }} />
+              {submitResultAwaitingReview && (
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginTop: 12 }}
+                  message="已提交，AI 正在后台评阅你的主观题"
+                  description={
+                    <span>
+                      通常一两分钟内完成，你可以直接关掉去做别的。
+                      评阅完成后，这份作业会显示分数，<strong>点下面的按钮可以立刻查看</strong>。
+                      <br />
+                      作文题如果你拍了作答照片，AI 会读出照片里的内容来评分。
+                    </span>
+                  }
+                  action={
+                    <Button size="small" loading={checkingResult} onClick={handleRefreshResult}>
+                      刷新结果
+                    </Button>
+                  }
+                />
               )}
 
               {submitResult.wrong_count > 0 && submitResult.results && (

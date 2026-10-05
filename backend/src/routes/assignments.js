@@ -4,6 +4,8 @@ const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { checkLevelUp } = require('./pets');
 const { grantReward } = require('../services/rewards');
+// 主观题 AI 评阅（含图片识别）：逻辑在服务里，便于独立测试
+const subjectiveReview = require('../services/subjectiveReview');
 const { updateTaskProgress } = require('./daily-tasks');
 const { checkAndAwardAchievement } = require('./achievements');
 const { getChinaDate } = require('../config/timezone');
@@ -1170,6 +1172,10 @@ router.get('/', authenticateToken, (req, res) => {
           (SELECT status FROM submissions WHERE assignment_id = a.id AND user_id = ? ORDER BY id DESC LIMIT 1) as my_submission_status,
           (SELECT MAX(total_score) FROM submissions WHERE assignment_id = a.id AND user_id = ?) as my_score,
           (SELECT SUM(gold_reward) FROM submissions WHERE assignment_id = a.id AND user_id = ?) as my_gold_reward,
+          -- AI 判分状态：学生端要靠它区分「已提交待评阅」与「已判完」。
+          -- 缺这两个字段时前端拿到 null 分数，会把正在评阅的作业显示成「需努力 0分」。
+          (SELECT review_status FROM submissions WHERE assignment_id = a.id AND user_id = ? ORDER BY id DESC LIMIT 1) as my_review_status,
+          (SELECT graded_at FROM submissions WHERE assignment_id = a.id AND user_id = ? ORDER BY id DESC LIMIT 1) as my_graded_at,
           (SELECT MIN(qa.answered_at) FROM question_answers qa
              JOIN submissions s ON s.id = qa.submission_id
             WHERE s.assignment_id = a.id AND s.user_id = ?) as my_first_answered_at,
@@ -1185,8 +1191,17 @@ router.get('/', authenticateToken, (req, res) => {
         WHERE a.class_id = ? AND a.status != 'cancelled'
       `;
       const studentParams = [
-        req.user.userId, req.user.userId, req.user.userId, req.user.userId,
-        req.user.userId, req.user.userId, req.user.userId,
+        // 顺序必须与studentSql 里的 ? 逐一对应：
+        // submitted_count(无参数) 之后的 7 个子查询各要1 个 user_id
+        req.user.userId, // my_submission_id
+        req.user.userId, // my_submission_status
+        req.user.userId, // my_score
+        req.user.userId, // my_gold_reward
+        req.user.userId, // my_review_status
+        req.user.userId, // my_graded_at
+        req.user.userId, // my_first_answered_at
+        req.user.userId, // my_last_answered_at
+        req.user.userId, // my_duration_ms
         student.class_id,
       ];
       if (typeFilter) { studentSql += ` AND a.assignment_type = ?`; studentParams.push(typeFilter); }
@@ -1883,163 +1898,23 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
   }
 });
 
+/**
+ * 主观题评阅入口（薄封装）。
+ *
+ * 真正的逻辑在 services/subjectiveReview.js：按题独立调 AI、图片进 prompt、
+ * 每题完成即写库以便续跑、失败不兜底分。这里只负责接上错题本回调。
+ */
 async function reviewSubjectiveAssignment(submissionId, assignmentId, userId) {
   try {
-    const submission = db.prepare(`
-      SELECT s.*, a.max_exp, a.subject
-      FROM submissions s
-      JOIN assignments a ON s.assignment_id = a.id
-      WHERE s.id = ?
-    `).get(submissionId);
-
-    if (!submission || submission.review_status !== 'pending') return;
-
-    db.prepare("UPDATE submissions SET review_status = 'reviewing' WHERE id = ?").run(submissionId);
-
-    const questionAnswers = db.prepare(`
-      SELECT qa.id, qa.question_bank_id, qa.student_answer, qa.image_url,
-      qb.content as question_content, qb.answer as reference_answer, qb.explanation, qb.analysis
-      FROM question_answers qa
-      JOIN question_bank qb ON qa.question_bank_id = qb.id
-      WHERE qa.submission_id = ?
-    `).all(submissionId);
-
-    const config = getAIConfig();
-    const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
-    let totalScore = 0;
-    const feedbackList = [];
-
-    if (config.ai_api_key && config.ai_base_url && config.ai_model) {
-      // 一次 prompt 判所有主观题。
-      // 原先是「每道题调一次 AI」的串行循环，10 道题就要等 10 轮往返（可能好几分钟），
-      // 而且失败只能整批兜底。合并成一次请求后耗时降到 1 轮，判定也更一致
-      // （同一份评分标准横向对比，不会出现同批题标准飘移）。
-      const reviewPrompt = fillTemplate(getPrompt('review_subjective_batch'), {
-        subject: submission.subject || '',
-        count: String(questionAnswers.length),
-        questions_text: questionAnswers.map((qa, i) => {
-          const parts = [
-            `第 ${i + 1} 题（question_id=${qa.question_bank_id}）：`,
-            `题目：${qa.question_content || ''}`,
-            `参考答案：${qa.reference_answer || '无'}`,
-            `学生答案：${qa.student_answer || '(未提供文字答案)'}`,
-          ];
-          return parts.join('\n');
-        }).join('\n\n'),
-      });
-
-      // AI 少给一题时按 60 分兜底；单题失败不影响其它题
-      const resultsById = new Map();
-      try {
-        const resp = await axios.post(`${config.ai_base_url}/chat/completions`, {
-          model: config.ai_model,
-          messages: [{ role: 'user', content: reviewPrompt }]
-        }, {
-          headers: { 'Authorization': `Bearer ${config.ai_api_key}`, 'Content-Type': 'application/json' },
-          timeout: timeoutMs
-        });
-
-        const aiContent = resp.data.choices[0].message.content;
-        let parsed;
-        try {
-          parsed = JSON.parse(aiContent);
-        } catch (parseErr) {
-          // 尝试提取 JSON 对象/数组
-          const arrMatch = aiContent.match(/\[[\s\S]*\]/);
-          const objMatch = arrMatch ? null : aiContent.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
-          const target = arrMatch || objMatch;
-          if (!target) throw new Error('AI返回格式错误');
-          parsed = JSON.parse(target[0]);
-        }
-        const list = Array.isArray(parsed) ? parsed : (parsed.results || parsed.items || []);
-        for (const item of list) {
-          const qid = parseInt(item.question_id, 10);
-          if (Number.isFinite(qid)) resultsById.set(qid, item);
-        }
-        console.log(`主观题批量评阅: 提交 ${questionAnswers.length} 题，AI 返回 ${resultsById.size} 题`);
-      } catch (e) {
-        console.error('主观题批量评阅失败，全部按 60 分兜底:', e.message);
-      }
-
-      for (const qa of questionAnswers) {
-        const aiResult = resultsById.get(qa.question_bank_id);
-        if (!aiResult) {
-          totalScore += 60;
-          db.prepare(`UPDATE question_answers SET score = 60, max_score = 100, feedback = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?`)
-            .run(JSON.stringify({ feedback: '自动评分', suggestions: ['继续努力'] }), qa.id);
-          feedbackList.push({ question_id: qa.question_bank_id, score: 60, feedback: '自动评分', is_correct: true });
-          continue;
-        }
-        const score = Math.max(0, Math.min(100, aiResult.score || 60));
-        totalScore += score;
-
-        const feedbackData = {
-          score: score,
-          feedback: aiResult.feedback || '已评阅',
-          key_points: aiResult.key_points || [],
-          improvements: aiResult.improvements || []
-        };
-
-        db.prepare(`
-          UPDATE question_answers SET score = ?, max_score = 100, feedback = ?, reviewed_at = CURRENT_TIMESTAMP, is_correct = ? WHERE id = ?
-        `).run(score, JSON.stringify(feedbackData), score >= 60 ? 1 : 0, qa.id);
-
-        feedbackList.push({
-          question_id: qa.question_bank_id,
-          score,
-          feedback: aiResult.feedback || '已评阅',
-          is_correct: score >= 60
-        });
-      }
-    } else {
-      totalScore = questionAnswers.length * 60;
-      for (const qa of questionAnswers) {
-        db.prepare(`UPDATE question_answers SET score = 60, max_score = 100, feedback = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?`)
-          .run(JSON.stringify({ feedback: '默认评分' }), qa.id);
-      }
-    }
-
-    const avgScore = questionAnswers.length > 0 ? Math.round(totalScore / questionAnswers.length) : 0;
-    const goldReward = Math.floor((avgScore / 100) * (submission.max_exp || 30));
-
-    db.prepare(`
-      UPDATE submissions SET total_score = ?, gold_reward = ?, review_status = 'completed', graded_at = CURRENT_TIMESTAMP WHERE id = ?
-    `).run(avgScore, goldReward, submissionId);
-
-    grantReward(userId, {
-      gold: goldReward,
-      source: 'assignment_subjective',
-      reason: `主观题作业评阅: ${submission.assignment_id}`,
+    await subjectiveReview.reviewSubmission(submissionId, assignmentId, userId, {
+      onWrongQuestion: (info) => writeWrongQuestion(info),
     });
-
-    for (const qa of questionAnswers) {
-      const qaRecord = db.prepare('SELECT is_correct, score FROM question_answers WHERE id = ?').get(qa.id);
-      if (qaRecord && qaRecord.is_correct === 0) {
-        writeWrongQuestion({
-          userId, assignmentId, questionId: qa.question_bank_id,
-          wrongAnswer: qa.student_answer, correctAnswer: qa.reference_answer || '',
-          analysis: qa.analysis || qa.explanation || '',
-        });
-      }
-    }
-
-    console.log(`主观题评阅完成: submission=${submissionId}, score=${avgScore}, gold=${goldReward}`);
   } catch (error) {
-    console.error('主观题评阅错误:', error);
-    // 兜底给 60 分并补发对应金币（原先只写 submissions.gold_reward，忘了 UPDATE users，
-    // 导致评阅异常时学生一分钱都拿不到）
-    const fallbackGold = Math.floor(0.6 * (db.prepare('SELECT max_exp FROM assignments WHERE id = ?').get(assignmentId)?.max_exp || 30));
-    db.prepare("UPDATE submissions SET review_status = 'completed', total_score = 60, gold_reward = ? WHERE id = ?")
-      .run(fallbackGold, submissionId);
-    if (fallbackGold > 0) {
-      try {
-        grantReward(userId, {
-          gold: fallbackGold,
-          source: 'assignment_subjective',
-          reason: '主观题评阅异常兜底发放',
-        });
-      } catch (goldErr) { console.error('兜底金币发放失败:', goldErr); }
-    }
+    // 兜底只兜「流程本身崩了」，绝不代替 AI 判分给分。
+    // 之前这里会写死 60 分并补发金币，学生交白卷也是 60 分。
+    console.error('[主观题评阅]评阅流程异常:', error);
+    db.prepare("UPDATE submissions SET review_status = 'pending' WHERE id = ? AND review_status != 'completed'")
+      .run(submissionId);
   }
 }
 

@@ -87,6 +87,30 @@ function buildPaperAnswer(prompt) {
   };
 }
 
+/**
+ * 主观题评阅的返回结构：单题、直接给分数与评语。
+ * 故意不包在 results 数组里——真实的模型也常直接返回单个对象，
+ * 这样能验证 parseAiJson 的兼容性。
+ */
+function buildReviewAnswer(prompt) {
+  const qidMatch = prompt.match(/question_id=(\d+)/);
+  const qid = qidMatch ? parseInt(qidMatch[1], 10) : 0;
+  // 答了文字给 85 分，只拍照没文字给 70 分，全空给 0 分。
+  // 「交白卷还给高分」正是这次要去掉的兜底行为，这里要能区分出来。
+  const hasText = /学生文字答案：\s*\S/.test(prompt);
+  const hasImageHint = /仅提交了手写作答照片/.test(prompt);
+  let score = 0;
+  if (hasText) score = 85;
+  else if (hasImageHint) score = 70;
+  return {
+    question_id: qid,
+    score,
+    feedback: hasText ? 'mock：内容完整，结构清晰' : (hasImageHint ? 'mock：已从照片读出内容' : 'mock：未作答'),
+    key_points: ['要点一', '要点二'],
+    improvements: score >= 60 ? [] : ['需补充细节'],
+  };
+}
+
 const server = http.createServer((req, res) => {
   if (req.method !== 'POST' || !req.url.includes('/chat/completions')) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -113,11 +137,20 @@ const server = http.createServer((req, res) => {
         .join('\n');
     } catch { /* 忽略解析错误，用空 prompt */ }
 
-    // 带图片的请求是纸质卷面判分，返回「学生 + 逐题对错」结构；
-    // 纯文本的是出题，返回「题目」结构。两者的字段完全不同，不能混用。
+    // 三种请求的返回结构完全不同，不能混用：
+    //   出题question-gen  -> { questions: [...] }
+    //   纸质卷面判分paper-judge -> { student_name, results: [{question_id,...}] }
+    //   主观题评阅 subjective-review -> { score, feedback, key_points, improvements }
+    // 最后一种通过 prompt 里的「参考答案」特征来识别。
+    const isReview = /参考答案/.test(prompt) && /学生(文字答案|未作答|未输入文字)/.test(prompt);
+
     let content;
     let summary;
-    if (hasImage) {
+    if (isReview) {
+      const review = buildReviewAnswer(prompt);
+      content = JSON.stringify(review);
+      summary = `评阅 ${review.score}分`;
+    } else if (hasImage) {
       const paper = buildPaperAnswer(prompt);
       content = JSON.stringify(paper);
       summary = `${paper.student_name}/${paper.results.length}题`;
@@ -126,7 +159,7 @@ const server = http.createServer((req, res) => {
       content = JSON.stringify({ questions: gen.items });
       summary = `${gen.type} x${gen.items.length}`;
     }
-    const kind = hasImage ? 'paper-judge' : 'question-gen';
+    const kind = isReview ? 'subjective-review' : (hasImage ? 'paper-judge' : 'question-gen');
 
     console.log(`[mock] ${new Date().toISOString().slice(11, 19)} ${kind} (${prompt.length} 字符) -> ${summary}，${DELAY}ms 后返回`);
 
