@@ -24,6 +24,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 *.log
+*.err
 
 # 编辑器
 .vscode/
