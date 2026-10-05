@@ -359,7 +359,8 @@ export function usePaperScan(
     setCompressProgress(null);
     if (!nextStudentId) return null;
     try {
-      // 后端在该学生有未完成批次时会直接返回它（reused=true），没有才新建
+      // 后端返回该学生最近的批次（可能是已登记过的那个）。
+      // 这样老师登记后追加照片重拍，会接在原批次上，旧照片不会丢。
       const r = await assignmentAPI.createScanBatch(assignmentId, 10, nextStudentId);
       setBatch(r.data.batch);
       return r.data.batch as ScanBatch;
@@ -369,6 +370,24 @@ export function usePaperScan(
       return null;
     }
   }, [assignmentId, mode, stopPolling]);
+
+  /**
+   * 拉一次「所有正在识别的学生」的进度。
+   *
+   * 存在的理由：识别是在服务端后台跑的，老师完全可以在 A 识别期间
+   * 去上传 B、C、D。但轮询当前批次的逻辑会在切学生时停掉，
+   * 于是「A 识别完了」这个消息老师永远收不到。
+   * 组件层用这个方法做一次轻量轮询（只查汇总，不查单个批次），
+   * 保证「谁在识别、谁识别完了」始终是最新的。
+   */
+  const refreshAllProgress = useCallback(async () => {
+    try {
+      const r = await assignmentAPI.getScanStudentProgress(assignmentId);
+      return r.data.progress || [];
+    } catch (e) {
+      return [];
+    }
+  }, [assignmentId]);
 
   /** 识别进度轮询：进度在服务端，这里只负责读 */
   const startPolling = useCallback((batchId: number) => {
@@ -559,5 +578,7 @@ export function usePaperScan(
     refresh,
     /** 单人登记：切换学生（会换成那个学生自己的批次） */
     switchStudent,
+    /** 单人登记：拉所有学生的进度（用于后台识别监视） */
+    refreshAllProgress,
   };
 }

@@ -540,6 +540,9 @@ router.post('/:id/paper-scan/batches/:batchId/start', authenticateToken, authori
   // 重新识别时先清空上次结果；续跑（cancelled）时保留已识别部分
   if (req.body?.restart === 'all' || batch.scan_status === 'done') {
     scanSvc.clearScanResult(batch.id);
+    // 成绩要重新判，登记标记必须一起撤销。
+    // 否则会出现「左边显示已登记、结果却是重新判的」这种自相矛盾的状态。
+    if (batch.registered_at) scanSvc.markRegistered(batch.id, true);
   }
 
   res.json({ message: '已开始识别，可关闭弹窗，稍后回来看结果', batch: scanSvc.toPublicBatch(scanSvc.getBatch(batch.id)) });

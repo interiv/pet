@@ -122,7 +122,8 @@ async function uploadOne(bid, f) {
     (r6b.data.progress || []).forEach((p) => { map2[p.student_id] = p; });
     check(map2[students[0].id]?.registered === true, '汇总里能看到 A 已登记');
     const r6c = await call('POST', tpl('/batches'), { group_size: 10, student_id: students[0].id });
-    check(r6c.data.reused === false && r6c.data.batch.batch_id !== b1, '已登记的学生不再复用旧批次');
+    // 已登记的学生仍复用原批次：登记后要能追加照片重拍，// 若新建批次，旧照片就与新照片分家了（这是修复的核心）。
+    check(r6c.data.batch.batch_id === b1, '已登记的学生仍复用原批次（追加照片不会分家）');
     createdBatches.push(r6c.data.batch.batch_id);
 
   } catch (e) {

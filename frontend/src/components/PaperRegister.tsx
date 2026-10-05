@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Modal, Input, InputNumber, Button, Tag, Avatar, Empty, Spin, message, Space, Upload, Progress, Tooltip, Popconfirm, Alert } from 'antd';
 import {
   SearchOutlined, CheckOutlined, CloseOutlined, PictureOutlined, RobotOutlined,
-  DeleteOutlined, InboxOutlined, StopOutlined,
+  DeleteOutlined, InboxOutlined, StopOutlined, LoadingOutlined,
 } from '@ant-design/icons';
 import { pinyin } from 'pinyin-pro';
 import { assignmentAPI, classroomQuizAPI } from '../utils/api';
@@ -63,7 +63,7 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
    * 不逐个学生去查批次，那样会变成 N+1 次请求。
    */
   const [studentProgress, setStudentProgress] = useState<Record<number, {
-    uploaded: number; total: number; scanned: boolean; registered: boolean;
+    uploaded: number; total: number; scanned: boolean; running: boolean; failed: boolean; registered: boolean;
   }>>({});
 
   // 单人模式：批次绑定到当前学生，切换学生会换成那个学生自己的批次
@@ -75,7 +75,43 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
     batch, pendingFiles, uploading, scanning, loading: scanLoading,
     compressing, compressProgress,
     pickFiles, uploadAll, startScan, cancelScan, removeImage, discardBatch, switchStudent,
+    refreshAllProgress,
   } = scan;
+
+  /**
+   * 后台识别监视。
+   *
+   * 识别是在服务端跑的，老师可以在 A 识别期间去弄B、C、D。
+   * 但切换学生会停掉「当前批次」的轮询，A 识别完的消息就收不到了。
+   * 这里单独开一个轻量轮询（只查汇总接口，不查单个批次），
+   * 只要有任何人正在识别就每2 秒刷一次，全部识别完就停。
+   * 这样「谁在跑、谁跑完了」始终准确，并且跑完会提示。
+   */
+  const runningRef = useRef(false);
+  useEffect(() => {
+    if (!open) { runningRef.current = false; return undefined; }
+    const timer = setInterval(async () => {
+      const list = await refreshAllProgress();
+      const map: Record<number, any> = {};
+      (list as any[]).forEach((p) => {
+        map[p.student_id] = {
+          uploaded: p.uploaded || 0, total: p.total || 0,
+          scanned: !!p.scanned, running: !!p.running, failed: !!p.failed, registered: !!p.registered,
+        };
+      });
+      const wasRunning = runningRef.current;
+      const nowRunning = (list as any[]).some((p) => p.running);
+      setStudentProgress(map);
+      runningRef.current = nowRunning;
+      // 有人刚才在识别、现在全跑完了 -> 提示一句，否则老师不知道结果已就绪
+      if (wasRunning && !nowRunning) {
+        const doneCount = (list as any[]).filter((p) => p.scanned || p.registered).length;
+        message.success(`AI 识别完成，${doneCount} 位学生的结果已就绪，可点开查看`);
+        loadAll();
+      }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [open, refreshAllProgress]);
 
   // 缩略图：鉴权图片要fetch 成 blob 才能显示
   const allImageIds = useMemo(() => (batch?.images || []).map((i) => i.image_id), [batch?.images]);
@@ -126,7 +162,8 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
       (progRes?.data?.progress || []).forEach((p: any) => {
         map[p.student_id] = {
           uploaded: p.uploaded || 0, total: p.total || 0,
-          scanned: !!p.scanned, registered: !!p.registered,
+          scanned: !!p.scanned, running: !!p.running, failed: !!p.failed,
+          registered: !!p.registered,
         };
       });
       setStudentProgress(map);
@@ -368,7 +405,16 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                         <Tag color="blue" style={{ marginRight: 2, fontSize: 11, padding: '0 4px' }}>传{uploadedCount}</Tag>
                       </Tooltip>
                     )}
-                    {prog?.scanned && !registered && (
+                    {/* 识别中：老师可以放心去弄别的学生，这个标签让他知道
+                        这个人还在跑、不会白等，也不会以为卡死了 */}
+                    {prog?.running && (
+                      <Tooltip title="AI 正在识别这个学生的卷子，可以先去处理其他学生">
+                        <Tag color="processing" style={{ marginRight: 2, fontSize: 11, padding: '0 4px' }}>
+                          <LoadingOutlined spin style={{ fontSize: 10, marginRight: 2 }} />识别中
+                        </Tag>
+                      </Tooltip>
+                    )}
+                    {prog?.scanned && !registered && !prog?.running && (
                       <Tooltip title="AI 已识别，还没登记成绩">
                         <Tag color="gold" style={{ marginRight: 2, fontSize: 11, padding: '0 4px' }}>已判</Tag>
                       </Tooltip>

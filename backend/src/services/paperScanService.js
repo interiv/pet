@@ -56,10 +56,12 @@ function createBatch({ assignmentId, userId, title, subject, groupSize, studentI
 }
 
 /**
- * 找某个学生在某份作业下未完成的批次。
+ * 找某个学生在某份作业下的批次（最近一个）。
  *
- * 单人登记切回一个学生时用它恢复现场。已登记（registered_at 非空）的批次
- * 不复用——那个学生已经登记完了，再开新批次重新扫。
+ * 注意这里**不过滤**已登记的批次：
+ * 老师登记完某学生后可能发现照片拍糊了，要追加重拍——这时必须接上
+ * 原批次，否则新建一个空批次，旧照片就与新照片分家了。
+ * 真正要重来时，老师点「丢弃照片」把批次删掉即可。
  */
 function findStudentBatch(assignmentId, studentId, userId, isAdmin) {
   if (!studentId) return null;
@@ -74,14 +76,20 @@ function findStudentBatch(assignmentId, studentId, userId, isAdmin) {
         WHERE assignment_id = ? AND student_id = ? AND user_id = ?
         ORDER BY id DESC LIMIT 1
       `).get(assignmentId, studentId, userId);
-  if (!row) return null;
-  // 已登记的批次不再复用
-  if (row.registered_at) return null;
-  return row;
+  return row || null;
 }
 
-/** 标记批次已登记（成绩已写入 submissions） */
-function markRegistered(batchId) {
+/**
+ * 标记批次已登记（成绩已写入 submissions）
+ * @param {boolean} undo true=撤销登记标记。重新识别时要把标记清掉，
+ *   否则成绩已重新判定，界面上却还显示「已登记」，状态会自相矛盾。
+ */
+function markRegistered(batchId, undo = false) {
+  if (undo) {
+    db.prepare("UPDATE paper_scan_batches SET registered_at = NULL, updated_at = ? WHERE id = ?")
+      .run(nowIso(), batchId);
+    return;
+  }
   db.prepare("UPDATE paper_scan_batches SET registered_at = ?, updated_at = ? WHERE id = ?")
     .run(nowIso(), nowIso(), batchId);
 }
@@ -130,10 +138,14 @@ function studentProgressMap(assignmentId, userId, isAdmin) {
   const map = {};
   for (const r of rows) {
     const sid = r.student_id;
-    // 一个学生理论上只有一个未登记批次；若有多条（历史遗留），取信息最全的那条：
-    // 已登记 > 已识别 > 照片多
+    // 一个学生理论上只有一个批次；若有多条（历史遗留），取信息最全的那条。
+    // 「正在识别」优先级最高——那是最需要让老师看到的状态，
+    // 否则会出现「左边显示已识别，实际还在跑」的情况。
     const prev = map[sid];
-    const score = (x) => (x.registered ? 2 : 0) + (x.scanned ? 1 : 0) + (x.uploaded || 0) / 1000;
+    const score = (x) => {
+      if (x.scan_status === 'running') return 1000;
+      return (x.registered ? 20 : 0) + (x.scanned ? 10 : 0) + (x.uploaded || 0) / 100;
+    };
     if (!prev || score(r) > score(prev)) {
       map[sid] = {
         batch_id: r.id,
@@ -141,6 +153,9 @@ function studentProgressMap(assignmentId, userId, isAdmin) {
         total: r.total || 0,
         // scan_status 为 done 才算「已识别」；识别过但有题失败时后端会退回 pending
         scanned: r.scan_status === 'done',
+        // 识别中要单独给出：老师需要知道这个人还在跑，可以切去弄别人
+        running: r.scan_status === 'running',
+        failed: r.scan_status === 'failed',
         registered: !!r.registered_at,
       };
     }
