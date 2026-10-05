@@ -78,9 +78,30 @@ export function readDraft(assignmentId: number): Draft | null {
  * @param assignmentId 作业 id
  * @param enabled弹窗是否打开（关闭时停止轮询，但不影响后端任务）
  */
-export function usePaperScan(assignmentId: number, enabled: boolean) {
+/**
+ * 扫描流程控制器
+ *
+ * @param assignmentId 作业 id
+ * @param enabled 弹窗是否打开
+ * @param options.mode
+ *   - 'batch'（默认）：批量扫描。会复用上次没传完的批次，关窗再打开能接着传
+ *   - 'single'：单人登记。每次开新批次、用完即弃，
+ *     否则会误复用批量扫描的批次，把别人的照片混进这个学生名下
+ * @param options.initialGroupSize 批量模式下的初始「每人张数」；单人模式固定按一份卷子处理
+ */
+export function usePaperScan(
+  assignmentId: number,
+  enabled: boolean,
+  options: { mode?: 'batch' | 'single'; initialGroupSize?: number } = {}
+) {
+  const mode = options.mode || 'batch';
+  // 单人登记只服务一个学生，所有照片必须落在同一组里，
+  // 所以分组数直接顶到上限（1~10 张都算一份卷子）
+  const fixedGroupSize = mode === 'single';
   const [batch, setBatch] = useState<ScanBatch | null>(null);
-  const [groupSize, setGroupSize] = useState(1);
+  const [groupSize, setGroupSize] = useState(
+    fixedGroupSize ? 10 : Math.max(1, Math.min(10, options.initialGroupSize || 1))
+  );
   /**
    * 本地待上传的文件：key 是指纹，顺序即展示顺序。
    *
@@ -112,6 +133,15 @@ export function usePaperScan(assignmentId: number, enabled: boolean) {
   const init = useCallback(async () => {
     setLoading(true);
     try {
+      // 单人模式不查历史、每次从空批次开始：
+      // 复用到的批次可能属于批量扫描，混进来会导致照片张冠李戴
+      if (mode === 'single') {
+        setBatch(null);
+        setPendingFiles([]);
+        setGroupSize(10);
+        saveDraft(null, assignmentId);
+        return;
+      }
       const r = await assignmentAPI.listScanBatches(assignmentId);
       const list: ScanBatch[] = r.data.batches || [];
       //优先用「还有照片没传完」或「正在识别」的批次，没有才新建
@@ -130,7 +160,7 @@ export function usePaperScan(assignmentId: number, enabled: boolean) {
     } finally {
       setLoading(false);
     }
-  }, [assignmentId]);
+  }, [assignmentId, mode]);
 
   // 弹窗打开时恢复现场
   useEffect(() => {
@@ -321,6 +351,8 @@ export function usePaperScan(assignmentId: number, enabled: boolean) {
 
   /** 改「每人几张」，服务端会重新编组 */
   const changeGroupSize = useCallback(async (n: number) => {
+    // 单人登记只有一位学生，改分组会把照片打散成多份卷子，没有意义
+    if (fixedGroupSize) return;
     setGroupSize(n);
     if (!batch?.batch_id) return;
     if (batch.scan_status === 'running') {
@@ -333,7 +365,7 @@ export function usePaperScan(assignmentId: number, enabled: boolean) {
     } catch (e: any) {
       message.error(e?.response?.data?.error || '调整分组失败');
     }
-  }, [batch, assignmentId]);
+  }, [batch, assignmentId, fixedGroupSize]);
 
   /** 调整顺序：待上传列表本地重排，已上传的同步给服务端 */
   const moveImage = useCallback(async (from: number, to: number) => {
