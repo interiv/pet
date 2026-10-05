@@ -1952,7 +1952,21 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
       res.json({
         success: true,
         message: '已提交，等待AI评阅',
-        submission_id: newSubId
+        submission_id: newSubId,
+        // 字段集必须和上面的纯客观题分支保持一致。原先这里只回三个字段，
+        // 前端结果弹窗读不到 total_max_score，直接渲染成「总分 0/ undefined」，
+        // 刷新一次拿到数据库里的 100 才正常。
+        // 未评出来的分先按 0 占位，并显式带上 review_status='pending'：
+        // 前端靠它区分「还没评完」和「评完是 0 分」，否则会把占位 0
+        // 当成真实分数展示给学生。
+        results: [],
+        review_status: 'pending',
+        total_score: 0,
+        // 满分口径与上面 INSERT submissions 时写入的 total_max_score 一致
+        total_max_score: 100,
+        gold_reward: 0,
+        correct_count: 0,
+        total_count: questions.length,
       });
     }
   } catch (error) {

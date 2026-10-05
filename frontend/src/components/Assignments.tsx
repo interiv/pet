@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space, Radio, Checkbox, Progress, Card, Alert, Upload, Image, Divider, Empty, Statistic, Row, Col, Tabs, Badge, Popconfirm, Tooltip } from 'antd';
+import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space, Radio, Checkbox, Progress, Card, Alert, Upload, Image, Divider, Empty, Statistic, Row, Col, Tabs, Badge, Popconfirm, Tooltip, Spin } from 'antd';
 import { assignmentAPI, adminAPI, classroomQuizAPI } from '../utils/api';
 import { pollAiTask } from '../utils/aiTask';
 import { useAuthStore } from '../store/authStore';
 import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
+import { isSubjectiveType, questionTypeFullName } from '../utils/questionTypes';
 import { compressImageWithThumb, formatSize } from '../utils/imageCompress';
 import dayjs from 'dayjs';
 import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons';
@@ -93,10 +94,11 @@ const difficultyOptions = [
   { value: 'hard', label: '困难' }
 ];
 
-// 一次配置多种题型时，后端会把作业的 question_type 记成 mixed
-const MIXED_TYPE = 'mixed';
-const questionTypeLabel = (type: string) =>
-  type === MIXED_TYPE ? '混合题型' : (typeOptions.find(t => t.value === type)?.label || type);
+// 「能选哪些题型」和「题型怎么显示」是两件事：
+// typeOptions 是布置作业时给老师选的下拉，保持原样（essay 一项覆盖简答与作文）；
+// 显示一律走 utils/questionTypes.ts 的 questionTypeFullName，那里还兜着
+// composition（作文）与 mixed（混合题型），不会漏出英文代码。
+const questionTypeLabel = (type: string) => questionTypeFullName(type);
 
 const defaultTypeSpec = () => ({ question_type: 'choice_single', count: 5, difficulty: 'medium' });
 
@@ -698,24 +700,33 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
     let allAnswered = true;
     const answers: any[] = [];
+    const missing: number[] = [];
 
-    for (const q of questions) {
+    questions.forEach((q: any, idx: number) => {
       const ans = studentAnswers[q.id];
-      if (ans === undefined || ans === null || (Array.isArray(ans) && ans.length === 0) || (typeof ans === 'string' && ans.trim() === '')) {
+      const imageUrl = uploadedImages[q.id]?.url || '';
+      const hasText = !(ans === undefined || ans === null || (Array.isArray(ans) && ans.length === 0) || (typeof ans === 'string' && ans.trim() === ''));
+      // 主观题允许「只拍照、不打字」——手写作文几百字，学生不会愿意敲。
+      // 原先这里只看文字框，于是三道拍照上传的主观题全被判成未作答，
+      // 明明图都传了还弹「请完成所有题目后再提交」（后端其实是收图片的）。
+      const isSubjective = q.type === 'essay' || q.type === 'composition';
+      if (!hasText && !(isSubjective && imageUrl)) {
         allAnswered = false;
+        missing.push(idx + 1);
       }
       answers.push({
         question_id: q.id,
         answer: ans,
         // 交原图：AI 评阅要读手写笔迹，缩略图会读不清
-        image_url: uploadedImages[q.id]?.url || '',
+        image_url: imageUrl,
         // 逐题作答耗时（毫秒）。后端只接受 0.5s~30min 的合理区间，异常值会被忽略。
         duration_ms: getQuestionDuration(q.id),
       });
-    }
+    });
 
     if (!allAnswered) {
-      message.warning('请完成所有题目后再提交');
+      // 点名是哪几题没做，不然学生只会反复检查已经传过图的题
+      message.warning(`请完成所有题目后再提交：第 ${missing.join('、')} 题还没作答`);
       return;
     }
 
@@ -786,9 +797,12 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
   /** 结果弹窗里点「刷新结果」：重新拉一次，判完了就更新分数 */
   const handleRefreshResult = async () => {
-    const record = assignments.find((a: any) => a.my_submission_id === submitResult?.submission_id)
-      || assignments.find((a: any) => a.my_submission_id);
-    const sid = record?.my_submission_id || submitResult?.submission_id;
+    // 提交接口返回的 submission_id 是权威来源。
+    // 原先反过来先拿 assignments 列表去匹配：刚提交完时列表还是提交前的快照，
+    // 匹配必然落空，于是退化成「随便取一条有提交的作业」——
+    // 班级里有多份作业时会把别的作业的分数显示成这份的。
+    const sid = submitResult?.submission_id
+      || assignments.find((a: any) => a.my_submission_id)?.my_submission_id;
     if (!sid) { message.info('请先提交作业'); return; }
     setCheckingResult(true);
     try {
@@ -1104,11 +1118,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     // 记录该题首次进入视野的时刻，用于统计作答耗时。
     // 只写 ref、不触发渲染，因此可在渲染期直接调用（不能在此用 useEffect，那会违反 Hooks 规则）。
     if (isDoModalVisible && !isTeacher && q.id != null) markQuestionViewed(q.id);
-    const isEssay = q.type === 'essay';
-    // 学生端需要拍照上传的题型：简答题与作文题。
-    // 原先只判 essay，导致作文（composition）没有上传入口——
-    // 而作文恰恰是最需要拍照的题型，手写一篇要几百字。
-    const isSubjectiveForAnswer = q.type === 'essay' || q.type === 'composition';
+    // 主观题（简答 essay / 作文 composition）统一口径，取自 utils/questionTypes，
+    // 免得「学生能拍照作答」「老师能填评阅标准」两处各判一次、题型一多就不同步
+    const isSubjectiveForAnswer = isSubjectiveType(q.type);
     const isChoiceSingle = q.type === 'choice_single';
     const isChoiceMulti = q.type === 'choice_multi';
     const isJudgment = q.type === 'judgment';
@@ -1132,7 +1144,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         key={q.id || q.tempId} 
         size="small" 
         style={{ marginBottom: 16, borderLeft: '4px solid #1890ff' }}
-        title={<span>第 {index + 1} 题 <Tag color="blue">{typeOptions.find(t => t.value === q.type)?.label || q.type}</Tag>{q.knowledge_point && <Tag color="geekblue" style={{ marginLeft: 4 }}>🏷️ {q.knowledge_point}</Tag>}</span>}
+        title={<span>第 {index + 1} 题 <Tag color="blue">{questionTypeFullName(q.type)}</Tag>{q.knowledge_point && <Tag color="geekblue" style={{ marginLeft: 4 }}>🏷️ {q.knowledge_point}</Tag>}</span>}
       >
         <div style={{ marginBottom: 12, fontSize: 15, lineHeight: 1.8 }}>{q.content}</div>
         
@@ -1270,7 +1282,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           </>
         )}
 
-        {isEssay && isTeacher && (
+        {/* 主观题展示的是「评阅标准」而不是「正确答案」。
+            原先只判 essay，作文（composition）会掉进下面那个「正确答案」分支，
+            把参考作文当成唯一标准答案显示出来，语义是错的。 */}
+        {isSubjectiveForAnswer && isTeacher && (
           <div style={{ marginTop: 8 }}>
             {q.answer && (
               <div style={{ padding: '8px 12px', background: '#f6ffed', borderRadius: 6, border: '1px solid #b7eb8f', marginBottom: 8 }}>
@@ -1302,7 +1317,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           </div>
         )}
 
-        {isTeacher && q.answer && !isEssay && (
+        {isTeacher && q.answer && !isSubjectiveForAnswer && (
           <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
             <Tag color="green">正确答案：{q.answer}{isJudgment && (q.answer === 'true' ? '（正确）' : '（错误）')}</Tag>
             <Button size="small" icon={<EditOutlined />} onClick={() => {
@@ -2219,7 +2234,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     <div key={i} style={{ padding: '10px 12px', background: i % 2 === 0 ? '#fafafa' : '#fff', borderRadius: 6, marginBottom: 6 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div style={{ flex: 1 }}>
-                          <strong>Q{i + 1}.</strong> <Tag color="purple">{typeOptions.find(t => t.value === q.type)?.label}</Tag>
+                          <strong>Q{i + 1}.</strong> <Tag color="purple">{questionTypeFullName(q.type)}</Tag>
                           <span style={{ marginLeft: 4 }}>{q.content}</span>
                           {q.knowledge_point && <Tag color="blue" style={{ marginLeft: 8 }}>🏷️ {q.knowledge_point}</Tag>}
                           {q.hasVariants && (
@@ -2484,17 +2499,28 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 </div>
               </>
             )}
-            <Row gutter={16} style={{ marginBottom: 20 }}>
-              <Col xs={12} sm={8}>
-                <Card size="small"><Statistic title="总分" value={submitResult.total_score} suffix={`/ ${submitResult.total_max_score}`} valueStyle={{ color: submitResult.total_score >= 60 ? '#52c41a' : '#ff4d4f', fontSize: 28 }} /></Card>
-              </Col>
-              <Col xs={12} sm={8}>
-                <Card size="small"><Statistic title="获得金币" value={submitResult.gold_reward} prefix="+" suffix="枚 💰" valueStyle={{ color: '#faad14', fontSize: 28 }} /></Card>
-              </Col>
-              <Col xs={12} sm={8}>
-                <Card size="small"><Statistic title="正确率" value={submitResult.total_count > 0 ? Math.round(submitResult.correct_count / submitResult.total_count * 100) : 0} suffix="%" valueStyle={{ fontSize: 28 }} /></Card>
-              </Col>
-            </Row>
+            {/* 评阅中的分数是「还没出」，不是「0 分」。
+                原先这里无差别渲染三张统计卡：主观题提交后 AI 还没评完，
+                total_score 尚未回填，就显示成「总分 0/ undefined」，
+                学生会以为被判了 0 分。现在等评阅时只显示状态，评完再给真分数。 */}
+            {submitResultAwaitingReview ? (
+              <div style={{ marginBottom: 20, padding: '26px 16px', textAlign: 'center', background: '#fafafa', borderRadius: 8 }}>
+                <Spin />
+                <div style={{ marginTop: 12, color: '#666' }}>AI 正在评阅你的主观题，评完就能看到分数</div>
+              </div>
+            ) : (
+              <Row gutter={16} style={{ marginBottom: 20 }}>
+                <Col xs={12} sm={8}>
+                  <Card size="small"><Statistic title="总分" value={submitResult.total_score} suffix={`/ ${submitResult.total_max_score ?? 100}`} valueStyle={{ color: submitResult.total_score >= 60 ? '#52c41a' : '#ff4d4f', fontSize: 28 }} /></Card>
+                </Col>
+                <Col xs={12} sm={8}>
+                  <Card size="small"><Statistic title="获得金币" value={submitResult.gold_reward} prefix="+" suffix="枚 💰" valueStyle={{ color: '#faad14', fontSize: 28 }} /></Card>
+                </Col>
+                <Col xs={12} sm={8}>
+                  <Card size="small"><Statistic title="正确率" value={submitResult.total_count > 0 ? Math.round(submitResult.correct_count / submitResult.total_count * 100) : 0} suffix="%" valueStyle={{ fontSize: 28 }} /></Card>
+                </Col>
+              </Row>
+            )}
 
             {/* Combo 与全对奖励 */}
             {(submitResult.combo_bonus > 0 || submitResult.perfect_bonus > 0) && (
@@ -2601,7 +2627,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     {statsData.question_stats?.map((qs: any, i: number) => (
                       <div key={i} style={{ marginBottom: 12 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <span><strong>第{i + 1}题</strong> <Tag>{typeOptions.find(t => t.value === qs.type)?.label || qs.type}</Tag>{qs.answer && <Tag color="green" style={{ marginLeft: 4 }}>答案：{qs.type === 'judgment' ? (qs.answer === 'true' ? '正确' : '错误') : qs.answer}</Tag>}</span>
+                          <span><strong>第{i + 1}题</strong> <Tag>{questionTypeFullName(qs.type)}</Tag>{qs.answer && <Tag color="green" style={{ marginLeft: 4 }}>答案：{qs.type === 'judgment' ? (qs.answer === 'true' ? '正确' : '错误') : qs.answer}</Tag>}</span>
                           <span>{qs.correct_rate}% ({qs.correct_count}/{qs.total_answers})</span>
                         </div>
                         <Progress percent={qs.correct_rate} status={qs.correct_rate >= 70 ? 'success' : qs.correct_rate >= 40 ? 'normal' : 'exception'} size="small" />
@@ -2727,7 +2753,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             </Form.Item>
           )}
 
-          {editingQuestion && editingQuestion.type === 'essay' && (
+          {/* 主观题都要能填评阅标准，作文（composition）原先漏了，改不了评分参考 */}
+          {editingQuestion && isSubjectiveType(editingQuestion.type) && (
             <>
               <Form.Item name="answer" label="参考答案 / 评阅标准" extra="替换AI生成的默认评阅标准，用于主观题评分参考">
                 <TextArea rows={4} placeholder="请输入参考答案或评分标准..." />

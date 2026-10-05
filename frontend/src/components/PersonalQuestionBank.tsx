@@ -4,14 +4,9 @@ import {
 } from 'antd';
 import { DeleteOutlined, SearchOutlined } from '@ant-design/icons';
 import { assignmentAPI } from '../utils/api';
+import { questionTypeLabel } from '../utils/questionTypes';
 
-const TYPE_LABEL: Record<string, string> = {
-  choice_single: '单选',
-  choice_multi: '多选',
-  judgment: '判断',
-  fill_blank: '填空',
-  essay: '主观',
-};
+// 题型标签统一取自 utils/questionTypes，本文件不再维护副本
 
 const ASSIGNMENT_TYPE_LABEL: Record<string, { text: string; color: string }> = {
   preview: { text: '预习', color: 'purple' },
@@ -214,7 +209,7 @@ const PersonalQuestionBank: React.FC = () => {
                   title={
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       <span style={{ color: '#888' }}>#{(page - 1) * pageSize + idx + 1}</span>
-                      <Tag>{TYPE_LABEL[it.question_type] || it.question_type}</Tag>
+                      <Tag>{questionTypeLabel(it.question_type)}</Tag>
                       <Tag color={typeInfo.color}>{typeInfo.text}</Tag>
                       {it.subject && <Tag color="cyan">{it.subject}</Tag>}
                       <Tag color={it.is_correct ? 'green' : 'red'}>{it.is_correct ? '答对' : '答错'}</Tag>

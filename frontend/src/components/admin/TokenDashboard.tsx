@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Input, message, Tag, Space, Row, Col, Statistic, Divider, Progress } from 'antd';
 import { LineChartOutlined, FireOutlined } from '@ant-design/icons';
 import { adminAPI } from '../../utils/api';
+import { questionTypeLabel } from '../../utils/questionTypes';
 
 const TokenDashboard: React.FC = () => {
   const [dashboardData, setDashboardData] = useState<any>(null);
@@ -62,10 +63,7 @@ const TokenDashboard: React.FC = () => {
     { title: '教师', dataIndex: 'real_name', key: 'username', width: 100, render: (v: string, r: any) => v || r.username },
     { title: '科目', dataIndex: 'subject', key: 'subject', width: 80 },
     { title: '主题', dataIndex: 'topic', key: 'topic', width: 120, ellipsis: true },
-    { title: '题型', dataIndex: 'question_type', key: 'question_type', width: 80, render: (v: string) => {
-      const map: Record<string, string> = { choice_single: '单选', choice_multi: '多选', judgment: '判断', essay: '简答' };
-      return map[v] || v;
-    }},
+    { title: '题型', dataIndex: 'question_type', key: 'question_type', width: 80, render: (v: string) => questionTypeLabel(v) },
     { title: '题目数', dataIndex: 'question_count', key: 'question_count', width: 70 },
     { title: 'Prompt', dataIndex: 'prompt_tokens', key: 'prompt_tokens', width: 80, render: (v: number) => formatTokens(v) },
     { title: 'Completion', dataIndex: 'completion_tokens', key: 'completion_tokens', width: 90, render: (v: number) => formatTokens(v) },

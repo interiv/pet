@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons';
 import { bossBattleAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+import { questionTypeFullName } from '../utils/questionTypes';
 
 const useMobile = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -298,16 +299,8 @@ const BossBattle: React.FC = () => {
     return <Tag color={d.color}>{d.text}</Tag>;
   };
 
-  // 渲染题型标签
-  const renderTypeTag = (type: string) => {
-    const config: Record<string, string> = {
-      choice_single: '单选题',
-      choice_multi: '多选题',
-      judgment: '判断题',
-      fill_blank: '填空题'
-    };
-    return <Tag>{config[type] || type}</Tag>;
-  };
+  // 渲染题型标签（统一取自 utils/questionTypes）
+  const renderTypeTag = (type: string) => <Tag>{questionTypeFullName(type)}</Tag>;
 
   const renderActiveTab = () => {
     if (loading) {

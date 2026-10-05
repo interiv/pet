@@ -4,6 +4,7 @@ import { DeleteOutlined, EyeOutlined } from '@ant-design/icons';
 import { adminAPI, assignmentAPI } from '../../utils/api';
 import { useAuthStore } from '../../store/authStore';
 import { useTablePagination } from './hooks';
+import { questionTypeLabel } from '../../utils/questionTypes';
 
 const DataView: React.FC = () => {
   const { user } = useAuthStore();
@@ -204,10 +205,9 @@ const DataView: React.FC = () => {
           size="small"
           columns={[
             { title: '#', render: (_: any, __: any, i: number) => i + 1, width: 40 },
-            { title: '题型', dataIndex: 'type', key: 'type', width: 80, render: (t: string) => {
-              const map: Record<string, string> = { choice_single: '单选', choice_multi: '多选', judgment: '判断', essay: '主观', fill_blank: '填空' };
-              return <Tag>{map[t] || t}</Tag>;
-            }},
+            { title: '题型', dataIndex: 'type', key: 'type', width: 80, render: (t: string) => (
+              <Tag>{questionTypeLabel(t)}</Tag>
+            )},
             { title: '题目内容', dataIndex: 'content', key: 'content', render: (c: string) => (
               <div style={{ maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c}</div>
             )},

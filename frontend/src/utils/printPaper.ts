@@ -7,6 +7,8 @@
  *  - named：按班级名单逐人生成，每人一页、页眉预填该生姓名与学号，适合整班统一发放
  */
 
+import { isObjectiveType, isSubjectiveType, questionTypeFullName } from './questionTypes';
+
 export interface PaperQuestion {
   id: number;
   content: string;
@@ -22,14 +24,6 @@ export interface PaperStudent {
 }
 
 export type PaperMode = 'blank' | 'named';
-
-const TYPE_LABEL: Record<string, string> = {
-  choice_single: '单选题',
-  choice_multi: '多选题',
-  judgment: '判断题',
-  fill_blank: '填空题',
-  essay: '简答/主观题',
-};
 
 const ASSIGNMENT_TYPE_LABEL: Record<string, string> = {
   preview: '预习题',
@@ -51,13 +45,15 @@ function buildBodyHtml(a: any, questions: PaperQuestion[]): string {
         : '';
     const judgment =
       q.type === 'judgment' ? '<div class="opt">（&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;）对　（&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;）错</div>' : '';
-    const answer =
-      q.type === 'essay' || q.type === 'fill_blank'
-        ? `<div class="answer-lines" style="height:${q.type === 'essay' ? 130 : 70}px"></div>`
-        : '';
-    return `<div class="q"><div class="qt">${i + 1}. ${escapeHtml(q.content)}　<span class="tt">[${
-      TYPE_LABEL[q.type] || q.type
-    }]</span></div>${opts}${judgment}${answer}</div>`;
+    // 作答区高度：作文要写几百字，原先只判 essay / fill_blank，
+    // composition 直接落到 '' —— 打印出来作文题下面一片空白，学生没地方写。
+    // 统一按主观题给线，作文给足整页高度。
+    const answer = isSubjectiveType(q.type)
+      ? `<div class="answer-lines" style="height:${q.type === 'composition' ? 320 : q.type === 'essay' ? 130 : 70}px"></div>`
+      : '';
+    return `<div class="q"><div class="qt">${i + 1}. ${escapeHtml(q.content)}　<span class="tt">[${escapeHtml(
+      questionTypeFullName(q.type)
+    )}]</span></div>${opts}${judgment}${answer}</div>`;
   }).join('');
 
   const desc = a?.description ? `<div class="desc">${escapeHtml(a.description)}</div>` : '';
@@ -185,13 +181,15 @@ function buildAnswerSheetHtml(a: any, s: PaperStudent | null, questions: PaperQu
   const no = s?.student_no ? escapeHtml(s.student_no) : '__________';
 
   // 客观题与主观题分区排布：涂卡区紧凑，作答区留足空间
+  // 口径统一走 questionTypes 的 isObjectiveType / isSubjectiveType，
+  // 免得再加题型时这里又漏判、把题漏出分区之外
   const objective = questions
     .map((q, i) => ({ q, no: i + 1 }))
-    .filter(({ q }) => q.type === 'choice_single' || q.type === 'choice_multi' || q.type === 'judgment');
+    .filter(({ q }) => isObjectiveType(q.type) && q.type !== 'fill_blank');
 
   const subjective = questions
     .map((q, i) => ({ q, no: i + 1 }))
-    .filter(({ q }) => q.type === 'fill_blank' || q.type === 'essay' || q.type === 'composition');
+    .filter(({ q }) => q.type === 'fill_blank' || isSubjectiveType(q.type));
 
   const objHtml = objective.length
     ? `<div class="sec-title">一、选择题（请在括号内填答案，或直接涂卡）</div>
@@ -200,7 +198,7 @@ function buildAnswerSheetHtml(a: any, s: PaperStudent | null, questions: PaperQu
            .map(
              ({ no, q }) => `<tr>
                <td class="n">${no}.</td>
-               <td class="t">${TYPE_LABEL[q.type] || q.type}</td>
+               <td class="t">${questionTypeFullName(q.type)}</td>
                <td class="a">（&nbsp;&nbsp;&nbsp;&nbsp;）</td>
              </tr>`
            )

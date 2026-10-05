@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Table, Tag, Button, Card, Empty, Space, message, Modal, Alert, Badge, Select, Row, Col, Statistic, Progress, Radio, Input } from 'antd';
 import { assignmentAPI, knowledgePointAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+import { isSubjectiveType, questionTypeColor, questionTypeLabel } from '../utils/questionTypes';
 import dayjs from 'dayjs';
 import { BookOutlined, CheckCircleOutlined, EyeOutlined, AimOutlined, ThunderboltOutlined, RedoOutlined } from '@ant-design/icons';
 
@@ -110,7 +111,7 @@ const WrongQuestions: React.FC = () => {
   })();
 
   const currentRetry = retryList[retryIndex];
-  const isSubjectiveRetry = currentRetry?.question_type === 'essay' || currentRetry?.question_type === 'composition';
+  const isSubjectiveRetry = isSubjectiveType(currentRetry?.question_type);
   const isChoiceRetry = currentRetry?.question_type === 'choice_single' || currentRetry?.question_type === 'choice_multi';
 
   const submitRetry = async () => {
@@ -187,13 +188,8 @@ const WrongQuestions: React.FC = () => {
     }
   };
 
-  const typeMap: Record<string, { label: string; color: string }> = {
-    choice_single: { label: '单选', color: 'green' },
-    choice_multi: { label: '多选', color: 'orange' },
-    judgment: { label: '判断', color: 'purple' },
-    fill_blank: { label: '填空', color: 'cyan' },
-    essay: { label: '主观', color: 'red' }
-  };
+  // 题型标签/颜色统一取自 utils/questionTypes，不再在本文件维护副本
+
 
   const columns = [
     { title: '科目', dataIndex: 'subject', key: 'subject', width: 80, responsive: ['md'] as any, render: (s: string) => <Tag color="blue">{s}</Tag> },
@@ -209,7 +205,7 @@ const WrongQuestions: React.FC = () => {
           {isMobile && (
             <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               <Tag color="blue">{record.subject}</Tag>
-              <Tag color={typeMap[record.question_type]?.color || 'default'}>{typeMap[record.question_type]?.label || record.question_type}</Tag>
+              <Tag color={questionTypeColor(record.question_type)}>{questionTypeLabel(record.question_type)}</Tag>
               <span style={{ color: '#ff4d4f', fontSize: 12 }}>你的：{String(record.wrong_answer)}</span>
               <span style={{ color: '#52c41a', fontSize: 12 }}>正确：{String(record.correct_answer)}</span>
             </div>
@@ -217,10 +213,9 @@ const WrongQuestions: React.FC = () => {
         </div>
       )
     },
-    { title: '题型', dataIndex: 'question_type', key: 'type', width: 100, responsive: ['md'] as any, render: (t: string) => {
-      const info = typeMap[t] || { label: t, color: 'default' };
-      return <Tag color={info.color}>{info.label}</Tag>;
-    }},
+    { title: '题型', dataIndex: 'question_type', key: 'type', width: 100, responsive: ['md'] as any, render: (t: string) => (
+      <Tag color={questionTypeColor(t)}>{questionTypeLabel(t)}</Tag>
+    )},
     { title: '你的答案', dataIndex: 'wrong_answer', width: 100, responsive: ['md'] as any, render: (a: any) => <span style={{ color: '#ff4d4f' }}>{String(a)}</span> },
     { title: '正确答案', dataIndex: 'correct_answer', width: 100, responsive: ['md'] as any, render: (a: any) => <span style={{ color: '#52c41a', fontWeight: 500 }}>{String(a)}</span> },
     {
@@ -279,7 +274,7 @@ const WrongQuestions: React.FC = () => {
       </div>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
         <Tag color="blue">{record.subject}</Tag>
-        <Tag color={typeMap[record.question_type]?.color || 'default'}>{typeMap[record.question_type]?.label || record.question_type}</Tag>
+        <Tag color={questionTypeColor(record.question_type)}>{questionTypeLabel(record.question_type)}</Tag>
       </div>
       <div style={{ display: 'flex', gap: 16, fontSize: 13, marginBottom: 8 }}>
         <span>你的答案：<span style={{ color: '#ff4d4f', fontWeight: 500 }}>{String(record.wrong_answer)}</span></span>
@@ -543,7 +538,7 @@ const WrongQuestions: React.FC = () => {
 
             <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
               <Tag color="blue">{currentRetry.subject}</Tag>
-              <Tag>{typeMap[currentRetry.question_type]?.label || currentRetry.question_type}</Tag>
+              <Tag>{questionTypeLabel(currentRetry.question_type)}</Tag>
               {currentRetry.knowledge_point && <Tag color="cyan">{currentRetry.knowledge_point}</Tag>}
               {retryStats[currentRetry.id]?.retry_total > 0 && (
                 <Tag color="orange">已重做 {retryStats[currentRetry.id].retry_total} 次</Tag>

@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons';
 import { bossBattleAPI, equipmentAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
+import { questionTypeLabel } from '../utils/questionTypes';
 
 const useMobile = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -1158,7 +1159,7 @@ const BossBattleManager: React.FC = () => {
                                       <Checkbox value={q.id} style={isMobile ? { width: '100%', padding: '4px 0' } : undefined}>
                                         <Tag color="blue" style={{ marginRight: 4, fontSize: isMobile ? 10 : 12 }}>{q.topic || q.knowledge_point || q.subject}</Tag>
                                         <Tag color={q.difficulty === 'easy' ? 'green' : q.difficulty === 'hard' ? 'red' : 'orange'} style={{ fontSize: isMobile ? 10 : 12 }}>{q.difficulty}</Tag>
-                                        <Tag style={{ fontSize: isMobile ? 10 : 12 }}>{q.type === 'choice_single' ? '单选' : q.type === 'choice_multi' ? '多选' : q.type === 'judgment' ? '判断' : q.type === 'fill_blank' ? '填空' : q.type}</Tag>
+                                        <Tag style={{ fontSize: isMobile ? 10 : 12 }}>{questionTypeLabel(q.type)}</Tag>
                                         <div style={{
                                           fontSize: isMobile ? 11 : 12,
                                           color: '#666',

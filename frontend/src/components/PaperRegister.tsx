@@ -8,6 +8,7 @@ import { pinyin } from 'pinyin-pro';
 import { assignmentAPI, classroomQuizAPI } from '../utils/api';
 import { usePaperScan } from '../usePaperScan';
 import { useScanThumbnails } from '../utils/useScanThumbnails';
+import { isSubjectiveType, questionTypeLabel } from '../utils/questionTypes';
 
 interface Q {
   id: number;
@@ -25,9 +26,13 @@ interface PaperRegisterProps {
   onSaved: () => void;
 }
 
-const typeLabel = (t: string) => ({ choice_single: '单选', choice_multi: '多选', judgment: '判断', fill_blank: '填空', essay: '主观' } as Record<string, string>)[t] || t;
+// 题型标签与「是否主观题」统一取自 utils/questionTypes。
+// 原先 isSubjective 只认 essay，作文（composition）被当成客观题：
+// 后端 assignments.js 是按 essay || composition 允许部分分的，
+// 于是老师在作文题上判错时前端不给「部分分」输入框，判错即 0 分。
+const typeLabel = (t: string) => questionTypeLabel(t);
 
-const isSubjective = (t: string) => t === 'essay';
+const isSubjective = (t: string) => isSubjectiveType(t);
 
 const answerText = (q: Q) => {
   if (!q.answer) return '-';

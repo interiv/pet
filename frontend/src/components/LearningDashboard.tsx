@@ -651,7 +651,13 @@ const LearningDashboard: React.FC = () => {
                         </span>
                       )
                     },
-                    { title: '前期正确率', dataIndex: 'base_accuracy', render: (v: number) => `${v}%`, width: 100 },
+                    // base_accuracy 为 null 表示「前期没练过这个知识点」
+                    // （后端 compareWindows 在 base_attempts=0 时显式返回 null，对应 status='new'）。
+                    // 原先这里直接 `${v}%`，页面会显示出字面量 null%。与右侧两列同样按「未练」处理。
+                    {
+                      title: '前期正确率', dataIndex: 'base_accuracy', width: 100,
+                      render: (v: number | null) => v === null ? <Tag>未练</Tag> : `${v}%`
+                    },
                     {
                       title: '近期正确率', dataIndex: 'recent_accuracy', width: 100,
                       render: (v: number | null) => v === null ? <Tag>未练</Tag> : `${v}%`

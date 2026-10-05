@@ -10,20 +10,10 @@ import {
   FireOutlined, BookOutlined,
 } from '@ant-design/icons';
 import { questionBankAPI } from '../utils/api';
+import { questionTypeColor, questionTypeLabel } from '../utils/questionTypes';
 import dayjs from 'dayjs';
 
 const { Option } = Select;
-
-const typeMap: Record<string, { label: string; color: string }> = {
-  choice_single: { label: '单选', color: 'blue' },
-  choice_multi: { label: '多选', color: 'geekblue' },
-  judgment: { label: '判断', color: 'purple' },
-  // 后端题型代码是 judgment，这里保留 true_false 只是兼容历史脏数据
-  true_false: { label: '判断', color: 'purple' },
-  fill_blank: { label: '填空', color: 'cyan' },
-  essay: { label: '主观', color: 'orange' },
-  composition: { label: '作文', color: 'magenta' },
-};
 
 const difficultyMap: Record<string, { label: string; color: string }> = {
   easy: { label: '简单', color: 'green' },
@@ -159,10 +149,9 @@ const QuestionBank: React.FC = () => {
     },
     {
       title: '题型', dataIndex: 'type', key: 'type', width: 70,
-      render: (t: string) => {
-        const info = typeMap[t] || { label: t, color: 'default' };
-        return <Tag color={info.color}>{info.label}</Tag>;
-      },
+      render: (t: string) => (
+        <Tag color={questionTypeColor(t)}>{questionTypeLabel(t)}</Tag>
+      ),
     },
     {
       title: '难度', dataIndex: 'difficulty', key: 'difficulty', width: 70,
@@ -286,7 +275,7 @@ const QuestionBank: React.FC = () => {
             onChange={v => handleFilterChange('type', v)}
           >
             {filterOptions.types.map(t => (
-              <Option key={t} value={t}>{(typeMap[t] || { label: t }).label}</Option>
+              <Option key={t} value={t}>{questionTypeLabel(t)}</Option>
             ))}
           </Select>
         </Col>
@@ -405,8 +394,8 @@ const QuestionBank: React.FC = () => {
               <Tag color="blue">{currentQuestion.subject}</Tag>
             </Descriptions.Item>
             <Descriptions.Item label="题型">
-              <Tag color={(typeMap[currentQuestion.type] || {}).color}>
-                {(typeMap[currentQuestion.type] || { label: currentQuestion.type }).label}
+              <Tag color={questionTypeColor(currentQuestion.type)}>
+                {questionTypeLabel(currentQuestion.type)}
               </Tag>
             </Descriptions.Item>
             <Descriptions.Item label="难度">
