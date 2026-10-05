@@ -75,7 +75,7 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
     batch, pendingFiles, uploading, scanning, loading: scanLoading,
     compressing, compressProgress,
     pickFiles, uploadAll, startScan, cancelScan, removeImage, discardBatch, switchStudent,
-    refreshAllProgress,
+    refreshAllProgress, pendingCountByStudent,
   } = scan;
 
   /**
@@ -397,11 +397,11 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                 const active = currentStudent?.id === s.id;
                 const prog = studentProgress[s.id];
                 // 未上传的本地张数：只有正在处理这个学生时才有意义
-                // 「选N」= 本机已选但还没上传的张数。与「传N」分开统计，
-                // 老师才能一眼看出「还剩几张没传」，而不是把已传的也算进去。
-                // 非当前学生时看不到他的本地暂存（那在本机内存里，切过去才知道），
-                // 所以只有正在处理的人才显示「选N」。
-                const notUploadedCount = active ? pendingFiles.filter((p) => !p.uploaded).length : 0;
+                // 「选N」= 本机已选但还没上传的张数。
+                // 从各学生的桶里统计，**不限于当前选中的那个**——
+                // 否则给 A 选完切去 B，A 名字后面的「选1」就消失了，
+                // 看起来像照片被清空了，其实只是没显示。
+                const notUploadedCount = pendingCountByStudent[s.id] || 0;
                 const uploadedCount = prog?.uploaded || 0;
                 return (
                   <div

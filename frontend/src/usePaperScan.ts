@@ -9,7 +9,7 @@
  *   - 关窗不影响：进度与结果都在后端，重开组件能接着看
  *   - 取消不是回滚：停止识别但保留已识别部分
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { message } from 'antd';
 import { assignmentAPI } from './utils/api';
 import { compressImagesBlobs, formatSize } from './utils/imageCompress';
@@ -162,6 +162,23 @@ export function usePaperScan(
     });
   }, [bucketKey]);
 
+  /**
+   * 每个学生「本机已选但还没上传」的张数。
+   *
+   * 左侧列表要靠它显示「选N」标记，而且**不只当前选中的学生**要显示——
+   * 老师给 A 选完照片切去 B，A 名字后面的「选1」必须还在，
+   * 否则看起来就像照片丢了。照片按学生分桶存，这里直接从各桶统计。
+   */
+  const pendingCountByStudent = useMemo(() => {
+    const out: Record<number, number> = {};
+    filesByStudent.forEach((list, key) => {
+      if (key === 'batch') return;
+      const n = (list || []).filter((f) => !f.uploaded).length;
+      if (n > 0) out[key as number] = n;
+    });
+    return out;
+  }, [filesByStudent]);
+
   const [compressing, setCompressing] = useState(false);
   const [compressProgress, setCompressProgress] = useState<{ done: number; total: number } | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -311,10 +328,25 @@ export function usePaperScan(
     }
     setUploading(true);
     try {
-      const b = await ensureBatch();
+      let b = await ensureBatch();
+      /**
+       * 防御：批次必须属于当前学生。
+       *
+       * 切学生是异步的（setCurrentStudent 先变、批次随后才取回），
+       * 如果老师切得急、或在批次取回前就点了上传，
+       * 这里可能拿到的是上一位学生的批次——照片就会传到别人名下。
+       * 与其事后排查「照片怎么跑到别人那里了」，不如当场拦住。
+       */
+      if (mode === 'single' && studentId && b.student_id !== studentId) {
+        const r = await assignmentAPI.createScanBatch(assignmentId, groupSize, studentId);
+        b = r.data.batch;
+        setBatch(b);
+      }
       const bid = b.batch_id;
       let ok = 0;
       let fail = 0;
+      // 逐张收集失败原因，最后汇总展示；只报「失败 N 张」等于什么都没说
+      const reasons: string[] = [];
 
       for (let i = 0; i < pendingFiles.length; i += 1) {
         const item = pendingFiles[i];
@@ -352,13 +384,23 @@ export function usePaperScan(
           ok += 1;
         } catch (e: any) {
           fail += 1;
-          setPendingFiles((prev) => prev.map((p, idx) => (idx === i ? { ...p, error: e?.response?.data?.error || '上传失败' } : p)));
+          const reason = e?.response?.data?.error
+            || (e?.code === 'ECONNABORTED' ? '上传超时，请检查网络' : '')
+            || (e?.message || '上传失败');
+          reasons.push(reason);
+          setPendingFiles((prev) => prev.map((p, idx) => (idx === i ? { ...p, error: reason } : p)));
         }
       }
 
       const fresh = await refresh(bid);
       if (fail > 0) {
-        message.warning(`上传完成：成功 ${ok} 张，失败 ${fail} 张。失败的可重新选择文件后再传`);
+        // 必须把真实原因带出来。原来只说「失败 N 张」，老师完全不知道
+        // 是网络断了、功能开关关了、还是文件超限——只能干瞪眼重试。
+        const uniq = [...new Set(reasons)];
+        message.warning(
+          `上传完成：成功 ${ok} 张，失败 ${fail} 张。` +
+          (uniq.length ? `失败原因：${uniq.slice(0, 2).join('；')}` : '')
+        );
       } else {
         message.success(`已上传 ${ok} 张照片，可以开始 AI 识别了`);
       }
@@ -368,7 +410,7 @@ export function usePaperScan(
     } finally {
       setUploading(false);
     }
-  }, [pendingFiles, ensureBatch, assignmentId, groupSize, refresh]);
+  }, [pendingFiles, ensureBatch, assignmentId, groupSize, refresh, mode, studentId]);
   const stopPolling = useCallback(() => {
     if (pollTimer.current) {
       clearInterval(pollTimer.current);
@@ -617,5 +659,7 @@ export function usePaperScan(
     switchStudent,
     /** 单人登记：拉所有学生的进度（用于后台识别监视） */
     refreshAllProgress,
+    /** 单人登记：每个学生本机已选未上传的张数（左侧「选N」标记） */
+    pendingCountByStudent,
   };
 }
