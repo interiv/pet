@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/authStore';
 import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
 import { isSubjectiveType, questionTypeFullName } from '../utils/questionTypes';
+import { isQuestionAnswerable, isQuestionAnswered } from '../utils/answerState';
 import { compressImageWithThumb, formatSize } from '../utils/imageCompress';
 import dayjs from 'dayjs';
 import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons';
@@ -246,16 +247,19 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [shuffledOptionMap, setShuffledOptionMap] = useState<Record<number, number[]>>({});
   const [shuffledQuestionOrder, setShuffledQuestionOrder] = useState<number[]>([]);
 
+  // 已作答题数：整个页面唯一的完成度来源，进度条与里程碑提示共用它，
+  // 提交校验也用同一个 isQuestionAnswered，三处口径必须一致。
+  const answeredCount = useMemo(() => {
+    const qs = currentAssignment?.questions || [];
+    return qs.filter((q: Question) => isQuestionAnswered(q, studentAnswers, uploadedImages)).length;
+  }, [currentAssignment, studentAnswers, uploadedImages]);
+
   // 实时答题进度激励：跨越 25% / 50% / 75% / 100% 时提示
   useEffect(() => {
     if (!currentAssignment || !isDoModalVisible || isTeacher) return;
     const qs = currentAssignment.questions || [];
     if (qs.length === 0) return;
-    const done = qs.filter((q: Question) => {
-      const a = studentAnswers[q.id!];
-      return a !== undefined && a !== null && a !== '' && !(Array.isArray(a) && a.length === 0);
-    }).length;
-    const percent = Math.round((done / qs.length) * 100);
+    const percent = Math.round((answeredCount / qs.length) * 100);
     const milestones = [25, 50, 75, 100];
     const emojiMap: Record<number, string> = {
       25: '👍 已完成 25%，保持节奏！',
@@ -269,7 +273,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         setProgressMilestones(prev => new Set(prev).add(m));
       }
     }
-  }, [studentAnswers, currentAssignment, isDoModalVisible]);
+  }, [answeredCount, currentAssignment, isDoModalVisible]);
   
   // 题目编辑状态
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
@@ -670,6 +674,20 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     }
   };
 
+  /**
+   * 把原始数组下标换算成学生看到的题号。
+   *
+   * 学生端题目是乱序渲染的（shuffledQuestionOrder），卡片标题、拍照按钮上的
+   * 「第 X 题」用的都是展示序号。校验提示如果还用原始下标，学生按提示去找题，
+   * 找到的会是另一道已经做完的题——这就是「明明做完了却说没做完」的来源。
+   */
+  const displayNoOf = (originalIdx: number): number => {
+    if (originalIdx < 0) return 0;
+    if (shuffledQuestionOrder.length === 0) return originalIdx + 1;
+    const pos = shuffledQuestionOrder.indexOf(originalIdx);
+    return pos >= 0 ? pos + 1 : originalIdx + 1;
+  };
+
   const handleSubmitAnswers = async () => {
     const questions = currentAssignment?.questions || [];
     if (questions.length === 0) return;
@@ -701,18 +719,20 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     let allAnswered = true;
     const answers: any[] = [];
     const missing: number[] = [];
+    // 界面上根本没有作答控件的题（历史脏题型、options 为空的选择题）单独归类，
+    // 不能混进「你还没做」里——让学生反复检查自己明明做完的题。
+    const unanswerable: string[] = [];
 
     questions.forEach((q: any, idx: number) => {
       const ans = studentAnswers[q.id];
       const imageUrl = uploadedImages[q.id]?.url || '';
-      const hasText = !(ans === undefined || ans === null || (Array.isArray(ans) && ans.length === 0) || (typeof ans === 'string' && ans.trim() === ''));
-      // 主观题允许「只拍照、不打字」——手写作文几百字，学生不会愿意敲。
-      // 原先这里只看文字框，于是三道拍照上传的主观题全被判成未作答，
-      // 明明图都传了还弹「请完成所有题目后再提交」（后端其实是收图片的）。
-      const isSubjective = q.type === 'essay' || q.type === 'composition';
-      if (!hasText && !(isSubjective && imageUrl)) {
+      // 提示里的题号必须和卡片标题上的题号一致（学生看到的是乱序后的展示序号）
+      const displayNo = displayNoOf(idx);
+      if (!isQuestionAnswerable(q)) {
+        unanswerable.push(`第 ${displayNo} 题（${questionTypeFullName(q.type)}）`);
+      } else if (!isQuestionAnswered(q, studentAnswers, uploadedImages)) {
         allAnswered = false;
-        missing.push(idx + 1);
+        missing.push(displayNo);
       }
       answers.push({
         question_id: q.id,
@@ -724,9 +744,12 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       });
     });
 
-    if (!allAnswered) {
+    if (!allAnswered || unanswerable.length > 0) {
       // 点名是哪几题没做，不然学生只会反复检查已经传过图的题
-      message.warning(`请完成所有题目后再提交：第 ${missing.join('、')} 题还没作答`);
+      const parts: string[] = [];
+      if (missing.length > 0) parts.push(`第 ${missing.join('、')} 题还没作答`);
+      if (unanswerable.length > 0) parts.push(`${unanswerable.join('、')}题型无法作答，请联系老师`);
+      message.warning(`请完成所有题目后再提交：${parts.join('；')}`);
       return;
     }
 
@@ -838,7 +861,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
    * 而这已经是项目里现成的做法（纸质扫描那条路在用同一套）。
    */
   const handleUploadImage = async (questionId: number, file: File) => {
-    const questionNo = (currentAssignment?.questions || []).findIndex((x: any) => x.id === questionId) + 1;
+    const questionNo = displayNoOf((currentAssignment?.questions || []).findIndex((x: any) => x.id === questionId));
     setUploadingImageFor(questionId);
     try {
       // 一次解码同时产出「上传用的原图」和「预览用的小图」，
@@ -1010,15 +1033,48 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     });
   };
 
+  /**
+   * 判断当前弹窗里填到一半的，是不是「同一批重做题、还没提交」。
+   *
+   * 重做在真正提交前，服务端什么都不记：attempt_count 不加、金币不动、错题本不变，
+   * 上一次的原答案也原封不动。所以学生中途点「取消」之后再进来，拿到的必然还是
+   * 同一批题，理应接着填。
+   *
+   * 原先每次进来都无条件 setStudentAnswers({}) + clearUploadedImages()，
+   * 于是取消一次就白填一遍；而服务端那边又确实还留着原答案、原分数、原金币，
+   * 学生看到的现象就是「明明做完了，却说我没做完」。
+   *
+   * 答案按题目 id 存储，重洗牌不影响已填内容（选项顺序另有一套 original/display 互转）。
+   */
+  const canResumeRetry = (targetQuestions: any[]): boolean => {
+    const cur = currentAssignment?.questions;
+    if (!currentAssignment?.isRetryMode) return false;
+    if (!Array.isArray(cur) || cur.length === 0 || cur.length !== targetQuestions.length) return false;
+    const targetIds = new Set(targetQuestions.map((q: any) => q.id));
+    return cur.every((q: any) => targetIds.has(q.id));
+  };
+
   const handleRetryWrong = () => {
     if (!submitResult?.wrong_questions || submitResult.wrong_questions.length === 0) return;
     
     const wrongQs = submitResult.wrong_questions;
-    const retryQuestions = wrongQs.map((wq: any, idx: number) => ({
-      ...wq.retry_question,
-      id: wq.retry_question?.id ?? wq.retry_question?.question_id ?? `retry_${idx}`,
-      originalId: wq.original_question_id
-    }));
+    // 重做题必须有真实题目 id：答案是按 id 存的，兜底造一个假 id 会让答案挂到
+    // 不存在的题上，提交时被后端 parseInt 成 NaN，学生只看到「请提交有效的答案」。
+    // 数据异常就明说，别硬凑一个 id 出来。
+    const retryQuestions = wrongQs
+      .map((wq: any) => {
+        const src = wq?.retry_question;
+        if (!src) return null;
+        const id = Number(src.id ?? src.question_id);
+        if (!Number.isInteger(id)) return null;
+        return { ...src, id, originalId: wq.original_question_id };
+      })
+      .filter((q: any) => q !== null);
+
+    if (retryQuestions.length === 0) {
+      message.error('错题数据异常，暂时无法重做，请联系老师');
+      return;
+    }
     
     const qOrder = retryQuestions.map((_: any, i: number) => i);
     for (let i = qOrder.length - 1; i > 0; i--) {
@@ -1045,21 +1101,35 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       questions: retryQuestions,
       isRetryMode: true
     }));
-    setStudentAnswers({});
-    clearUploadedImages();
+    // 是同一批题的续做就别清空，学生填到一半关掉不该白填
+    const resume = canResumeRetry(retryQuestions);
+    if (!resume) {
+      setStudentAnswers({});
+      clearUploadedImages();
+    }
     setIsResultModalVisible(false);
     resetQuestionTimers();
     setIsDoModalVisible(true);
     setSubmitResult(null);
-    message.info(`请重新作答 ${retryQuestions.length} 道错题`);
+    message.info(resume
+      ? `继续完成这 ${retryQuestions.length} 道错题`
+      : `请重新作答 ${retryQuestions.length} 道错题`);
   };
 
   const handleRetryWrongFromList = async (record: any) => {
     try {
       const res = await assignmentAPI.getRetryQuestions(record.id);
-      const retryQuestions = res.data.retry_questions || [];
-      if (retryQuestions.length === 0) {
+      const raw: any[] = Array.isArray(res.data.retry_questions) ? res.data.retry_questions : [];
+      if (raw.length === 0) {
         message.info('没有需要重做的错题');
+        return;
+      }
+      // 同上：题目 id 必须是整数，否则答案无处安放，提交必然失败
+      const retryQuestions = raw
+        .map((q: any) => ({ ...q, id: Number(q?.id) }))
+        .filter((q: any) => Number.isInteger(q.id));
+      if (retryQuestions.length === 0) {
+        message.error('错题数据异常，暂时无法重做，请联系老师');
         return;
       }
 
@@ -1089,12 +1159,18 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         questions: retryQuestions,
         isRetryMode: true
       });
-      setStudentAnswers({});
-      clearUploadedImages();
+      // 同一批题的续做：沿用已填答案，不要清空（理由见 canResumeRetry）
+      const resume = canResumeRetry(retryQuestions);
+      if (!resume) {
+        setStudentAnswers({});
+        clearUploadedImages();
+      }
       setProgressMilestones(new Set());
       resetQuestionTimers();
       setIsDoModalVisible(true);
-      message.info(`请重新作答 ${retryQuestions.length} 道错题`);
+      message.info(resume
+        ? `继续完成这 ${retryQuestions.length} 道错题`
+        : `请重新作答 ${retryQuestions.length} 道错题`);
     } catch (e: any) {
       message.error(e.response?.data?.error || '获取重做错题失败');
     }
@@ -1125,6 +1201,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     const isChoiceMulti = q.type === 'choice_multi';
     const isJudgment = q.type === 'judgment';
     const isFillBlank = q.type === 'fill_blank';
+    // 提交校验用的也是这个判定：渲染不出控件的题不再静默地只留一个题干，
+    // 学生至少能立刻看出「这题没法作答」，而不是提交时才发现过不去。
+    const isAnswerable = isQuestionAnswerable(q);
     const optShuffle = shuffledOptionMap[q.id!] || (q.options ? q.options.map((_: any, i: number) => i) : []);
 
     const mapDisplayToOriginal = (displayLetter: string): string => {
@@ -1148,7 +1227,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       >
         <div style={{ marginBottom: 12, fontSize: 15, lineHeight: 1.8 }}>{q.content}</div>
         
-        {(isChoiceSingle || isChoiceMulti) && q.options && (
+        {(isChoiceSingle || isChoiceMulti) && isAnswerable && (
           <div style={{ marginLeft: 8 }}>
             {isChoiceSingle ? (
               <Radio.Group 
@@ -1347,6 +1426,23 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           <div style={{ marginTop: 4, color: '#8c8c8c', fontSize: 12, fontStyle: 'italic' }}>
             解析：{q.explanation}
           </div>
+        )}
+
+        {/* 渲染不出作答控件的题（历史脏题型、选择题没填选项），
+            以前只有一个光秃秃的题干，学生翻到这题根本无从下手，
+            点提交才被告知「第 X 题还没作答」——最容易被误当成自己做漏了。 */}
+        {!isTeacher && !isAnswerable && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginTop: 8 }}
+            message={`本题当前无法作答`}
+            description={
+              isChoiceSingle || isChoiceMulti
+                ? '这是一道选择题，但老师没有填写选项，无法作答。请联系老师补充选项后再提交。'
+                : `「${questionTypeFullName(q.type)}」题型当前无法作答，请联系老师。`
+            }
+          />
         )}
 
         {isTeacher && (q as any).variants && (q as any).variants.length > 0 && (
@@ -2405,13 +2501,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             {!isTeacher && (
               <div style={{ flex: 1 }}>
                 <Progress 
-                  percent={Math.round(((currentAssignment?.questions || []).filter((q: Question) => {
-                    const a = studentAnswers[q.id!];
-                    return a !== undefined && a !== null && a !== '';
-                  }).length / (currentAssignment?.questions?.length || 1)) * 100)} 
+                  percent={Math.round((answeredCount / (currentAssignment?.questions?.length || 1)) * 100)} 
                   status="active"
                   size="small"
-                  format={(_p) => `已完成 ${(currentAssignment?.questions || []).filter((q: Question) => studentAnswers[q.id!] !== undefined && studentAnswers[q.id!] !== null && studentAnswers[q.id!] !== '').length}/${currentAssignment?.questions?.length || 0} 题`}
+                  format={(_p) => `已完成 ${answeredCount}/${currentAssignment?.questions?.length || 0} 题`}
                 />
               </div>
             )}

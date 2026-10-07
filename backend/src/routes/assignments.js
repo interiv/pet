@@ -1308,48 +1308,96 @@ router.get('/:id/retry-questions', authenticateToken, (req, res) => {
       return res.status(400).json({ error: '当前无法重做错题' });
     }
 
-    const wrongAnswers = db.prepare(`
-      SELECT COALESCE(qb.variant_group_id, -qb.id) as group_key, qb.variant_group_id, MAX(qa.question_bank_id) as question_bank_id
+    // 必须按 attempt_number 取最近一轮的结果。
+    // question_answers 是每轮追加写的，同一道题会留下 N 条记录；这里原先只按
+    // is_correct = 0 过滤，于是重做时早已在上一轮做对的题，会因为第一轮的
+    // is_correct = 0 被再次判成错题。学生照着界面把这些题重做完提交，
+    // 却会被 submit 的白名单拦成「只能重做上次答错的题目」。
+    // 提交侧（POST /:id/submit）是用 latestByQ 取最近一轮的，两端口径必须一致。
+    const latestAttempt = db.prepare(
+      'SELECT MAX(attempt_number) as n FROM question_answers WHERE submission_id = ?'
+    ).get(submission.id)?.n;
+
+    const wrongRows = db.prepare(`
+      SELECT qa.question_bank_id, qb.variant_group_id
       FROM question_answers qa
       JOIN question_bank qb ON qa.question_bank_id = qb.id
-      WHERE qa.submission_id = ? AND qa.is_correct = 0
-      GROUP BY group_key
-    `).all(submission.id);
+      WHERE qa.submission_id = ? AND qa.is_correct = 0 AND qa.attempt_number = ?
+    `).all(submission.id, latestAttempt);
 
+    // 已作答过的题（全部轮次）：用来挑「组内还没做过的变体」
+    const attemptedIds = db.prepare(`
+      SELECT DISTINCT question_bank_id FROM question_answers WHERE submission_id = ?
+    `).all(submission.id).map(r => r.question_bank_id);
+
+    // 作业原题映射，与提交侧（POST /:id/submit）的 resolveOriginalId 同一套口径：
+// 变体题要能折算回它所属的作业原题，重做才谈得上「覆盖全部错题」。
+    const assignmentQs = db.prepare(`
+      SELECT qb.id, qb.variant_group_id FROM assignment_questions aq
+      JOIN question_bank qb ON aq.question_bank_id = qb.id
+      WHERE aq.assignment_id = ?
+    `).all(req.params.id);
+    const assignmentQIds = new Set(assignmentQs.map(q => q.id));
+    const originalByGroup = new Map();
+    for (const q of assignmentQs) {
+      if (q.variant_group_id != null && !originalByGroup.has(q.variant_group_id)) {
+        originalByGroup.set(q.variant_group_id, q.id);
+      }
+    }
+    const resolveOriginalId = (qid, grp) =>
+      assignmentQIds.has(qid) ? qid : (grp != null ? (originalByGroup.get(grp) ?? null) : null);
+
+    const loadRetryQuestion = (row) => {
+      const q = db.prepare(`
+        SELECT id, type, content, options, answer, explanation, analysis, variant_index,
+               difficulty, knowledge_point, subject, topic, variant_group_id
+        FROM question_bank WHERE id = ?
+      `).get(row.question_bank_id);
+      if (!q) return null;
+      if (q.options) {
+        try { q.options = JSON.parse(q.options); } catch(e) {}
+      }
+      q.original_question_id = row.question_bank_id;
+      return q;
+    };
+
+    // 一个变体组只出一道重做题（一个变体组对应一道作业原题）。
+    // 退回顺序有讲究，三级都必须在提交白名单里，否则学生做完必被拦：
+    //   1. 组内尚未作答过的变体 —— 真正的「新题」，也是白名单里的首选
+    //   2. 这道错题本身 —— 组内变体全做过时的次选
+    //   3. 该组对应的作业原题 —— 错题本身是组内变体、且它不在作业题表里时的兜底
+    // 原先只做前两级且第 2 级固定取 variants[0]，那道题既不是本次错题、
+    // 也不在 allowedIds 里，提交必然撞上「只能重做上次答错的题目」。
     const retryQuestions = [];
-    for (const wa of wrongAnswers) {
-      if (wa.variant_group_id) {
+    const handledGroups = new Set();
+    for (const row of wrongRows) {
+      const groupKey = row.variant_group_id != null
+        ? `g${row.variant_group_id}`
+        : `q${row.question_bank_id}`;
+      if (handledGroups.has(groupKey)) continue;
+      handledGroups.add(groupKey);
+
+      let retryQuestion = null;
+      if (row.variant_group_id != null) {
         const variants = db.prepare(`
-          SELECT id, type, content, options, answer, explanation, analysis, variant_index, difficulty, knowledge_point, subject, topic
-          FROM question_bank WHERE variant_group_id = ? ORDER BY variant_index
-        `).all(wa.variant_group_id);
-
-        const attemptedIds = db.prepare(`
-          SELECT DISTINCT question_bank_id FROM question_answers WHERE submission_id = ?
-        `).all(submission.id).map(r => r.question_bank_id);
-
-        const unusedVariants = variants.filter(v => !attemptedIds.includes(v.id));
-        const retryQuestion = unusedVariants.length > 0 ? unusedVariants[0] : variants[0];
-
-        if (retryQuestion) {
-          if (retryQuestion.options) {
-            try { retryQuestion.options = JSON.parse(retryQuestion.options); } catch(e) {}
-          }
-          retryQuestion.original_question_id = wa.question_bank_id;
-          retryQuestions.push(retryQuestion);
+          SELECT id FROM question_bank WHERE variant_group_id = ? ORDER BY variant_index, id
+        `).all(row.variant_group_id);
+        const unusedVariant = variants.find(v => !attemptedIds.includes(v.id));
+        if (unusedVariant) {
+          retryQuestion = loadRetryQuestion({ question_bank_id: unusedVariant.id, variant_group_id: row.variant_group_id });
         }
-      } else {
-        const q = db.prepare(`
-          SELECT id, type, content, options, answer, explanation, analysis, difficulty, knowledge_point, subject, topic
-          FROM question_bank WHERE id = ?
-        `).get(wa.question_bank_id);
-        if (q) {
-          if (q.options) {
-            try { q.options = JSON.parse(q.options); } catch(e) {}
-          }
-          q.original_question_id = wa.question_bank_id;
-          retryQuestions.push(q);
+      }
+      if (!retryQuestion) retryQuestion = loadRetryQuestion(row);
+      if (!retryQuestion) {
+        const originalId = resolveOriginalId(row.question_bank_id, row.variant_group_id);
+        if (originalId != null) {
+          retryQuestion = loadRetryQuestion({ question_bank_id: originalId, variant_group_id: row.variant_group_id });
         }
+      }
+      if (retryQuestion) {
+        retryQuestion.original_question_id =
+          resolveOriginalId(row.question_bank_id, row.variant_group_id) ?? row.question_bank_id;
+        retryQuestions.push(retryQuestion);
       }
     }
 
@@ -1488,23 +1536,33 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
           return res.status(400).json({ error: '只能重做上次答错的题目' });
         }
 
-        // 必须覆盖全部错题，否则可只挑会做的题提交来刷高分
+        // 必须覆盖全部错题，否则可只挑会做的题提交来刷高分。
+        //
+        // 折算变体题时必须能拿到它自己的 variant_group_id：上面 attemptRows 只含
+        // 「做过的题」，questions 只含「作业原题」，两者都查不到这道刚提交的组内新变体，
+        // 于是 resolveOriginalId 返回 null，这道题折算不回任何原题 —— 覆盖校验永远差一条，
+        // 学生把界面上所有题都做完了仍被拦成「请完成全部错题的重做后再提交」。
+        // 所以先把这批提交题的 variant_group_id 查出来，原查询顺延到后面复用。
+        const retryQuestionIds = submittedIds;
+        const retryQuestions = db.prepare(`
+            SELECT id, type, content, options, answer, explanation, analysis, variant_group_id, knowledge_point
+            FROM question_bank WHERE id IN (${retryQuestionIds.map(() => '?').join(',')})
+          `).all(...retryQuestionIds);
+        const variantGroupOfSubmitted = new Map(retryQuestions.map(rq => [rq.id, rq.variant_group_id]));
+
         const coveredOriginals = new Set();
         for (const id of submittedIds) {
           const row = attemptRows.find(r => r.question_bank_id === id);
-          const grp = row ? row.variant_group_id : questions.find(q => q.id === id)?.variant_group_id;
+          const grp = variantGroupOfSubmitted.get(id)
+            ?? row?.variant_group_id
+            ?? questions.find(q => q.id === id)?.variant_group_id
+            ?? null;
           const oid = resolveOriginalId(id, grp);
           if (oid != null) coveredOriginals.add(oid);
         }
         if ([...wrongOriginalIds].some(oid => !coveredOriginals.has(oid))) {
           return res.status(400).json({ error: '请完成全部错题的重做后再提交' });
         }
-
-        const retryQuestionIds = submittedIds;
-        const retryQuestions = db.prepare(`
-            SELECT id, type, content, options, answer, explanation, analysis, variant_group_id, knowledge_point
-            FROM question_bank WHERE id IN (${retryQuestionIds.map(() => '?').join(',')})
-          `).all(...retryQuestionIds);
 
         const retryQuestionMap = {};
         for (const rq of retryQuestions) {
