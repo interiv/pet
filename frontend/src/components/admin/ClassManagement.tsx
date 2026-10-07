@@ -199,14 +199,17 @@ const ClassManagement: React.FC = () => {
         //   班主任    —— 可增删本班任课教师，但不能改动任何人的身份
         //   管理员    —— 全部权限，含改身份（任课教师 ↔ 班主任）
         const canManage = isAdmin || isHeadTeacherOf(record);
+        // 一个班可有多位班主任；只要还剩其他班主任，班主任本人也可被移除，
+        // 与后端「至少保留一位班主任」的校验保持一致
+        const headTeacherCount = (record.teachers || []).filter((t: any) => t.role === 'head_teacher').length;
         return (
           <div>
             {(record.teachers || []).map((t: any) => {
               const nameText = t.real_name || t.username;
               const subText = t.real_name ? t.username : '未填真实姓名';
               const canChangeRole = isAdmin;
-              // 班主任不能被直接移除：必须先由管理员改回任课教师，否则班级会失去唯一班主任
-              const removable = canManage && t.role !== 'head_teacher';
+              // 班主任只有在「本班还剩其他班主任」时才可被直接移除
+              const removable = canManage && (t.role !== 'head_teacher' || headTeacherCount > 1);
               return (
                 // 姓名 + 笔 + 叉 全部放进同一个 Tag 里，视觉上是一体
                 <Tag
@@ -250,9 +253,9 @@ const ClassManagement: React.FC = () => {
                         </Tooltip>
                       </Popconfirm>
                     )}
-                    {/* 灰色叉号只在「有管理权但对方是班主任」时提示，普通教师完全看不到任何叉号 */}
-                    {canManage && t.role === 'head_teacher' && (
-                      <Tooltip title="班主任不能直接移除，请先由管理员将其改为任课教师">
+                    {/* 灰色叉号：对方是班主任且本班只剩这一位时不可移除，普通教师完全看不到任何叉号 */}
+                    {canManage && !removable && (
+                      <Tooltip title={t.role === 'head_teacher' ? '该班至少需要保留一位班主任' : '从本班移除该教师'}>
                         <span style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center', color: '#bfbfbf' }}>
                           <CloseOutlined />
                         </span>
@@ -366,7 +369,7 @@ const ClassManagement: React.FC = () => {
               }
             </Select>
           </Form.Item>
-          <Form.Item name="role" label="角色">
+          <Form.Item name="role" label="角色" tooltip="一个班级可以有多位班主任；一位教师也可以同时担任多个班级的班主任">
             <Select>
               <Select.Option value="head_teacher">班主任</Select.Option>
               <Select.Option value="teacher">任课教师</Select.Option>
@@ -385,7 +388,7 @@ const ClassManagement: React.FC = () => {
           <Form.Item
             name="role"
             label="身份"
-            tooltip="一个班级只能有一位班主任；一位教师只能担任一个班的班主任"
+            tooltip="一个班级可以有多位班主任；一位教师也可以同时担任多个班级的班主任"
           >
             <Select>
               <Select.Option value="head_teacher">班主任</Select.Option>
@@ -395,7 +398,7 @@ const ClassManagement: React.FC = () => {
           <Alert
             type="info"
             showIcon
-            message="改任课教师后，该教师在本班的学生管理、作业审批等班主任权限会相应变化；设为班主任则会自动接管本班班主任权限。"
+            message="改任课教师后，该教师在本班的学生管理、作业审批等班主任权限会相应变化；设为班主任则会自动获得本班班主任权限。班级至少需要保留一位班主任。"
           />
         </Form>
       </Modal>

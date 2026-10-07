@@ -172,7 +172,7 @@ const ApplicationManagement: React.FC<{
                   showIcon
                   style={{ marginBottom: 12 }}
                   message="教师申请说明"
-                  description="「班主任」申请通过后，该教师将成为所选班级的班主任；「任课教师」申请通过后，将以普通教师身份加入所选班级。"
+                  description="「班主任」申请通过后，该教师将成为所选班级的班主任（一个班可有多位班主任，一位教师也可担任多个班的班主任）；「任课教师」申请通过后，将以普通教师身份加入所选班级。"
                 />
                 <Table
                   columns={columns}

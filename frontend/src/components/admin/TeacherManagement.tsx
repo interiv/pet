@@ -44,24 +44,14 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
   const createClassOptions = createSchoolId
     ? classList.filter((c: any) => c.school_id === createSchoolId || !c.school_id)
     : classList;
-  // 班主任只能分配到"还没有班主任"的班级
-  const headTeacherCandidateClasses = createClassOptions.filter(
-    (c: any) => !c.head_teacher_id && !(c.teachers || []).some((t: any) => t.role === 'head_teacher')
-  );
+  // 班主任支持多对多：任何班级都可以被选为班主任目标，无需过滤已被占用的班级
+  const headTeacherCandidateClasses = createClassOptions;
 
-  // 编辑弹窗：任教关系按「一行一条」编辑，班级下拉需排除其它教师已占的班主任位
+  // 编辑弹窗：任教关系按「一行一条」编辑，班级下拉只需排除本表单已选过的班级
   const editAssignments: any[] = Form.useWatch('assignments', form) || [];
-  const classOptionsForEdit = (role: string, excludeClassIds: number[]) =>
+  const classOptionsForEdit = (excludeClassIds: number[]) =>
     classList
       .filter((c: any) => !excludeClassIds.includes(c.id))
-      .filter((c: any) => {
-        if (role !== 'head_teacher') return true;
-        const occupiedByOther = c.head_teacher_id && c.head_teacher_id !== editingTeacher?.id;
-        const hasOtherHead = (c.teachers || []).some(
-          (t: any) => t.role === 'head_teacher' && t.teacher_id !== editingTeacher?.id
-        );
-        return !occupiedByOther && !hasOtherHead;
-      })
       .map((c: any) => ({ value: c.id, label: `${c.name}${c.grade ? `（${c.grade}）` : ''}` }));
 
   const loadTeachers = async () => {
@@ -360,15 +350,6 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
                       <Form.Item {...field} name={[field.name, 'role']} style={{ marginBottom: 0 }}>
                         <Select
                           style={{ width: 130 }}
-                          onChange={(v) => {
-                            if (v !== 'head_teacher') return;
-                            const list = createForm.getFieldValue('assignments') || [];
-                            const otherHead = list.some((r: any, i: number) => i !== field.name && r?.role === 'head_teacher');
-                            if (otherHead) {
-                              message.warning('一个教师只能担任一个班的班主任');
-                              createForm.setFieldValue(['assignments', field.name, 'role'], 'teacher');
-                            }
-                          }}
                           options={[
                             { value: 'teacher', label: '任课教师' },
                             { value: 'head_teacher', label: '班主任' },
@@ -393,7 +374,7 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
                   添加一条任教关系
                 </Button>
                 <div style={{ color: '#999', fontSize: 12, marginTop: 6 }}>
-                  一个班级只能有一位班主任；班主任下拉只显示还没被占用的班级。科目用于布置作业时自动带出。
+                  一个班级可有多位班主任，一位教师也可同时担任多个班级的班主任；同一班级只能出现一次。科目用于布置作业时自动带出。
                 </div>
               </>
             )}
@@ -436,7 +417,6 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
                 {fields.map((field) => {
                   // 注意：这里不能每行都调useWatch（行数变化会导致 hooks 数量变化），
                   // 统一从组件顶部的 editAssignments 里取
-                  const rowRole = editAssignments[field.name]?.role || 'teacher';
                   // 同一班级不能重复出现在多行里
                   const usedByOthers = editAssignments
                     .filter((_: any, i: number) => i !== field.name)
@@ -455,22 +435,12 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
                           optionFilterProp="label"
                           placeholder="选择班级"
                           style={{ width: 220 }}
-                          options={classOptionsForEdit(rowRole, usedByOthers)}
+                          options={classOptionsForEdit(usedByOthers)}
                         />
                       </Form.Item>
                       <Form.Item {...field} name={[field.name, 'role']} style={{ marginBottom: 0 }}>
                         <Select
                           style={{ width: 130 }}
-                          onChange={(v) => {
-                            if (v !== 'head_teacher') return;
-                            // 一个教师只能当一个班的班主任
-                            const list = form.getFieldValue('assignments') || [];
-                            const otherHead = list.some((r: any, i: number) => i !== field.name && r?.role === 'head_teacher');
-                            if (otherHead) {
-                              message.warning('一个教师只能担任一个班的班主任，另一条需改为任课教师');
-                              form.setFieldValue(['assignments', field.name, 'role'], 'teacher');
-                            }
-                          }}
                           options={[
                             { value: 'teacher', label: '任课教师' },
                             { value: 'head_teacher', label: '班主任' },
@@ -497,7 +467,7 @@ const TeacherManagement: React.FC<{ onGoApprove?: () => void }> = ({ onGoApprove
                   添加一条任教关系
                 </Button>
                 <div style={{ color: '#999', fontSize: 12, marginTop: 6 }}>
-                  一个班级只能有一位班主任；这里只显示还没被其他教师占用的班主任位。
+                  一个班级可有多位班主任，一位教师也可同时担任多个班级的班主任；同一班级只能出现一次。
                 </div>
               </>
             )}

@@ -4,6 +4,7 @@
  */
 const { db } = require('../../config/database');
 const axios = require('axios');
+const { syncPrimaryHeadTeacher } = require('../../utils/headTeacher');
 
 const USERNAME_MAX_LEN = 20;
 const AI_USERNAME_BATCH_SIZE = 20;
@@ -62,25 +63,13 @@ function purgeUserData(userId) {
 
 function applyApplicationToClass(application, reviewerId) {
   const applicantId = application.user_id;
-  const cls = db.prepare('SELECT id, name, head_teacher_id FROM classes WHERE id = ?').get(application.class_id);
+  const cls = db.prepare('SELECT id, name FROM classes WHERE id = ?').get(application.class_id);
   if (!cls) {
     return { ok: false, reason: `班级 #${application.class_id} 不存在` };
   }
 
   const isTeacherApplication = application.role === 'teacher';
   const isHeadTeacherApply = isTeacherApplication && application.teacher_type === 'head_teacher';
-
-  if (isHeadTeacherApply) {
-    const hasHeadTeacher = cls.head_teacher_id
-      || db.prepare(`SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(cls.id);
-    if (hasHeadTeacher) {
-      return { ok: false, reason: `班级「${cls.name}」已有班主任` };
-    }
-    const otherClass = db.prepare('SELECT name FROM classes WHERE head_teacher_id = ?').get(applicantId);
-    if (otherClass) {
-      return { ok: false, reason: `该教师已是班级「${otherClass.name}」的班主任` };
-    }
-  }
 
   // 标记申请已通过
   db.prepare(`
@@ -109,7 +98,8 @@ function applyApplicationToClass(application, reviewerId) {
       db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role, subject) VALUES (?, ?, 'head_teacher', ?)`)
         .run(cls.id, applicantId, applySubject);
     }
-    db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?').run(applicantId, cls.id);
+    // 该班可能有多个班主任，冗余的「主班主任」字段需要重算
+    syncPrimaryHeadTeacher(cls.id);
   } else if (!existing) {
     db.prepare(`INSERT INTO class_teachers (class_id, teacher_id, role, subject) VALUES (?, ?, 'teacher', ?)`)
       .run(cls.id, applicantId, applySubject);

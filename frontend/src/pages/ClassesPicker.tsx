@@ -77,7 +77,7 @@ const ClassesPicker: React.FC = () => {
                     navigate(`/c/${c.slug}/app`);
                   }}
                   title={c.name}
-                  extra={c.class_role === 'head' ? <Tag color="gold">班主任</Tag> : <Tag color="blue">任课</Tag>}
+                  extra={c.class_role === 'head_teacher' ? <Tag color="gold">班主任</Tag> : <Tag color="blue">任课</Tag>}
                 >
                   <Paragraph style={{ marginBottom: 4 }}>年级：{c.grade || '-'}</Paragraph>
                   <Paragraph type="secondary" style={{ marginBottom: 0, fontSize: 12 }}>

@@ -78,9 +78,6 @@ const Register: React.FC = () => {
     ? classes.filter((c: any) => c.school_id === selectedSchoolId || !c.school_id)
     : classes;
 
-  // 申请班主任时，只显示还没有班主任的班级（前端直接不展示，服务端仍会二次校验）
-  const headTeacherCandidates = filteredClasses.filter((c: any) => !c.has_head_teacher);
-
   const validateInviteCode = async (code: string) => {
     if (!code) return;
     try {
@@ -130,7 +127,7 @@ const Register: React.FC = () => {
           role,
           // 一行一条：班级 + 身份（班主任/任课教师）+ 科目
           assignments: teachingRows,
-          // 兼容旧参数：班主任单选、任课教师多选
+          // 兼容旧参数：整体身份（无班主任行时为任课教师）+ 班级 ID 列表
           teacher_type: teacherType,
           requested_class_ids: teachingRows.map((r: any) => r.class_id),
           requested_class_id: teachingRows.length === 1 ? teachingRows[0].class_id : undefined,
@@ -364,14 +361,12 @@ const Register: React.FC = () => {
                       </div>
                     )}
                     {fields.map((field) => {
-                      const rowRole = teacherRows[field.name]?.role || 'teacher';
                       const usedByOthers = teacherRows
                         .filter((_: any, i: number) => i !== field.name)
                         .map((r: any) => r?.class_id)
                         .filter(Boolean);
-                      // 班主任行只能选还没有班主任的班级
-                      const candidates = (rowRole === 'head_teacher' ? headTeacherCandidates : filteredClasses)
-                        .filter((c: any) => !usedByOthers.includes(c.id));
+                      // 同一班级不能重复出现在多行里
+                      const candidates = filteredClasses.filter((c: any) => !usedByOthers.includes(c.id));
                       return (
                         <Space key={field.key} align="center" wrap style={{ display: 'flex', marginBottom: 8 }}>
                           <Form.Item
@@ -396,15 +391,6 @@ const Register: React.FC = () => {
                           <Form.Item {...field} name={[field.name, 'role']} style={{ marginBottom: 0 }}>
                             <Select
                               style={{ width: 130 }}
-                              onChange={(v) => {
-                                if (v !== 'head_teacher') return;
-                                const list = form.getFieldValue('assignments') || [];
-                                const otherHead = list.some((r: any, i: number) => i !== field.name && r?.role === 'head_teacher');
-                                if (otherHead) {
-                                  message.warning('一个教师只能担任一个班的班主任');
-                                  form.setFieldValue(['assignments', field.name, 'role'], 'teacher');
-                                }
-                              }}
                               options={[
                                 { value: 'teacher', label: '任课教师' },
                                 { value: 'head_teacher', label: '班主任' },
@@ -440,7 +426,7 @@ const Register: React.FC = () => {
                       添加一条任教班级
                     </Button>
                     <div style={{ color: '#999', fontSize: 12, marginTop: 6 }}>
-                      一个班级一条：可以同时在多个班任课；班主任只能有一个班。科目用于布置作业时自动带出，可随时修改。
+                      一个班级一条：可以同时在多个班任课，也可以同时担任多个班的班主任。科目用于布置作业时自动带出，可随时修改。
                     </div>
                   </>
                 )}

@@ -67,8 +67,13 @@ const StudentManagement: React.FC = () => {
 
   const getManageableClasses = () => {
     if (isAdmin) return classes;
-    const myClassIds = (user as any)?.teacher_classes?.filter((c: any) => c.class_role === 'head_teacher').map((c: any) => c.class_id) || [];
-    return classes.filter(c => myClassIds.includes(c.id));
+    // teacher_classes 里班级的自增主键字段名是 id（见 auth.js 的 teacher_classes 查询），
+        // 不是 class_id —— 用错会导致过滤失效、可管理班级列表恒为空。
+        // 统一转成 number 再比较，与 utils/permissions.ts 的做法保持一致。
+        const myClassIds = (user as any)?.teacher_classes
+          ?.filter((c: any) => c.class_role === 'head_teacher')
+          .map((c: any) => Number(c.id)) || [];
+        return classes.filter((c: any) => myClassIds.includes(Number(c.id)));
   };
 
   const handleDownloadTemplate = async (format: 'json' | 'csv' | 'xlsx') => {

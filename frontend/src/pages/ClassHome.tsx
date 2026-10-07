@@ -29,7 +29,8 @@ interface ClassPublic {
   school_id?: number;
   school_name?: string;
   school_theme?: string;
-  teachers?: Array<{ id: number; username: string; role: string; class_role?: string }>;
+  teachers?: Array<{ id: number; username: string; real_name?: string; role: string }>;
+    head_teachers?: Array<{ id: number; username: string; real_name?: string }>;
   active_boss?: any;
   public_invitation_code?: string | null;
   student_count?: number;
@@ -105,7 +106,12 @@ const ClassHome: React.FC = () => {
 
   const isMember = Boolean(summary);
   const teachers = (summary?.teachers || cls.teachers || []) as any[];
-  const headTeacher = teachers.find((t: any) => t.class_role === 'head');
+  // 一个班可有多位班主任。
+  // 优先用后端单独返回的 head_teachers（by-slug 与 home-summary 都有，字段一致），
+  // 回退到从 teachers 里过滤 —— 那里身份字段名是 role，取值 'head_teacher' | 'teacher'。
+  const headTeachers: any[] = (summary?.head_teachers
+    ?? (cls as any).head_teachers
+    ?? (teachers as any[]).filter((t: any) => t.role === 'head_teacher')) as any[];
   const pets = (summary?.top_pets || topPets) as any[];
   const announcements = (summary?.announcements || []) as any[];
   const recentPosts = (summary?.recent_posts || []) as any[];
@@ -163,7 +169,14 @@ const ClassHome: React.FC = () => {
               {cls.description || '班主任还没有填写班级简介。'}
             </Paragraph>
             <Space split={<Divider type="vertical" />} wrap>
-              {headTeacher && <Text>班主任：<b>{headTeacher.real_name || headTeacher.username}</b></Text>}
+              {headTeachers.length > 0 && (
+                <Text>
+                  班主任：
+                  <b>
+                    {headTeachers.map((t: any) => t.real_name || t.username).join('、')}
+                  </b>
+                </Text>
+              )}
               {typeof (summary?.student_count ?? cls.student_count) === 'number' && (
                 <Text>学生人数：<b>{summary?.student_count ?? cls.student_count}</b></Text>
               )}
@@ -244,7 +257,7 @@ const ClassHome: React.FC = () => {
                       <List.Item>
                         <List.Item.Meta
                           avatar={<Avatar>{((t.real_name || t.username) || 'T').slice(0, 1)}</Avatar>}
-                          title={<>{t.real_name || t.username} {t.class_role === 'head' && <Tag color="gold">班主任</Tag>}</>}
+                          title={<>{t.real_name || t.username} {t.role === 'head_teacher' && <Tag color="gold">班主任</Tag>}</>}
                           description={t.role === 'admin' ? '管理员' : '教师'}
                         />
                       </List.Item>

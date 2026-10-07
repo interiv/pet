@@ -6,6 +6,7 @@ const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const crypto = require('crypto');
 const { isValidSlug, generateClassSlug } = require('../utils/slug');
+const { getHeadTeachers, getHeadTeacherClasses } = require('../utils/headTeacher');
 const { notifyClassMemberJoined } = require('../services/joinNotify');
 const { isFeatureEnabled, requireFeature } = require('../middleware/featureFlags');
 
@@ -82,6 +83,8 @@ router.get('/by-slug/:slug', (req, res) => {
     // 原先会把一个有效邀请码直接暴露给任意访客，任何人都能拿它免审批注册进班。
     res.json({
       class: cls,
+      // 一个班可有多位班主任；class.head_teacher_* 仅为兼容字段，指向主班主任
+      head_teachers: getHeadTeachers(cls.id),
       active_boss: bossProgress
     });
   } catch (error) {
@@ -178,6 +181,7 @@ router.get('/:id/home-summary', authenticateToken, (req, res) => {
       class: cls,
       student_count: studentCount,
       teachers,
+      head_teachers: teachers.filter((t) => t.role === 'head_teacher'),
       top_pets: topPets,
       announcements,
       active_boss: activeBoss,
@@ -260,18 +264,8 @@ router.post('/create', authenticateToken, (req, res) => {
       return res.status(400).json({ error: '班级名称不能为空' });
     }
 
-    // 检查教师是否已经是某个班级的班主任
-    const existingHeadTeacher = db.prepare(
-      'SELECT id FROM classes WHERE head_teacher_id = ?'
-    ).get(teacherId);
-
-    if (existingHeadTeacher) {
-      return res.status(400).json({ 
-        error: '您已经是另一个班级的班主任，无法创建更多班级' 
-      });
-    }
-
     // 创建班级，教师自动成为班主任
+    // 允许同时担任多个班级的班主任，故不再限制「一师一班主任」
     const slug = generateClassSlug(name, (candidate) => !!db.prepare('SELECT 1 FROM classes WHERE slug = ?').get(candidate));
     const result = db.prepare(`
       INSERT INTO classes (name, grade, slug, head_teacher_id, student_count, total_exp, created_at)
@@ -280,7 +274,7 @@ router.post('/create', authenticateToken, (req, res) => {
 
     const classId = result.lastInsertRowid;
 
-    // 将教师添加到 class_teachers 表
+    // 将教师添加到 class_teachers 表（新班的唯一班主任，同时也是主班主任）
     db.prepare(`
       INSERT INTO class_teachers (class_id, teacher_id, role)
       VALUES (?, ?, 'head_teacher')
@@ -701,7 +695,7 @@ router.post('/join-with-invite', authenticateToken, (req, res) => {
   }
 });
 
-// 获取教师作为班主任的班级
+// 获取教师作为班主任的班级（一位教师可同时担任多个班级的班主任）
 router.get('/my-class', authenticateToken, (req, res) => {
   try {
     const userId = req.user.userId;
@@ -711,18 +705,18 @@ router.get('/my-class', authenticateToken, (req, res) => {
       return res.status(403).json({ error: '只有教师可以访问' });
     }
 
-    const cls = db.prepare(`
-      SELECT c.*, COALESCE(u.real_name, u.username) as head_teacher_name
-      FROM classes c
-      LEFT JOIN users u ON c.head_teacher_id = u.id
-      WHERE c.head_teacher_id = ?
-    `).get(userId);
-
-    if (!cls) {
-      return res.json({ class: null });
+    const classes = getHeadTeacherClasses(userId);
+    if (classes.length === 0) {
+      return res.json({ class: null, classes: [] });
     }
 
-    res.json({ class: cls });
+    const withHeadNames = classes.map((c) => ({
+      ...c,
+      head_teachers: getHeadTeachers(c.id),
+    }));
+
+    // class 保留主班主任班级，兼容只认单班的老调用方
+    res.json({ class: withHeadNames[0], classes: withHeadNames });
   } catch (error) {
     console.error('获取班级信息失败:', error);
     res.status(500).json({ error: '获取班级信息失败' });

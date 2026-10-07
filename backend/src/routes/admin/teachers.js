@@ -6,6 +6,7 @@ const { authenticateToken } = require('../../middleware/auth');
 const { getChinaDate } = require('../../config/timezone');
 const { getAIConfig, isAIConfigured, getAITimeoutMs } = require('../../config/ai');
 const { PROMPTS, SETTING_PREFIX, getPrompt, fillTemplate } = require('../../config/prompts');
+const { syncPrimaryHeadTeacher } = require('../../utils/headTeacher');
 const {
   USERNAME_MAX_LEN,
   AI_USERNAME_BATCH_SIZE,
@@ -40,12 +41,11 @@ function normalizeSubject(raw) {
  * 校验并归一化「任教关系列表」：[{ class_id, role, subject }]
  * 规则：
  *  - 同一个班级只能出现一次（自动去重，保留第一条）
- *  - 一个教师只能当一个班的班主任（班主任行最多 1 条）
- *  - 目标班级不能已有别的班主任
+ *  - 班主任支持多对多：一名教师可以同时担任多个班级的班主任，一个班级也可以有多位班主任
  * @returns {{ assignments: {classId:number, role:'teacher'|'head_teacher', subject:string|null}[], classes: any[] }}
  * @throws {Error} 校验失败时抛出，message 为可直接展示给管理员的提示
  */
-function resolveTeachingAssignments(rawAssignments, teacherId) {
+function resolveTeachingAssignments(rawAssignments) {
   const list = Array.isArray(rawAssignments) ? rawAssignments : [];
   const seen = new Set();
   const assignments = [];
@@ -62,24 +62,10 @@ function resolveTeachingAssignments(rawAssignments, teacherId) {
     });
   }
 
-  if (assignments.filter((a) => a.role === 'head_teacher').length > 1) {
-    throw new Error('一个教师只能担任一个班的班主任，请只保留一条班主任记录');
-  }
-
   const classes = [];
   for (const a of assignments) {
-    const cls = db.prepare('SELECT id, name, head_teacher_id FROM classes WHERE id = ?').get(a.classId);
+    const cls = db.prepare('SELECT id, name FROM classes WHERE id = ?').get(a.classId);
     if (!cls) throw new Error(`班级 ID ${a.classId} 不存在`);
-
-    if (a.role === 'head_teacher') {
-      const existingHeadId = cls.head_teacher_id
-        || db.prepare(`SELECT teacher_id FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(a.classId)?.teacher_id;
-      // 同一教师重复设置自己为班主任不算冲突
-      if (existingHeadId && Number(existingHeadId) !== Number(teacherId)) {
-        const head = db.prepare('SELECT real_name, username FROM users WHERE id = ?').get(existingHeadId);
-        throw new Error(`班级「${cls.name}」已有班主任（${head ? (head.real_name || head.username) : existingHeadId}），请先更换班主任`);
-      }
-    }
     classes.push(cls);
   }
 
@@ -91,22 +77,21 @@ function resolveTeachingAssignments(rawAssignments, teacherId) {
  * （class_teachers 上有 UNIQUE(class_id, teacher_id)，删除后重建最直接）
  */
 function syncTeacherClasses(teacherId, assignments) {
-  const owned = db.prepare('SELECT class_id, role FROM class_teachers WHERE teacher_id = ?').all(teacherId);
-  for (const row of owned) {
-    if (row.role === 'head_teacher') {
-      // 该教师不再担任此班班主任，必须同步清空冗余字段，否则「我的班级」等依赖它的地方会失效
-      db.prepare('UPDATE classes SET head_teacher_id = NULL WHERE id = ? AND head_teacher_id = ?').run(row.class_id, teacherId);
-    }
-  }
+  // 记录原先担任班主任的班级，删除归属后需要重新同步主班主任冗余字段
+  const affectedClassIds = db.prepare(
+    `SELECT DISTINCT class_id FROM class_teachers WHERE teacher_id = ? AND role = 'head_teacher'`
+  ).all(teacherId).map((r) => r.class_id);
+
   db.prepare('DELETE FROM class_teachers WHERE teacher_id = ?').run(teacherId);
 
   for (const a of assignments) {
     db.prepare('INSERT INTO class_teachers (class_id, teacher_id, role, subject) VALUES (?, ?, ?, ?)')
       .run(a.classId, teacherId, a.role, a.subject || null);
-    if (a.role === 'head_teacher') {
-      db.prepare('UPDATE classes SET head_teacher_id = ? WHERE id = ?').run(teacherId, a.classId);
-    }
   }
+
+  // classes.head_teacher_id 是「主班主任」冗余字段，删改班主任后必须重算
+  const touched = new Set([...affectedClassIds, ...assignments.map((a) => a.classId)]);
+  for (const classId of touched) syncPrimaryHeadTeacher(classId);
 }
 
 /** 把任教关系列表拼成可读文案 */
@@ -153,8 +138,10 @@ router.get('/teachers', authenticateToken, (req, res) => {
         ...t,
         classes,
         class_ids: classes.map((c) => c.id),
-        //  只要在任意班级担任班主任，身份即为班主任（一个教师只能带一个班）
+        // 只要在任意班级担任班主任，身份即为班主任（可同时是多个班的班主任）
         teacher_identity: classes.some((c) => c.role === 'head_teacher') ? 'head_teacher' : 'teacher',
+        // 明确列出该教师担任班主任的班级，便于前端展示与筛选
+        head_class_ids: classes.filter((c) => c.role === 'head_teacher').map((c) => c.id),
       };
     });
 
@@ -234,14 +221,11 @@ router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: '用户名已存在' });
     }
 
-    // 指定班级时的校验（支持多班级：任课教师可多选，班主任只能一个班）
+    // 指定班级时的校验（支持多班级：班主任与任课教师都可同时带多个班）
     const identity = teacher_identity === 'head_teacher' ? 'head_teacher' : 'teacher';
     const rawClassIds = Array.isArray(class_ids) && class_ids.length > 0
       ? class_ids
       : (class_id ? [class_id] : []);
-    if (!Array.isArray(assignments) && identity === 'head_teacher' && rawClassIds.length > 1) {
-      return res.status(400).json({ error: '班主任只能分配一个班级' });
-    }
 
     // 一行一条任教关系（班级 + 身份 + 科目）优先；没有时退回旧的「班级 + 单一身份」写法
     const rawAssignments = Array.isArray(assignments)
@@ -250,7 +234,7 @@ router.post('/teachers', authenticateToken, requireAdmin, async (req, res) => {
 
     let resolved;
     try {
-      resolved = resolveTeachingAssignments(rawAssignments, null);
+      resolved = resolveTeachingAssignments(rawAssignments);
     } catch (e) {
       return res.status(400).json({ error: e.message });
     }
@@ -359,7 +343,7 @@ router.put('/teachers/:id', authenticateToken, requireAdmin, (req, res) => {
       }
 
       try {
-        resolved = resolveTeachingAssignments(raw, id);
+        resolved = resolveTeachingAssignments(raw);
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }

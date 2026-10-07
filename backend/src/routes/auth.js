@@ -89,31 +89,12 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: '请选择要加入的班级' });
     }
 
-    // 班主任只能申请一个班级（成为班主任后如需加入其他班级，由管理员在后台操作）
-    if (applyRows.filter((r) => r.role === 'head_teacher').length > 1) {
-      return res.status(400).json({ error: '班主任只能选择一个班级' });
-    }
-
-    // 验证班级是否存在；班主任只能申请尚无班主任的班级
-    const classesWithHeadTeacher = [];
+    // 验证班级是否存在（班主任为多对多关系，不再限制「一班一班主任」/「一师一班主任」）
     for (const row of applyRows) {
-      const cls = db.prepare('SELECT id, name, head_teacher_id FROM classes WHERE id = ?').get(row.classId);
+      const cls = db.prepare('SELECT id FROM classes WHERE id = ?').get(row.classId);
       if (!cls) {
         return res.status(400).json({ error: `班级 ID ${row.classId} 不存在` });
       }
-      if (row.role === 'head_teacher') {
-        const hasHeadTeacher = cls.head_teacher_id
-          || db.prepare(`SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`).get(row.classId);
-        if (hasHeadTeacher) {
-          classesWithHeadTeacher.push(cls.name);
-        }
-      }
-    }
-
-    if (classesWithHeadTeacher.length > 0) {
-      return res.status(400).json({
-        error: `以下班级已有班主任，无法作为班主任加入：${classesWithHeadTeacher.join('、')}`
-      });
     }
 
     // 所有注册申请都需要等待班主任/管理员审批
@@ -485,14 +466,6 @@ router.post('/me/join-class-request', authenticateToken, (req, res) => {
       `SELECT id FROM class_applications WHERE user_id = ? AND class_id = ? AND role = 'teacher' AND status = 'pending'`
     ).get(userId, classId);
     if (pending) return res.status(400).json({ error: '你已提交过该班级的任教申请，请等待审批' });
-
-    // 一个班只能有一位班主任，已有人时不能申请班主任身份
-    if (wantHeadTeacher) {
-      const hasHead = db.prepare(
-        `SELECT 1 FROM class_teachers WHERE class_id = ? AND role = 'head_teacher'`
-      ).get(classId);
-      if (hasHead) return res.status(400).json({ error: '该班已有班主任，只能以任课教师身份申请' });
-    }
 
     const user = db.prepare('SELECT username, real_name, status FROM users WHERE id = ?').get(userId);
     const applicantName = user?.real_name || user?.username || '某教师';
