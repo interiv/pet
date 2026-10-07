@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
-const axios = require('axios');
 const { db } = require('../../config/database');
 const { authenticateToken } = require('../../middleware/auth');
 const { getChinaDate } = require('../../config/timezone');
 const { getAIConfig, isAIConfigured, getAITimeoutMs } = require('../../config/ai');
 const { PROMPTS, SETTING_PREFIX, getPrompt, fillTemplate } = require('../../config/prompts');
+const { chatCompletion } = require('../../services/aiClient');
 const {
   USERNAME_MAX_LEN,
   AI_USERNAME_BATCH_SIZE,
@@ -82,6 +82,17 @@ router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
       daily_global_token_limit: [10000, 100000000],
       max_questions_per_generation: [1, 100],
       ai_gen_concurrency: [1, 8],
+      // 思考预算：0 表示不限制（由模型自行决定），上限 200k 与输出口径对齐
+      ai_thinking_budget: [0, 200000],
+    };
+
+    // 枚举类字段：只接受白名单取值，避免手改请求体写入非法值导致 AI 调用一直失败
+    const ENUM_KEYS = {
+      ai_api_mode: ['chat', 'responses'],
+      ai_thinking_effort: ['low', 'medium', 'high'],
+      ai_thinking_summary: ['', 'auto', 'concise', 'detailed'],
+      // 开关类存 'true'/'false' 字符串
+      ai_thinking_enabled: ['true', 'false'],
     };
 
     const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
@@ -98,6 +109,15 @@ router.post('/settings/ai', authenticateToken, requireAdmin, (req, res) => {
           continue;
         }
         stmt.run(key, String(n));
+      }
+      for (const [key, allowed] of Object.entries(ENUM_KEYS)) {
+        if (req.body[key] === undefined) continue;
+        const v = String(req.body[key]);
+        if (!allowed.includes(v)) {
+          rejected.push(key);
+          continue;
+        }
+        stmt.run(key, v);
       }
       // API Key 只写不读：仅在用户明确提供真实值时更新
       if (req.body.ai_api_key !== undefined && req.body.ai_api_key !== '' && req.body.ai_api_key !== '***') {
@@ -191,53 +211,76 @@ router.post('/settings/prompts/reset', authenticateToken, requireAdmin, (req, re
 });
 
 router.post('/settings/ai/test', authenticateToken, requireAdmin, async (req, res) => {
-  const axios = require('axios');
   try {
-    let { ai_model, ai_api_key, ai_base_url, ai_timeout } = req.body;
-    
+    let { ai_model, ai_api_key, ai_base_url, ai_timeout, ai_api_mode } = req.body;
+
+    ensureSettingsTable();
+
+    // 思考模式默认跟随已保存的设置，也允许本次测试临时覆盖，
+    // 这样管理员可以先试开启再决定要不要保存
+    const savedRows = db.prepare(
+      `SELECT key, value FROM settings WHERE key IN
+       ('ai_api_mode','ai_thinking_enabled','ai_thinking_effort','ai_thinking_budget','ai_thinking_summary')`
+    ).all();
+    const saved = {};
+    savedRows.forEach(r => { saved[r.key] = r.value; });
+
+    if (!ai_api_mode) ai_api_mode = saved.ai_api_mode || 'chat';
+
     // 如果前端传了 *** 掩码，从数据库读取真实 key
     if (!ai_api_key || ai_api_key === '***') {
-      ensureSettingsTable();
       const row = db.prepare(`SELECT value FROM settings WHERE key = 'ai_api_key'`).get();
       ai_api_key = row?.value || '';
     }
-    
+
     if (!ai_model || !ai_api_key || !ai_base_url) {
       return res.status(400).json({ error: '请填写完整的 AI 配置' });
     }
 
     const timeoutMs = (parseInt(ai_timeout) || 300) * 1000;
+    const mode = String(ai_api_mode).trim().toLowerCase() === 'responses' ? 'responses' : 'chat';
 
     console.log('\n========== AI 连接测试 ==========');
-    console.log('🎯 目标地址:', `${ai_base_url}/chat/completions`);
+    console.log('🎯 目标地址:', `${ai_base_url}/${mode === 'responses' ? 'responses' : 'chat/completions'}`);
+    console.log('🔌 接口协议:', mode === 'responses' ? 'Responses API' : 'Chat Completions API');
     console.log('🤖 使用模型:', ai_model);
     console.log('🔑 API Key:', `${ai_api_key.slice(0, 8)}...${ai_api_key.slice(-4)}`);
     console.log('⏱️ 超时设置:', timeoutMs / 1000, '秒');
 
     const startTime = Date.now();
-    const response = await axios.post(`${ai_base_url}/chat/completions`, {
-      model: ai_model,
-      messages: [{ role: 'user', content: '你好，请回复"连接成功"四个字。' }]
-    }, {
-      headers: {
-        'Authorization': `Bearer ${ai_api_key}`,
-        'Content-Type': 'application/json'
+    // 复用统一客户端：测试走的是与线上完全相同的协议适配与降级逻辑，
+    // 否则「测试通过但实际调用失败」会误导管理员
+    const reply = await chatCompletion({
+      config: {
+        ai_api_key,
+        ai_base_url,
+        ai_model,
+        ai_api_mode: mode,
+        ai_thinking_enabled: req.body.ai_thinking_enabled ?? saved.ai_thinking_enabled,
+        ai_thinking_effort: req.body.ai_thinking_effort ?? saved.ai_thinking_effort,
+        ai_thinking_budget: req.body.ai_thinking_budget ?? saved.ai_thinking_budget,
+        ai_thinking_summary: req.body.ai_thinking_summary ?? saved.ai_thinking_summary,
       },
-      timeout: timeoutMs
+      prompt: '你好，请回复"连接成功"四个字。',
+      timeoutMs,
+      label: '连接测试',
+      logger: (m) => console.log(m),
     });
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
-    const aiReply = response.data.choices?.[0]?.message?.content || '';
     console.log('✅ AI 响应成功, 耗时:', elapsed, '秒');
-    console.log('📄 AI 回复内容:', aiReply);
+    console.log('📄 AI 回复内容:', reply.content);
     console.log('========================================\n');
 
     res.json({
       success: true,
-      message: '连接测试成功',
-      ai_reply: aiReply,
+      message: reply.degraded ? '连接测试成功（部分参数不被支持，已自动降级）' : '连接测试成功',
+      ai_reply: reply.content,
       elapsed: `${elapsed}秒`,
-      model: ai_model
+      model: ai_model,
+      api_mode: mode,
+      degraded: reply.degraded,
+      usage: reply.usage,
     });
   } catch (error) {
     console.error('\n❌ AI 连接测试失败:', error.message);
@@ -250,7 +293,7 @@ router.post('/settings/ai/test', authenticateToken, requireAdmin, async (req, re
       });
     } else if (error.code === 'ECONNABORTED') {
       console.error('⏱️ 请求超时');
-      res.status(500).json({ error: `请求超时 (${timeoutMs / 1000}秒)`, detail: '请检查网络连接或 API 地址是否正确' });
+      res.status(500).json({ error: `请求超时 (${(parseInt(req.body.ai_timeout) || 300)}秒)`, detail: '请检查网络连接或 API 地址是否正确' });
     } else if (error.code === 'ECONNREFUSED') {
       console.error('🚫 连接被拒绝');
       res.status(500).json({ error: '连接被拒绝', detail: '请检查 API 地址是否正确' });
@@ -293,6 +336,9 @@ router.post('/settings/site', authenticateToken, requireAdmin, (req, res) => {
       'ai_report_interval_days', 'ai_timeout',
       // 视觉模型：原先不在白名单里，导致「AI设置」页填写的视觉模型被静默丢弃
       'ai_vision_model',
+      // 接口协议与思考模式：不在白名单里会导致「AI设置」页的填写被静默丢弃
+      'ai_api_mode', 'ai_thinking_enabled', 'ai_thinking_effort',
+      'ai_thinking_budget', 'ai_thinking_summary',
       'perm_battle_records', 'perm_homework_records', 'perm_purchase_records',
       'max_tokens_per_generation', 'daily_teacher_gen_limit',
       'daily_global_token_limit', 'max_questions_per_generation',

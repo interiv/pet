@@ -3,8 +3,8 @@
  * 由 routes/admin.js 拆分而来，内容与拆分前完全一致（纯移动，无逻辑改动）
  */
 const { db } = require('../../config/database');
-const axios = require('axios');
 const { syncPrimaryHeadTeacher } = require('../../utils/headTeacher');
+const { chatCompletion } = require('../../services/aiClient');
 
 const USERNAME_MAX_LEN = 20;
 const AI_USERNAME_BATCH_SIZE = 20;
@@ -253,7 +253,6 @@ function parseJSONArray(text) {
 }
 
 async function generateUsernamesByAI(names, onProgress = () => {}) {
-  const axios = require('axios');
   const config = getAIConfig();
   // 账号生成属于轻量任务：单批最多等 60 秒，避免单次请求挂太久
   const timeoutMs = Math.min(getAITimeoutMs(config), 60000);
@@ -273,24 +272,20 @@ async function generateUsernamesByAI(names, onProgress = () => {}) {
     const listText = batch.map((n, idx) => `${idx + 1}. ${n}`).join('\n');
     const prompt = fillTemplate(getPrompt('admin_student_accounts'), { list_text: listText });
 
-    const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
-      model: config.ai_model,
-      messages: [{ role: 'user', content: prompt }]
-    }, {
-      headers: {
-        'Authorization': `Bearer ${config.ai_api_key}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: timeoutMs
+    const reply = await chatCompletion({
+      config,
+      prompt,
+      timeoutMs,
+      label: '批量生成账号',
     });
 
-    const usage = response.data?.usage || {};
+    // usage 已归一化，两种协议的记账字段一致
+    const usage = reply.usage || {};
     tokens.promptTokens += usage.prompt_tokens || 0;
     tokens.completionTokens += usage.completion_tokens || 0;
     tokens.totalTokens += usage.total_tokens || 0;
 
-    const content = response.data?.choices?.[0]?.message?.content || '';
-    for (const item of parseJSONArray(content)) {
+    for (const item of parseJSONArray(reply.content)) {
       if (item && item.name && item.username) {
         map.set(String(item.name).trim(), String(item.username));
       }
@@ -337,6 +332,12 @@ function ensureSettingsTable() {
       ['max_questions_per_generation', '20'],
       // AI 出题单笔请求的最大重试/续写轮次：题量偏多时会自动分轮补齐
       ['ai_gen_max_rounds', '3'],
+      // 接口协议与思考模式：缺省 chat + 关闭思考，保证与改造前行为一致
+      ['ai_api_mode', 'chat'],
+      ['ai_thinking_enabled', 'false'],
+      ['ai_thinking_effort', 'medium'],
+      ['ai_thinking_budget', '0'],
+      ['ai_thinking_summary', ''],
     ];
     const stmt = db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {
@@ -349,6 +350,11 @@ function ensureSettingsTable() {
       ['daily_global_token_limit', '2000000'],
       ['max_questions_per_generation', '20'],
       ['ai_gen_max_rounds', '3'],
+      ['ai_api_mode', 'chat'],
+      ['ai_thinking_enabled', 'false'],
+      ['ai_thinking_effort', 'medium'],
+      ['ai_thinking_budget', '0'],
+      ['ai_thinking_summary', ''],
     ];
     const stmt = db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`);
     db.transaction(() => {

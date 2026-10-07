@@ -10,6 +10,7 @@ const { updateTaskProgress } = require('./daily-tasks');
 const { checkAndAwardAchievement } = require('./achievements');
 const { getChinaDate, getChinaDateOf } = require('../config/timezone');
 const { getPrompt, fillTemplate } = require('../config/prompts');
+const { getAIConfig } = require('../config/ai');
 const { isAnswerCorrect } = require('../utils/answerCheck');
 const { collectQuestions, normalizeQuestion } = require('../services/aiQuestion');
 const { beginUsage, settleUsage, countBilledUsage, markFailed, countReferencedQuestions, deleteUnusedQuestions } = require('../services/aiUsage');
@@ -27,7 +28,6 @@ const aiOff = requireFeature('ai_enabled', { message: 'AI 功能当前已关闭�
 const aiJudgeOff = requireFeature('ai_paper_judge_enabled', { message: 'AI 批改当前已关闭，可改用手动登记' });
 const paperUpOff = requireFeature('paper_upload_enabled', { message: '拍照上传当前已关闭，可改用手动登记' });
 
-const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 
@@ -186,16 +186,6 @@ function writeWrongQuestion({ userId, assignmentId, questionId, wrongAnswer, cor
   `).run(userId, assignmentId, questionId, String(wrongAnswer || ''), String(correctAnswer || ''),
     String(analysis || ''), new Date().toISOString());
   return r.lastInsertRowid;
-}
-
-function getAIConfig() {
-  const settings = db.prepare(`SELECT key, value FROM settings WHERE key LIKE 'ai_%'`).all();  const config = {};
-  settings.forEach(s => config[s.key] = s.value);
-  // fallback 到环境变量（数据库未配置时使用）
-  if (!config.ai_api_key && process.env.AI_API_KEY) config.ai_api_key = process.env.AI_API_KEY;
-  if (!config.ai_base_url && process.env.AI_BASE_URL) config.ai_base_url = process.env.AI_BASE_URL;
-  if (!config.ai_model && process.env.AI_MODEL) config.ai_model = process.env.AI_MODEL;
-  return config;
 }
 
 function isObjectiveType(type) {
@@ -512,7 +502,7 @@ async function runGenerateLogic(req, res, hooks = {}) {
       };
 
       console.log(`\n📤 [${specTypeLabel}${specType ? ` × ${specCount} 道` : ''} · 难度 ${specDifficulty}] 发送请求到 LLM 服务器...`);
-      console.log('🎯 目标地址:', `${config.ai_base_url}/chat/completions`);
+      console.log('🎯 目标地址:', `${config.ai_base_url}/${String(config.ai_api_mode || '').toLowerCase() === 'responses' ? 'responses' : 'chat/completions'}`);
       console.log('🤖 使用模型:', config.ai_model);
       console.log('📝 首轮 Prompt 长度:', specBuildPrompt(specTargetCount || 0, '').length, '字符');
       console.log('⏱️ 超时设置:', timeoutMs / 1000, '秒');

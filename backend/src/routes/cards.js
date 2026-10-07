@@ -9,6 +9,7 @@ const { requireFeature } = require('../middleware/featureFlags');
 const aiOff = requireFeature('ai_enabled', { message: 'AI 功能当前已关闭，请联系管理员' });
 const { getChinaDate } = require('../config/timezone');
 const { getAIConfig, isAIConfigured } = require('../config/ai');
+const { chatCompletion } = require('../services/aiClient');
 const { getPrompt, fillTemplate } = require('../config/prompts');
 const { grantReward } = require('../services/rewards');
 const { collectQuestions, normalizeQuestion } = require('../services/aiQuestion');
@@ -821,22 +822,19 @@ async function runQuizJudge(req, res, onProgress = () => {}) {
       student_answer
     });
 
-    const axios = require('axios');
     const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
     const startTime = Date.now();
-    const response = await axios.post(`${config.ai_base_url}/chat/completions`, {
-      model: config.ai_model,
-      messages: [{ role: 'user', content: prompt }]
-    }, {
-      headers: {
-        'Authorization': `Bearer ${config.ai_api_key}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: timeoutMs
+    const reply = await chatCompletion({
+      config,
+      prompt,
+      timeoutMs,
+      label: '课堂答题判分',
     });
 
     try {
-      const usage = response.data?.usage || {};
+      // usage 已由 aiClient 归一化（responses 的 input/output tokens 也会映射成
+      // prompt/completion tokens），这里记账逻辑无需区分协议
+      const usage = reply.usage || {};
       const hasTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'`).get();
       if (hasTable) {
         db.prepare(`
@@ -848,7 +846,7 @@ async function runQuizJudge(req, res, onProgress = () => {}) {
       // 统计写入失败不影响评判
     }
 
-    const content = response.data.choices[0].message.content;
+    const content = reply.content;
     let parsed;
     try {
       parsed = JSON.parse(content);

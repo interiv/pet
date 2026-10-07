@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Button, Form, Input, message, Space, Alert, Divider } from 'antd';
+import { Card, Button, Form, Input, message, Space, Alert, Divider, Select, Switch } from 'antd';
 import { ThunderboltOutlined, RobotOutlined } from '@ant-design/icons';
 import { adminAPI } from '../../utils/api';
 import PromptSettings from './PromptSettings';
@@ -25,6 +25,11 @@ const AISettings: React.FC = () => {
         ai_vision_model: data.ai_vision_model || '',
         ai_base_url: data.ai_base_url || 'https://api.openai.com/v1',
         ai_api_key: data.ai_api_key || '',
+        ai_api_mode: data.ai_api_mode || 'chat',
+        ai_thinking_enabled: data.ai_thinking_enabled === 'true',
+        ai_thinking_effort: data.ai_thinking_effort || 'medium',
+        ai_thinking_budget: data.ai_thinking_budget || '0',
+        ai_thinking_summary: data.ai_thinking_summary || '',
         ai_report_interval_days: data.ai_report_interval_days || '3',
         ai_timeout: data.ai_timeout || '300',
         max_tokens_per_generation: data.max_tokens_per_generation || '18000',
@@ -46,6 +51,8 @@ const AISettings: React.FC = () => {
       if (!saveValues.ai_api_key || saveValues.ai_api_key === '***') {
         delete saveValues.ai_api_key;
       }
+      // 开关用 Switch 拿到的是 boolean，后端枚举白名单按字符串校验，这里统一转换
+      saveValues.ai_thinking_enabled = saveValues.ai_thinking_enabled ? 'true' : 'false';
       await adminAPI.saveSiteSettings(saveValues);
       message.success('大模型设置已保存');
       setTestResult(null);
@@ -75,6 +82,7 @@ const AISettings: React.FC = () => {
         message: res.data.message,
         ai_reply: res.data.ai_reply,
         elapsed: res.data.elapsed,
+        detail: res.data.degraded ? '部分参数不被支持，已自动降级' : undefined,
       });
       message.success('连接测试成功！');
     } catch (error: any) {
@@ -121,6 +129,66 @@ const AISettings: React.FC = () => {
         <Form.Item name="ai_vision_model" label="视觉模型（可选，用于识别纸质作业照片）" extra="留空则使用上面的大模型。识别手写作业照片需要支持图片输入的模型（如 qwen-vl、gpt-4o 等），且服务接口需兼容 OpenAI 图片格式。">
           <Input placeholder="如 qwen-vl-plus，留空使用上方大模型" />
         </Form.Item>
+
+        <Divider orientation="left" style={{ margin: '24px 0 16px' }}>接口协议与思考模式</Divider>
+        <Form.Item
+          name="ai_api_mode"
+          label="接口协议"
+          extra="Chat Completions 是绝大多数兼容服务的通用选择；只有当服务商明确提供 /responses 接口时才需要切换。"
+        >
+          <Select
+            options={[
+              { value: 'chat', label: 'Chat Completions（默认，兼容性最好）' },
+              { value: 'responses', label: 'Responses（推理类模型推荐）' },
+            ]}
+          />
+        </Form.Item>
+        <Form.Item
+          name="ai_thinking_enabled"
+          label="思考模式（推理模型）"
+          valuePropName="checked"
+          extra="开启后模型会先推理再作答，复杂题目（如作文、判分）质量更好，但响应更慢、消耗更多 tokens。出题等要求严格 JSON 输出的场景建议关闭。不支持时会自动降级，不影响正常使用。"
+        >
+          <Switch checkedChildren="已开启" unCheckedChildren="已关闭" />
+        </Form.Item>
+        <Form.Item noStyle shouldUpdate={(prev: any, cur: any) => prev.ai_thinking_enabled !== cur.ai_thinking_enabled}>
+          {({ getFieldValue }: any) => (
+            <div style={{ marginBottom: 16, paddingLeft: 8, borderLeft: '2px solid #f0f0f0' }}>
+              {getFieldValue('ai_thinking_enabled') ? (
+                <>
+                  <Form.Item name="ai_thinking_effort" label="思考强度" extra="越高越严谨，耗时与费用也越高。">
+                    <Select
+                      options={[
+                        { value: 'low', label: '低（快、省 token）' },
+                        { value: 'medium', label: '中（推荐）' },
+                        { value: 'high', label: '高（慢、质量优先）' },
+                      ]}
+                    />
+                  </Form.Item>
+                  <Form.Item name="ai_thinking_budget" label="思考预算 Tokens（可选）" extra="限制推理阶段可消耗的最大 token 数，0 表示不限制，由模型自行决定。部分兼容服务需要此参数。">
+                    <Input type="number" min={0} max={200000} placeholder="0" />
+                  </Form.Item>
+                  <Form.Item noStyle shouldUpdate={(p: any, c: any) => p.ai_api_mode !== c.ai_api_mode}>
+                    {({ getFieldValue: get2 }: any) => get2('ai_api_mode') === 'responses' ? (
+                      <Form.Item name="ai_thinking_summary" label="推理摘要" extra="让模型额外返回一段推理摘要，便于排查模型是否正常思考。">
+                        <Select
+                          allowClear
+                          options={[
+                            { value: 'auto', label: '自动' },
+                            { value: 'concise', label: '简要' },
+                            { value: 'detailed', label: '详细' },
+                          ]}
+                        />
+                      </Form.Item>
+                    ) : null}
+                  </Form.Item>
+                </>
+              ) : null}
+            </div>
+          )}
+        </Form.Item>
+
+        <Divider orientation="left" style={{ margin: '24px 0 16px' }}>调用与报告设置</Divider>
         <Form.Item name="ai_report_interval_days" label="AI报告重新生成间隔（天）" rules={[{ required: true, message: '请输入间隔天数' }]} extra="学生生成学习规划或诊断报告后，需间隔多少天才可重新生成。默认3天。">
           <Input type="number" min={1} max={30} placeholder="3" />
         </Form.Item>
@@ -156,6 +224,9 @@ const AISettings: React.FC = () => {
                 <div>
                   <div>AI 回复：{testResult.ai_reply}</div>
                   <div style={{ marginTop: 4 }}>耗时：{testResult.elapsed}</div>
+                  {testResult.detail && (
+                    <div style={{ marginTop: 4, color: '#fa8c16' }}>{testResult.detail}</div>
+                  )}
                 </div>
               ) : (
                 <div>

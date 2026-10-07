@@ -10,11 +10,11 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const axios = require('axios');
 const multer = require('multer');
 const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { requireFeature } = require('../middleware/featureFlags');
+const { chatCompletion } = require('../services/aiClient');
 const scanSvc = require('../services/paperScanService');
 
 const router = express.Router();
@@ -463,19 +463,22 @@ async function runScanBatch(batchId, userId) {
     ];
 
     try {
-      const response = await axios.post(config.ai_base_url + '/chat/completions', {
-        model: visionModel, messages: [{ role: 'user', content }], max_tokens: maxTokens,
-      }, {
-        headers: { 'Authorization': 'Bearer ' + config.ai_api_key, 'Content-Type': 'application/json' },
-        timeout: timeoutMs,
+      const reply = await chatCompletion({
+        config,
+        model: visionModel,
+        messages: [{ role: 'user', content }],
+        maxTokens,
+        timeoutMs,
+        label: '纸质卷面判分',
       });
 
-      const u = response.data && response.data.usage || {};
+      // usage 已由 aiClient 归一化，两种协议的记账字段一致
+      const u = reply.usage || {};
       usageSum.prompt_tokens += u.prompt_tokens || 0;
       usageSum.completion_tokens += u.completion_tokens || 0;
       usageSum.total_tokens += u.total_tokens || 0;
 
-      const one = parsePapers((response.data && response.data.choices && response.data.choices[0] && response.data.choices[0].message && response.data.choices[0].message.content) || '')[0];
+      const one = parsePapers(reply.content || '')[0];
       if (one) {
         const qIds = new Set(questions.map((q) => q.id));
         const results = (one.results || []).filter((r) => qIds.has(parseInt(r.question_id, 10))).map((r) => ({

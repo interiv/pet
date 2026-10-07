@@ -10,7 +10,6 @@
  */
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
 const { db } = require('../config/database');
 const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { getPrompt, fillTemplate } = require('../config/prompts');
@@ -29,15 +28,9 @@ const ANSWER_JOIN = `
   JOIN question_bank qb ON qb.id = qa.question_bank_id
 `;
 
-function getAIConfig() {
-  const settings = db.prepare(`SELECT key, value FROM settings WHERE key LIKE 'ai_%'`).all();
-  const config = {};
-  settings.forEach(s => config[s.key] = s.value);
-  if (!config.ai_api_key && process.env.AI_API_KEY) config.ai_api_key = process.env.AI_API_KEY;
-  if (!config.ai_base_url && process.env.AI_BASE_URL) config.ai_base_url = process.env.AI_BASE_URL;
-  if (!config.ai_model && process.env.AI_MODEL) config.ai_model = process.env.AI_MODEL;
-  return config;
-}
+const { getAIConfig } = require('../config/ai');
+const { chatCompletion } = require('../services/aiClient');
+const { getAITimeoutMs } = require('../config/ai');
 
 function getSystemSetting(key, defaultVal) {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
@@ -53,15 +46,14 @@ async function callAI(prompt, subject) {
   }
   const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
   const started = Date.now();
-  const resp = await axios.post(`${config.ai_base_url}/chat/completions`, {
-    model: config.ai_model,
-    messages: [{ role: 'user', content: prompt }],
-    max_tokens: getSystemSetting('max_tokens_per_generation', 18000),
-  }, {
-    headers: { 'Authorization': `Bearer ${config.ai_api_key}`, 'Content-Type': 'application/json' },
-    timeout: timeoutMs,
+  const resp = await chatCompletion({
+    config,
+    prompt,
+    maxTokens: getSystemSetting('max_tokens_per_generation', 18000),
+    timeoutMs,
+    label: '学情报告',
   });
-  return { content: resp.data.choices[0].message.content, usage: resp.data.usage || {}, model: config.ai_model, elapsed: Date.now() - started };
+  return { content: resp.content, usage: resp.usage, model: config.ai_model, elapsed: Date.now() - started };
 }
 
 function parseJSON(text) {

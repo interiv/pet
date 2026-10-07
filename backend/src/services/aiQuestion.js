@@ -20,8 +20,8 @@
  *   - collectQuestions：失败自动重试（带纠偏指令），题量不足自动续写补齐
  */
 
-const axios = require('axios');
 const { normalizeJudgment } = require('../utils/answerCheck');
+const { chatCompletion } = require('./aiClient');
 
 // 服务端瞬时错误（429 / 5xx）最多重试到第几轮
 const REQUEST_RETRY_LIMIT = 2;
@@ -301,28 +301,23 @@ function looksUnsupportedParam(error) {
   return retryableStatus && /response_format|unsupported|unrecognized|unknown parameter|not support/i.test(body);
 }
 
-async function chatOnce({ config, prompt, timeoutMs, maxTokens, useJsonObject }) {
-  const body = {
-    model: config.ai_model,
-    messages: [{ role: 'user', content: prompt }],
-  };
-  if (maxTokens) body.max_tokens = maxTokens;
-  // 强约束 JSON 输出：绝大多数 OpenAI 兼容接口都支持，不支持的会自动降级
-  if (useJsonObject) body.response_format = { type: 'json_object' };
-
-  const response = await axios.post(`${config.ai_base_url}/chat/completions`, body, {
-    headers: {
-      Authorization: `Bearer ${config.ai_api_key}`,
-      'Content-Type': 'application/json',
-    },
-    timeout: timeoutMs,
+async function chatOnce({ config, prompt, timeoutMs, maxTokens, useJsonObject, logger }) {
+  // 统一走 aiClient：自动适配 chat / responses 两种协议、注入思考模式参数、
+  // 并在模型不支持时自动降级重试。这里只负责把归一化后的结果转成内部结构。
+  const reply = await chatCompletion({
+    config,
+    prompt,
+    maxTokens,
+    useJsonObject,
+    timeoutMs,
+    label: 'AI 出题',
+    logger: logger || (() => {}),
   });
 
-  const choice = response.data?.choices?.[0] || {};
   return {
-    content: choice.message?.content || '',
-    finishReason: choice.finish_reason || '',
-    usage: response.data?.usage || {},
+    content: reply.content || '',
+    finishReason: reply.finishReason || '',
+    usage: reply.usage || {},
   };
 }
 

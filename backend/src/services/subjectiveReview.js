@@ -32,9 +32,9 @@
  */
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
 const { db } = require('../config/database');
 const { getAIConfig, isAIConfigured } = require('../config/ai');
+const { chatCompletion } = require('./aiClient');
 const { getPrompt, fillTemplate } = require('../config/prompts');
 const { grantReward } = require('./rewards');
 
@@ -134,15 +134,17 @@ async function reviewOneQuestion(qa, config, timeoutMs, subject) {
   const hasImage = content.length > 1;
   const model = (hasImage || vision) && vision ? vision : config.ai_model;
 
-  const resp = await axios.post(`${config.ai_base_url}/chat/completions`, {
+  // 统一走 aiClient：多模态 content 数组会在客户端按所选协议自动转换块类型
+  // （chat 用 image_url，responses 用 input_image）
+  const resp = await chatCompletion({
+    config,
     model,
     messages: [{ role: 'user', content }],
-  }, {
-    headers: { 'Authorization': `Bearer ${config.ai_api_key}`, 'Content-Type': 'application/json' },
-    timeout: timeoutMs,
+    timeoutMs,
+    label: '主观题评阅',
   });
 
-  const parsed = parseAiJson(resp.data?.choices?.[0]?.message?.content);
+  const parsed = parseAiJson(resp.content);
   const item = Array.isArray(parsed) ? parsed[0] : (parsed.results || parsed.items || parsed);
   if (!item || typeof item !== 'object') throw new Error('AI 返回结构无法识别');
 

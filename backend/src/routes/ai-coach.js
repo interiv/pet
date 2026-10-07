@@ -1,25 +1,15 @@
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { getPrompt, fillTemplate } = require('../config/prompts');
+const { getAIConfig, isAIConfigured, getAITimeoutMs } = require('../config/ai');
+const { chatCompletion } = require('../services/aiClient');
 const { requireFeature } = require('../middleware/featureFlags');
 const { startAsyncTask, handleTaskQuery } = require('../utils/asyncTask');
 
 // AI 总闸：学习规划与诊断都是 LLM 调用，纳入统一停用范围
 const aiOff = requireFeature('ai_enabled', { message: 'AI 功能当前已关闭，请联系管理员' });
-
-function getAIConfig() {
-  const settings = db.prepare(`SELECT key, value FROM settings WHERE key LIKE 'ai_%'`).all();
-  const config = {};
-  settings.forEach(s => config[s.key] = s.value);
-  // fallback 到环境变量（数据库未配置时使用）
-  if (!config.ai_api_key && process.env.AI_API_KEY) config.ai_api_key = process.env.AI_API_KEY;
-  if (!config.ai_base_url && process.env.AI_BASE_URL) config.ai_base_url = process.env.AI_BASE_URL;
-  if (!config.ai_model && process.env.AI_MODEL) config.ai_model = process.env.AI_MODEL;
-  return config;
-}
 
 /**
  * 收集用户学情上下文：薄弱知识点、最近错题、平均正确率、累计答题数
@@ -105,35 +95,30 @@ async function callAI(prompt) {
   }
   
   const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
-  
+  const apiMode = String(config.ai_api_mode || '').trim().toLowerCase() === 'responses' ? 'responses' : 'chat';
+
   console.log('\n🤖 调用 AI 服务...');
-  console.log('🎯 地址:', `${config.ai_base_url}/chat/completions`);
+  console.log('🎯 地址:', `${config.ai_base_url}/${apiMode === 'responses' ? 'responses' : 'chat/completions'}`);
   console.log('🤖 模型:', config.ai_model);
+  console.log('🧠 思考模式:', config.ai_thinking_enabled === 'true'
+    ? `开启（强度 ${config.ai_thinking_effort || 'medium'}）`
+    : '关闭');
   console.log('📝 Prompt 长度:', prompt.length, '字符');
   console.log('⏱️ 超时设置:', timeoutMs / 1000, '秒');
-  
+
   const startTime = Date.now();
-  const resp = await axios.post(`${config.ai_base_url}/chat/completions`, {
-    model: config.ai_model,
-    messages: [{ role: 'user', content: prompt }]
-  }, {
-    headers: {
-      'Authorization': `Bearer ${config.ai_api_key}`,
-      'Content-Type': 'application/json'
-    },
-    timeout: timeoutMs
+  const resp = await chatCompletion({
+    config,
+    prompt,
+    timeoutMs,
+    label: '学习规划',
   });
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-  
+
   console.log('✅ AI 响应成功, 耗时:', elapsed, '秒');
-  console.log('📦 响应大小:', JSON.stringify(resp.data).length, '字节');
-  
-  const content = resp.data.choices[0].message.content;
-  console.log('📄 AI 返回内容预览 (前300字符):');
-  console.log(content.slice(0, 300));
-  console.log('📄 总长度:', content.length, '字符');
-  
-  return content;
+  console.log('📄 总长度:', resp.content.length, '字符');
+
+  return resp.content;
 }
 
 function parseJSON(text) {

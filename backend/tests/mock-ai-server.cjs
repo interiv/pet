@@ -112,29 +112,52 @@ function buildReviewAnswer(prompt) {
 }
 
 const server = http.createServer((req, res) => {
-  if (req.method !== 'POST' || !req.url.includes('/chat/completions')) {
+  // 同时模拟 Chat Completions 与 Responses 两种协议，
+  // 用于验证 aiClient 的协议适配与 usage 归一化是否正确
+  const isChat = req.url.includes('/chat/completions');
+  const isResponses = /\/responses(\?|$)/.test(req.url);
+  if (req.method !== 'POST' || (!isChat && !isResponses)) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'not found' }));
   }
+  const apiMode = isResponses ? 'responses' : 'chat';
 
   let raw = '';
   req.on('data', (c) => { raw += c; });
   req.on('end', () => {
     let prompt = '';
     let hasImage = false;
+    let sawThinking = false;
     try {
       const body = JSON.parse(raw);
-      const msg = body.messages || [];
-      // 兼容字符串与多段数组两种内容格式
-      prompt = msg
-        .map((m) => {
-          if (typeof m.content === 'string') return m.content;
-          // 视觉请求的 content 是数组，图片部分没有 text，要单独识别出来
-          const parts = m.content || [];
-          hasImage = parts.some((c) => c.type === 'image_url');
-          return parts.map((c) => c.text || '').join(' ');
-        })
-        .join('\n');
+      if (apiMode === 'responses') {
+        // Responses：input + input_text / input_image
+        const input = body.input || [];
+        prompt = (Array.isArray(input) ? input : [input])
+          .map((m) => {
+            if (typeof m === 'string') return m;
+            if (typeof m.content === 'string') return m.content;
+            const parts = m.content || [];
+            hasImage = parts.some((c) => c.type === 'input_image');
+            return parts.map((c) => c.text || '').join(' ');
+          })
+          .join('\n');
+        // 记录是否收到思考参数，便于人工核对开关是否生效
+        sawThinking = Boolean(body.reasoning && body.reasoning.effort);
+      } else {
+        const msg = body.messages || [];
+        // 兼容字符串与多段数组两种内容格式
+        prompt = msg
+          .map((m) => {
+            if (typeof m.content === 'string') return m.content;
+            // 视觉请求的 content 是数组，图片部分没有 text，要单独识别出来
+            const parts = m.content || [];
+            hasImage = parts.some((c) => c.type === 'image_url');
+            return parts.map((c) => c.text || '').join(' ');
+          })
+          .join('\n');
+        sawThinking = Boolean(body.reasoning_effort || body.enable_thinking);
+      }
     } catch { /* 忽略解析错误，用空 prompt */ }
 
     // 三种请求的返回结构完全不同，不能混用：
@@ -161,11 +184,29 @@ const server = http.createServer((req, res) => {
     }
     const kind = isReview ? 'subjective-review' : (hasImage ? 'paper-judge' : 'question-gen');
 
-    console.log(`[mock] ${new Date().toISOString().slice(11, 19)} ${kind} (${prompt.length} 字符) -> ${summary}，${DELAY}ms 后返回`);
+    console.log(`[mock] ${new Date().toISOString().slice(11, 19)} [${apiMode}] ${kind} (${prompt.length} 字符) -> ${summary}，思考=${sawThinking ? '开' : '关'}，${DELAY}ms 后返回`);
 
     setTimeout(() => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
+      // usage 字段名两套协议不同，用来验证 aiClient 是否能归一化
+      const usage = apiMode === 'responses'
+        ? { input_tokens: 100, output_tokens: 200, total_tokens: 300 }
+        : { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 };
+
+      res.end(JSON.stringify(apiMode === 'responses' ? {
+        id: 'mock-resp-1',
+        object: 'response',
+        model: 'mock-e2e',
+        status: 'completed',
+        // 同时给 output_text 与 output[]，两种解析路径都应得到同一段文本
+        output_text: content,
+        output: [{
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: content }],
+        }],
+        usage,
+      } : {
         id: 'mock-req-1',
         object: 'chat.completion',
         model: 'mock-e2e',
@@ -174,14 +215,16 @@ const server = http.createServer((req, res) => {
           message: { role: 'assistant', content },
           finish_reason: 'stop',
         }],
-        usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 },
+        usage,
       }));
-      console.log(`[mock] ${new Date().toISOString().slice(11, 19)} 已返回 ${kind} -> ${summary}`);
+      console.log(`[mock] ${new Date().toISOString().slice(11, 19)} 已返回 [${apiMode}] ${kind} -> ${summary}`);
     }, DELAY);
   });
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[mock] AI 服务器已启动: http://127.0.0.1:${PORT}/chat/completions`);
+  console.log(`[mock] AI 服务器已启动（同时支持两种协议）:`);
+  console.log(`[mock]   Chat Completions: http://127.0.0.1:${PORT}/chat/completions`);
+  console.log(`[mock]   Responses      : http://127.0.0.1:${PORT}/responses`);
   console.log(`[mock] 每个请求固定延迟 ${DELAY}ms，用于验证超过 60 秒的场景`);
 });
