@@ -7,7 +7,8 @@
  *  - named：按班级名单逐人生成，每人一页、页眉预填该生姓名与学号，适合整班统一发放
  */
 
-import { isObjectiveType, isSubjectiveType, questionTypeFullName } from './questionTypes';
+import { isObjectiveType, isSubjectiveType, questionTypeFullName, normalizeQuestionType } from './questionTypes';
+import { countBlanks } from './fillBlank';
 
 export interface PaperQuestion {
   id: number;
@@ -157,6 +158,8 @@ h2 { text-align: center; margin: 0 0 2mm; font-size: 16px; }
 .row .n { width: 12mm; color: #666; flex-shrink: 0; }
 .row .qtext { font-size: 12px; color: #444; }
 .blank { display: inline-block; min-width: 60mm; border-bottom: 1px solid #333; }
+.fill-line { display: block; margin: 1mm 0 4mm 12mm; }
+.fill-no { display: inline-block; width: 14mm; font-size: 11pt; color: #666; }
 .write-area { border: 1px solid #bbb; min-height: 26mm; margin: 1mm 0 4mm 12mm; background: repeating-linear-gradient(to bottom, transparent 0, transparent 30px, #e5e5e5 30px, #e5e5e5 31px); }
 .toolbar { position: fixed; top: 8px; right: 8px; z-index: 99; }
 .toolbar button { font-size: 13px; padding: 6px 14px; cursor: pointer; }
@@ -206,21 +209,29 @@ function buildAnswerSheetHtml(a: any, s: PaperStudent | null, questions: PaperQu
        </table>`
     : '';
 
-  const fillHtml = subjective.filter(({ q }) => q.type === 'fill_blank').length
-    ? `<div class="sec-title">二、填空题</div>
-       ${subjective
-         .filter(({ q }) => q.type === 'fill_blank')
-         .map(
-           ({ no }) => `<div class="row"><span class="n">${no}.</span>
-             <span class="blank"></span></div>`
-         )
-         .join('')}`
-    : '';
+  // 填空题按空数给足填写行。一题多空原来只画一条横线，
+    // 纸质卷面上写着「三个空」，答题卡却只有一格，学生只能挤在一行里写，
+    // 登记时按空拆不开。行数与 utils/fillBlank.ts 的解析口径一致。
+    const fillHtml = subjective.filter(({ q }) => normalizeQuestionType(q.type) === 'fill_blank').length
+        ? `<div class="sec-title">二、填空题</div>
+          ${subjective
+            .filter(({ q }) => normalizeQuestionType(q.type) === 'fill_blank')
+          .map(({ no, q }) => {
+            const n = Math.max(1, countBlanks(q.content));
+            const lines = Array.from({ length: n }, (_, i) =>
+              `<span class="fill-line"><span class="fill-no">第${i + 1}空</span><span class="blank"></span></span>`
+            ).join('');
+            return `<div class="row"><span class="n">${no}.</span>
+              <span class="qtext">${escapeHtml(String(q.content).slice(0, 60))}${String(q.content).length > 60 ? '…' : ''}</span></div>
+              ${lines}`;
+          })
+          .join('')}`
+      : '';
 
-  const essayHtml = subjective.filter(({ q }) => q.type !== 'fill_blank').length
-    ? `<div class="sec-title">三、主观题（请在下方作答区书写，可写不下时另附纸）</div>
-       ${subjective
-         .filter(({ q }) => q.type !== 'fill_blank')
+  const essayHtml = subjective.filter(({ q }) => normalizeQuestionType(q.type) !== 'fill_blank').length
+      ? `<div class="sec-title">三、主观题（请在下方作答区书写，可写不下时另附纸）</div>
+        ${subjective
+          .filter(({ q }) => normalizeQuestionType(q.type) !== 'fill_blank')
          .map(
            ({ no, q }) => `<div class="row"><span class="n">${no}.</span>
              <span class="qtext">${escapeHtml(String(q.content).slice(0, 40))}${String(q.content).length > 40 ? '…' : ''}</span></div>

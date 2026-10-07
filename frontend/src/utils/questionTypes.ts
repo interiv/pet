@@ -52,32 +52,42 @@ const OBJECTIVE_TYPES = new Set(['choice_single', 'choice_multi', 'judgment', 'f
 
 /** 短中文标签；查不到就原样返回（不猜、不吞异常，调用方一眼能看出是脏数据） */
 export function questionTypeLabel(type?: string | null): string {
-  if (!type) return '';
-  return TYPE_STYLE[type]?.label ?? type;
+  const t = normalizeQuestionType(type);
+  if (!t) return '';
+  return TYPE_STYLE[t]?.label ?? t;
 }
 
 /** 完整中文名（带「题」字）；查不到退回短标签，再查不到原样返回 */
 export function questionTypeFullName(type?: string | null): string {
-  if (!type) return '';
-  return TYPE_FULL_NAME[type] ?? questionTypeLabel(type);
+  const t = normalizeQuestionType(type);
+  if (!t) return '';
+  return TYPE_FULL_NAME[t] ?? questionTypeLabel(t);
 }
 
 /** Tag 颜色；查不到用 antd 默认色 */
 export function questionTypeColor(type?: string | null): string {
-  return (type && TYPE_STYLE[type]?.color) || 'default';
+  const t = normalizeQuestionType(type);
+  return (t && TYPE_STYLE[t]?.color) || 'default';
 }
 
 /** 是否主观题（essay / composition） */
 export function isSubjectiveType(type?: string | null): boolean {
-  return !!type && SUBJECTIVE_TYPES.has(type);
+  return SUBJECTIVE_TYPES.has(normalizeQuestionType(type));
 }
 
 /** 是否客观题 */
 export function isObjectiveType(type?: string | null): boolean {
-  return !!type && OBJECTIVE_TYPES.has(type);
+  return OBJECTIVE_TYPES.has(normalizeQuestionType(type));
 }
 
-/** 去掉首尾空白并转小写，容忍用户手输 / 大小写不一致的题型 */
+/**
+ * 去掉首尾空白并转小写。
+ *
+ * 题库里存成 'Fill_Blank'、' composition ' 的历史脏数据（AI 出题、手工录入、
+ * 旧版本代码都产生过），原先每个调用点各判一次 `t === 'xxx'`：一个都匹配不上，
+ * 于是标签位置显示裸英文、不渲染输入框、提交时被报「题型无法作答，请联系老师」，
+ * 师生都查不出是哪一环坏了。归一化收进下面这几个出口，所有调用点一次性受益。
+ */
 export function normalizeQuestionType(type?: string | null): string {
   return (type || '').trim().toLowerCase();
 }

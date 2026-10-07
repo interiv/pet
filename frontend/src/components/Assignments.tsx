@@ -5,8 +5,9 @@ import { pollAiTask } from '../utils/aiTask';
 import { useAuthStore } from '../store/authStore';
 import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
-import { isSubjectiveType, questionTypeFullName } from '../utils/questionTypes';
+import { isSubjectiveType, questionTypeFullName, normalizeQuestionType } from '../utils/questionTypes';
 import { isQuestionAnswerable, isQuestionAnswered } from '../utils/answerState';
+import { splitContentByBlanks, toBlankValueArray, joinFillBlankAnswers } from '../utils/fillBlank';
 import { compressImageWithThumb, formatSize } from '../utils/imageCompress';
 import dayjs from 'dayjs';
 import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons';
@@ -662,6 +663,29 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           }
         }
         setStudentAnswers(prefill);
+      } else if (!isTeacher && Array.isArray(assignment.questions) && assignment.questions.length > 0) {
+        // 学生端：同一批题再次进入时**保留已填答案**。
+        // 填空题是唯一必须「打字」的题型，原来这里无条件 setStudentAnswers({})，
+        // 关掉弹窗再进来（去看一眼别的作业、或误点遮罩）就白填一遍，
+        // 回去一看全是空框，提交时自然报「第 X 题还没作答」。
+        // 理由与 canResumeRetry 一致：真正的清空只应该发生在「换了一批题」时。
+        // 注意 currentAssignment 还是上一批的旧值 —— setState 尚未生效。
+        const prevQ = currentAssignment?.questions;
+        const sameBatch = Array.isArray(prevQ)
+          && prevQ.length === assignment.questions.length
+          && prevQ.every((p: any) => assignment.questions.some((q: any) => q.id === p.id));
+        if (sameBatch) {
+          setStudentAnswers(prev => {
+            const keep: Record<number, any> = {};
+            for (const q of assignment.questions) {
+              const v = prev[q.id];
+              if (v !== undefined && v !== null) keep[q.id] = v;
+            }
+            return keep;
+          });
+        } else {
+          setStudentAnswers({});
+        }
       } else {
         setStudentAnswers({});
       }
@@ -718,7 +742,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
     let allAnswered = true;
     const answers: any[] = [];
-    const missing: number[] = [];
+    // 未作答的题直接存成可读文案。多空填空题只说「没作答」时，
+    // 学生明明填了两格却仍被这么提示，只会觉得系统坏了；
+    // 写清「3 个空未填满」他才知道要去补哪一格。
+    const missing: string[] = [];
     // 界面上根本没有作答控件的题（历史脏题型、options 为空的选择题）单独归类，
     // 不能混进「你还没做」里——让学生反复检查自己明明做完的题。
     const unanswerable: string[] = [];
@@ -732,11 +759,16 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         unanswerable.push(`第 ${displayNo} 题（${questionTypeFullName(q.type)}）`);
       } else if (!isQuestionAnswered(q, studentAnswers, uploadedImages)) {
         allAnswered = false;
-        missing.push(displayNo);
+        const blanks = normalizeQuestionType(q.type) === 'fill_blank'
+          ? splitContentByBlanks(q.content).blankCount
+          : 0;
+        missing.push(blanks > 1 ? `第 ${displayNo} 题（${blanks} 个空未填满）` : `第 ${displayNo} 题`);
       }
       answers.push({
         question_id: q.id,
-        answer: ans,
+        // 填空题/多选题在界面上按「格」存成数组，提交时统一拼回后端约定的整串。
+        // 后端 answerCheck.js 会按逗号重新拆段逐空比对，协议没变。
+        answer: Array.isArray(ans) ? joinFillBlankAnswers(ans) : ans,
         // 交原图：AI 评阅要读手写笔迹，缩略图会读不清
         image_url: imageUrl,
         // 逐题作答耗时（毫秒）。后端只接受 0.5s~30min 的合理区间，异常值会被忽略。
@@ -747,7 +779,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     if (!allAnswered || unanswerable.length > 0) {
       // 点名是哪几题没做，不然学生只会反复检查已经传过图的题
       const parts: string[] = [];
-      if (missing.length > 0) parts.push(`第 ${missing.join('、')} 题还没作答`);
+      if (missing.length > 0) parts.push(`${missing.join('、')}还没作答`);
       if (unanswerable.length > 0) parts.push(`${unanswerable.join('、')}题型无法作答，请联系老师`);
       message.warning(`请完成所有题目后再提交：${parts.join('；')}`);
       return;
@@ -803,6 +835,24 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       const sub = res.data.submission || {};
       const answers = res.data.answers || [];
       const awaiting = sub.review_status === 'pending' || sub.review_status === 'reviewing';
+      // 可重做时把错题一并取回来。
+      // 结果弹窗里的「重做错题」按钮依赖 wrong_questions，原先这里只 set 了 results，
+      // 于是从作业列表点「查看结果」进来时按钮点了毫无反应 —— 学生只能反复进作业重做。
+      let wrongQuestions: any[] = [];
+      if (sub.status === 'retry_available') {
+        try {
+          const rq = await assignmentAPI.getRetryQuestions(record.id);
+          const raw = Array.isArray(rq.data?.retry_questions) ? rq.data.retry_questions : [];
+          wrongQuestions = raw
+            .map((q: any) => ({
+              original_question_id: q.original_question_id ?? q.id,
+              retry_question: { ...q, id: Number(q.id) },
+            }))
+            .filter((wq: any) => Number.isInteger(wq.retry_question.id));
+        } catch {
+          wrongQuestions = [];
+        }
+      }
       setSubmitResult({
         results: answers,
         total_score: sub.total_score,
@@ -810,6 +860,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         gold_reward: sub.gold_reward,
         correct_count: answers.filter((a: any) => a.is_correct).length,
         total_count: answers.length,
+        wrong_questions: wrongQuestions,
       });
       setSubmitResultAwaitingReview(awaiting);
       setIsResultModalVisible(true);
@@ -1196,15 +1247,47 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     if (isDoModalVisible && !isTeacher && q.id != null) markQuestionViewed(q.id);
     // 主观题（简答 essay / 作文 composition）统一口径，取自 utils/questionTypes，
     // 免得「学生能拍照作答」「老师能填评阅标准」两处各判一次、题型一多就不同步
-    const isSubjectiveForAnswer = isSubjectiveType(q.type);
-    const isChoiceSingle = q.type === 'choice_single';
-    const isChoiceMulti = q.type === 'choice_multi';
-    const isJudgment = q.type === 'judgment';
-    const isFillBlank = q.type === 'fill_blank';
+    // 题型先归一化再比对：题库里存成 'Fill_Blank' / 'true_false' 的历史脏数据，
+    // 原先一个都匹配不上 —— 既不渲染输入框，提交校验又报「题型无法作答，请联系老师」，
+    // 学生和老师都查不出是哪的问题。归一化后与 utils/questionTypes 的兼容口径一致。
+    const qType = normalizeQuestionType(q.type);
+    const isSubjectiveForAnswer = isSubjectiveType(qType);
+    const isChoiceSingle = qType === 'choice_single';
+    const isChoiceMulti = qType === 'choice_multi';
+    const isJudgment = qType === 'judgment' || qType === 'true_false';
+    const isFillBlank = qType === 'fill_blank';
     // 提交校验用的也是这个判定：渲染不出控件的题不再静默地只留一个题干，
     // 学生至少能立刻看出「这题没法作答」，而不是提交时才发现过不去。
     const isAnswerable = isQuestionAnswerable(q);
     const optShuffle = shuffledOptionMap[q.id!] || (q.options ? q.options.map((_: any, i: number) => i) : []);
+
+    /**
+     * 填空题的空位解析。
+     *
+     * 题干里画了几个空就渲染几个输入框，并直接插在空位原位：
+     * 学生一眼能看出「第 2 空还没填」，不用自己数逗号。
+     * 题干里识别不出空位（历史题库 / AI 没生成占位符）时退回单个输入框，
+     * 与改动前保持一致，绝不能因为解析失败就没有输入框。
+     */
+    const blankInfo = isFillBlank ? splitContentByBlanks(q.content) : null;
+    const blankCount = blankInfo?.blankCount ?? 0;
+    // studentAnswers 里填空题按空存成数组；历史遗留的逗号整串也能读，统一在这里归一
+    const blankValues: string[] = blankCount > 0
+      ? toBlankValueArray(studentAnswers[q.id!], blankCount)
+      : [String(studentAnswers[q.id!] ?? '')];
+
+    const setBlankValue = (idx: number, val: string) => {
+      setStudentAnswers(prev => {
+        const cur = prev[q.id!];
+        const list = blankCount > 0
+          ? toBlankValueArray(cur, blankCount)
+          : [String(cur ?? '')];
+        const next = [...list];
+        next[idx] = val;
+        // 存数组而不是逗号串：数组天然按空对齐，不会出现「第 2 个答案跑到第 3 空」
+        return { ...prev, [q.id!]: next };
+      });
+    };
 
     const mapDisplayToOriginal = (displayLetter: string): string => {
       const displayIdx = displayLetter.charCodeAt(0) - 65;
@@ -1225,7 +1308,36 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         style={{ marginBottom: 16, borderLeft: '4px solid #1890ff' }}
         title={<span>第 {index + 1} 题 <Tag color="blue">{questionTypeFullName(q.type)}</Tag>{q.knowledge_point && <Tag color="geekblue" style={{ marginLeft: 4 }}>🏷️ {q.knowledge_point}</Tag>}</span>}
       >
-        <div style={{ marginBottom: 12, fontSize: 15, lineHeight: 1.8 }}>{q.content}</div>
+        {/*
+          题干。填空题把每个 ______ 就地替换成输入框，
+          这样「一题多空」在界面上就是多个独立格子，与空一一对应，
+          学生不需要把答案拼成逗号串再猜哪个逗号对应哪个空。
+        */}
+        <div style={{ marginBottom: 12, fontSize: 15, lineHeight: 1.8 }}>
+          {isFillBlank && !isTeacher && blankInfo && blankCount > 0
+            ? blankInfo.parts.map((part, i) => (
+              <React.Fragment key={i}>
+                {part}
+                {/* 最后一段后面没有空位，不能再多渲染一个输入框 */}
+                {i < blankInfo.parts.length - 1 && (
+                  <Input
+                    size="small"
+                    value={blankValues[i] ?? ''}
+                    onChange={(e) => setBlankValue(i, e.target.value)}
+                    placeholder={`第 ${i + 1} 空`}
+                    status={blankCount > 1 && !(blankValues[i] ?? '').trim() ? 'warning' : undefined}
+                    style={{ width: 140, margin: '0 4px', textAlign: 'center' }}
+                  />
+                )}
+              </React.Fragment>
+            ))
+            : q.content}
+        </div>
+        {blankCount > 1 && !isTeacher && (
+          <div style={{ marginBottom: 8, color: '#8c8c8c', fontSize: 12 }}>
+            本题有 {blankCount} 个空，已在上面标出，请逐空填写
+          </div>
+        )}
         
         {(isChoiceSingle || isChoiceMulti) && isAnswerable && (
           <div style={{ marginLeft: 8 }}>
@@ -1288,16 +1400,18 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           </Radio.Group>
         )}
 
-        {isFillBlank && !isTeacher && (
+        {/* 题干里没有空位占位符时的兜底：给一个整串输入框，
+            否则这类历史数据会渲染成「只有题干、没有输入框」的卡片 */}
+        {isFillBlank && !isTeacher && blankCount === 0 && (
           <div style={{ marginLeft: 8 }}>
             <Input
               placeholder="在此填写答案..."
-              value={studentAnswers[q.id!] || ''}
-              onChange={(e) => setStudentAnswers(prev => ({ ...prev, [q.id!]: e.target.value }))}
+              value={blankValues[0] ?? ''}
+              onChange={(e) => setBlankValue(0, e.target.value)}
               style={{ maxWidth: 480 }}
             />
             <div style={{ marginTop: 4, color: '#8c8c8c', fontSize: 12 }}>
-              如果题目有多个空，答案之间用英文逗号分隔
+              本题未标出空位，请按题目顺序填写，多个答案之间用英文逗号分隔
             </div>
           </div>
         )}

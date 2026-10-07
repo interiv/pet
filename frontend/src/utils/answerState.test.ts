@@ -35,8 +35,21 @@ describe('isQuestionAnswerable', () => {
     expect(isQuestionAnswerable(q({ type: 'choice_single', options: undefined }))).toBe(false);
   });
 
-  it('未知题型算无法作答，好过渲染出一个没有输入框的空卡片', () => {
-    expect(isQuestionAnswerable(q({ type: 'true_false', options: null }))).toBe(false);
+  it('大小写/空格脏数据归一化后仍可作答', () => {
+    // 题库里存成 'Fill_Blank'、' fill_blank ' 的历史脏数据，原先一律判 false，
+    // 学生既看不到输入框、提交又被拦，报的还是「题型无法作答，请联系老师」
+    expect(isQuestionAnswerable(q({ type: 'Fill_Blank', options: null }))).toBe(true);
+    expect(isQuestionAnswerable(q({ type: ' choice_single', options: ['A'] }))).toBe(true);
+  });
+
+  it('true_false 是 judgment 的历史脏数据，应当按判断题渲染、可作答', () => {
+    // utils/questionTypes 明确标注后端题型代码是 judgment，true_false 仅为兼容脏数据。
+    // 渲染分支已把它并入判断题，这里若再判 false，就会重新造出
+    // 「可作答的判定说不可作答、界面却渲染出了选项」这种自相矛盾的状态。
+    expect(isQuestionAnswerable(q({ type: 'true_false', options: null }))).toBe(true);
+  });
+
+  it('真正未知的题型算无法作答，好过渲染出一个没有输入框的空卡片', () => {
     expect(isQuestionAnswerable(q({ type: 'mixed', options: null }))).toBe(false);
     expect(isQuestionAnswerable(q({ type: '', options: ['A'] }))).toBe(false);
   });
@@ -66,6 +79,30 @@ describe('isQuestionAnswered', () => {
     expect(isQuestionAnswered(q({ type: 'fill_blank' }), { 1: '   ' }, {})).toBe(false);
     expect(isQuestionAnswered(q({ type: 'fill_blank' }), { 1: '\n\t ' }, {})).toBe(false);
     expect(isQuestionAnswered(q({ type: 'fill_blank' }), { 1: ' x ' }, {})).toBe(true);
+  });
+
+  it('一题多空的填空题必须逐空填满才算作答', () => {
+    const fb = q({ type: 'fill_blank', options: null, content: '中国的首都是____，最大城市是____。' });
+    expect(isQuestionAnswered(fb, {}, {})).toBe(false);
+    // 只填了第 1 空：界面上确实还有一格空着，报「没作答」是对的
+    expect(isQuestionAnswered(fb, { 1: ['北京'] }, {})).toBe(false);
+    expect(isQuestionAnswered(fb, { 1: ['北京', ''] }, {})).toBe(false);
+    expect(isQuestionAnswered(fb, { 1: ['北京', '   '] }, {})).toBe(false);
+    expect(isQuestionAnswered(fb, { 1: ['北京', '上海'] }, {})).toBe(true);
+    // 多了第三个空不算「没做完」，判分阶段处理即可
+    expect(isQuestionAnswered(fb, { 1: ['北京', '上海', '广州'] }, {})).toBe(true);
+  });
+
+  it('识别不出空位的填空题退回整串判定（历史数据不能因此没法作答）', () => {
+    const fb = q({ type: 'fill_blank', options: null, content: '光合作用的场所是？' });
+    expect(isQuestionAnswered(fb, { 1: ['叶绿体'] }, {})).toBe(true);
+    expect(isQuestionAnswered(fb, { 1: '' }, {})).toBe(false);
+  });
+
+  it('填空题的逗号整串按空拆开判，每空都要非空', () => {
+    const fb = q({ type: 'fill_blank', options: null, content: 'a____b____' });
+    expect(isQuestionAnswered(fb, { 1: '甲' }, {})).toBe(false);
+    expect(isQuestionAnswered(fb, { 1: '甲,乙' }, {})).toBe(true);
   });
 
   it('主观题只拍照不打字也算作答（后端本来就是收图片的）', () => {
