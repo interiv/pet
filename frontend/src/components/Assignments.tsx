@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space, Radio, Checkbox, Progress, Card, Alert, Upload, Image, Divider, Empty, Statistic, Row, Col, Tabs, Badge, Popconfirm, Tooltip, Spin } from 'antd';
-import { assignmentAPI, adminAPI, classroomQuizAPI } from '../utils/api';
+import { assignmentAPI, adminAPI, classroomQuizAPI, questionBankAPI } from '../utils/api';
 import { pollAiTask } from '../utils/aiTask';
 import { useAuthStore } from '../store/authStore';
 import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
@@ -10,7 +10,7 @@ import { isQuestionAnswerable, isQuestionAnswered } from '../utils/answerState';
 import { splitContentByBlanks, toBlankValueArray, joinFillBlankAnswers } from '../utils/fillBlank';
 import { compressImageWithThumb, formatSize } from '../utils/imageCompress';
 import dayjs from 'dayjs';
-import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined, ClockCircleOutlined, SearchOutlined, DatabaseOutlined } from '@ant-design/icons';
 import CelebrationAnimation from './CelebrationAnimation';
 import PaperRegister from './PaperRegister';
 import PaperBatchRegister from './PaperBatchRegister';
@@ -61,6 +61,14 @@ interface GeneratedResult {
   total_generated: number;
   questions: Question[];
   allQuestionIds: number[];
+}
+
+/** 题库筛选条件，字段与 questionBankAPI.getQuestions 入参同名 */
+interface BankFilters {
+  subject?: string;
+  type?: string;
+  difficulty?: string;
+  keyword?: string;
 }
 
 /**
@@ -191,6 +199,34 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   // 出题任务进度（后端异步执行，这里轮询拿）
   const [genProgress, setGenProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
   const [genMode, setGenMode] = useState<'topic' | 'requirements' | 'paste'>('topic');
+  /**
+   * 第一步的题目来源：题库选题 / AI 生成。
+   * 两者共用同一套「预览 → 发布设置」链路，选题只是把题目来源换掉，
+   * 所以单独一个来源开关就够了，不必把弹窗拆成两套表单。
+   */
+  const [createSource, setCreateSource] = useState<'bank' | 'ai'>('ai');
+  // 题库浏览与筛选
+  const [bankQuestions, setBankQuestions] = useState<any[]>([]);
+  const [bankTotal, setBankTotal] = useState(0);
+  const [bankPage, setBankPage] = useState(1);
+  const [bankLoading, setBankLoading] = useState(false);
+  const [bankSubject, setBankSubject] = useState<string | undefined>(undefined);
+  const [bankType, setBankType] = useState<string | undefined>(undefined);
+  const [bankDifficulty, setBankDifficulty] = useState<string | undefined>(undefined);
+  const [bankKeyword, setBankKeyword] = useState('');
+  /**
+   * 已选题目的完整对象，key 是题目 id。
+   * 存整行而不只存 id：Table 的 rowSelection 跨页只回传 id，
+   * 而下一步预览要显示题干/选项/题型，翻页后就没法从当前页再拼出来。
+   */
+  const [bankPicked, setBankPicked] = useState<Record<number, any>>({});
+  /** 当前生效的题库筛选条件；loadBank 从这里取，避免各处重复拼 */
+  const bankFilters: BankFilters = useMemo(() => ({
+    subject: bankSubject,
+    type: bankType,
+    difficulty: bankDifficulty,
+    keyword: bankKeyword.trim() || undefined,
+  }), [bankSubject, bankType, bankDifficulty, bankKeyword]);
   const [genLimit, setGenLimit] = useState<{ daily_limit: number; daily_used: number; daily_remaining: number; global_tokens_remaining: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [studentAnswers, setStudentAnswers] = useState<Record<number, any>>({});
@@ -504,6 +540,126 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       setGenProgress(null);
       setGenerating(false);
     }
+  };
+
+  /**
+   * 拉取题库列表。
+   *
+   * page    目标页码（搜索/改筛选回第 1 页，翻页给页码）
+   * overrides 刚改掉的筛选条件。下拉刚 onChange 时 setBankSubject 还没生效，
+   *   直接读 state 会拿旧值去查（表现为「选了科目但结果没变」），所以由调用方把新值显式传进来。
+   */
+  const loadBank = async (page = 1, overrides?: Partial<BankFilters>) => {
+    const filters = { ...bankFilters, ...(overrides || {}) };
+    setBankLoading(true);
+    try {
+      const res = await questionBankAPI.getQuestions({
+        page,
+        pageSize: 10,
+        subject: filters.subject,
+        type: filters.type,
+        difficulty: filters.difficulty,
+        keyword: filters.keyword,
+      });
+      setBankQuestions(res.data.questions || []);
+      setBankTotal(res.data.total || 0);
+      setBankPage(page);
+    } catch (e: any) {
+      message.error(e.response?.data?.error || '加载题库失败');
+    } finally {
+      setBankLoading(false);
+    }
+  };
+
+  /**
+   * 题库勾选变化：只增不删，跨页保留。
+   * antd 的 onChange 只回传「当前页选中项」，直接整体覆盖会在翻页后把别的页的选择清空，
+   * 所以这里按 id 合并，被取消勾选的当前页题目单独移除。
+   */
+  const handleBankSelectionChange = (keys: React.Key[]) => {
+    const pageIds = bankQuestions.map(q => q.id);
+    setBankPicked(prev => {
+      const next = { ...prev };
+      const kept = new Set(keys as number[]);
+      pageIds.forEach(id => { if (!kept.has(id)) delete next[id]; });
+      bankQuestions.forEach(q => { if (kept.has(q.id)) next[q.id] = q; });
+      return next;
+    });
+  };
+
+  /**
+   * 把题库选题结果转成 generatedData，之后完全走 AI 出题那条预览/发布链路。
+   * 这样「预览里编辑、删除、挑掉不要的题」等已有能力不用再写一遍。
+   */
+  const startPreviewFromBank = () => {
+    const picked = Object.values(bankPicked);
+    if (picked.length === 0) {
+      message.warning('请先从题库勾选题目');
+      return;
+    }
+    const subject = bankSubject || picked[0]?.subject || mySubject || '';
+    if (!subject) {
+      message.warning('题库里的这些题没有科目信息，请先在题库页补全科目或改用 AI 生成');
+      return;
+    }
+    // 作业只有一个 question_type 字段：单一题型就如实记，多题型记 mixed
+    // （与后端 AI 多题型出题的口径一致，见 assignments.js beginUsage 的 question_type）
+    const typeCount: Record<string, number> = {};
+    picked.forEach(q => {
+      const t = normalizeQuestionType(q.type) || 'choice_single';
+      typeCount[t] = (typeCount[t] || 0) + 1;
+    });
+    const types = Object.keys(typeCount);
+    const mainType = types.length === 1 ? types[0] : 'mixed';
+    const title = `${subject}·题库选题（${picked.length}题）`;
+    const description = `从题库勾选了 ${picked.length} 道题目`;
+    setGeneratedData({
+      message: '来自题库',
+      title,
+      description,
+      subject,
+      question_type: mainType,
+      question_types: types,
+      question_count: picked.length,
+      total_generated: picked.length,
+      // 题库题已有真实 id，发布时原样带 question_ids，不消耗 AI 生成额度
+      questions: picked.map(q => ({
+        id: q.id,
+        content: q.content,
+        options: q.options || null,
+        answer: q.answer,
+        explanation: q.explanation || '',
+        analysis: q.analysis || '',
+        type: normalizeQuestionType(q.type) || 'choice_single',
+        knowledge_point: q.knowledge_point || '',
+        difficulty: q.difficulty || 'medium',
+      })),
+      allQuestionIds: picked.map(q => q.id),
+    });
+    // 与 AI 出题走同一套默认值：标题/科目题型/默认全部班级/明天截止，老师可再改
+    pendingPublishDefaults.current = {
+      title: title,
+      description: description,
+      question_type: mainType,
+      subject,
+      class_ids: classes.map(c => c.id),
+      due_date: dayjs().add(1, 'day').startOf('day'),
+    };
+    setShowVariantQuestions({});
+    setCreateModalTab('preview');
+  };
+
+  /** 切换题目来源：清掉上一步的产物，避免 AI 结果和题库选题串在一起 */
+  const switchCreateSource = (source: 'bank' | 'ai') => {
+    if (source === createSource) return;
+    const pendingUsageId = generatedData?.usage_id;
+    setGeneratedData(null);
+    pendingPublishDefaults.current = null;
+    setShowVariantQuestions({});
+    setCreateSource(source);
+    // 生成过但没发布的 AI 结果：撤销一次生成并退还额度，行为与关闭弹窗一致
+    if (pendingUsageId) discardGeneration(pendingUsageId, true).then((ok) => { if (ok) loadGenLimit(); });
+    if (source === 'bank') loadBank(1);
   };
 
   const handleCreateAssignment = async (values: any) => {
@@ -1897,7 +2053,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             }}>错题本</Button>
           )}
           {isTeacher && (
-            <Button type="primary" icon={<RobotOutlined />} onClick={() => { discardGeneration(generatedData?.usage_id); setIsCreateModalVisible(true); setGeneratedData(null); pendingPublishDefaults.current = null; setCreateModalTab('generate'); setShowVariantQuestions({}); loadGenLimit(); }}>
+            <Button type="primary" icon={<FileTextOutlined />} onClick={() => { discardGeneration(generatedData?.usage_id); setIsCreateModalVisible(true); setGeneratedData(null); pendingPublishDefaults.current = null; setCreateModalTab('generate'); setShowVariantQuestions({}); setBankPicked({}); loadGenLimit(); }}>
               发布新作业
             </Button>
           )}
@@ -2219,7 +2375,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
       {/* 教师发布作业弹窗 */}
       <Modal
-        title="🤖 发布新作业（AI智能生成）"
+        title="📄 发布新作业（题库选题 / AI生成）"
         open={isCreateModalVisible}
         onCancel={() => {
           const pendingUsageId = generatedData?.usage_id;
@@ -2230,6 +2386,13 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         }}
         afterOpenChange={(open) => {
           if (!open) return;
+          setShowVariantQuestions({});
+          // 题库选题：不碰 generateForm（AI 表单此时根本没挂载，写值会触发 useForm 未连接告警）
+          if (createSource === 'bank') {
+            setBankPicked({});
+            loadBank(1);
+            return;
+          }
           generateForm.resetFields();
           // 默认带出教师自己的任教科目，仍可手动改成其他科目
           if (mySubject) generateForm.setFieldsValue({ subject: mySubject });
@@ -2242,11 +2405,29 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         destroyOnHidden
         footer={null}
       >
+        {/* 题目来源只在第一步出现：进了预览/发布设置再切来源，已经选好的题就白费了 */}
+        {createModalTab === 'generate' && (
+          <div style={{ marginBottom: 12, padding: '10px 12px', background: '#f6f8fa', borderRadius: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>题目来源</div>
+            <div style={{ color: '#999', fontSize: 12, marginBottom: 8 }}>
+              题库里已有现成好题就直接勾选，不消耗 AI 生成次数；没有合适的再让 AI 按知识点出题。
+            </div>
+            <Radio.Group
+              value={createSource}
+              onChange={(e) => switchCreateSource(e.target.value)}
+              buttonStyle="solid"
+              size={isMobile ? 'small' : 'middle'}
+            >
+              <Radio.Button value="bank"><DatabaseOutlined /> 从题库选题</Radio.Button>
+              <Radio.Button value="ai"><RobotOutlined /> AI生成题目</Radio.Button>
+            </Radio.Group>
+          </div>
+        )}
         <Tabs activeKey={createModalTab} onChange={(key) => setCreateModalTab(key)} items={[
           {
             key: 'generate',
-            label: '1. AI生成题目',
-            children: (
+            label: '1. 选择题目',
+            children: createSource === 'ai' ? (
               <Form form={generateForm} layout="vertical" onFinish={handleGenerateQuestions}>
                 <Form.Item label="出题方式" style={{ marginBottom: 12 }}>
                   <Radio.Group value={genMode} onChange={(e) => setGenMode(e.target.value)} buttonStyle="solid" size={isMobile ? 'small' : 'middle'}>
@@ -2413,6 +2594,135 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     : '提示：客观题（单选/多选/判断/填空）实际生成 N×3 道，每道题配 2 个相似变体；主观题按 N 道生成。'}
                 </div>
               </Form>
+            ) : (
+              <div>
+                  <Space style={{ marginBottom: 8 }} wrap>
+                    <Select
+                      placeholder="按科目筛选"
+                      style={{ width: 120 }}
+                      allowClear
+                      showSearch
+                      optionFilterProp="children"
+                      value={bankSubject}
+                      onChange={(v) => { setBankSubject(v); loadBank(1, { subject: v }); }}
+                    >
+                      {subjectOptions.map(s => <Option key={s} value={s}>{s}</Option>)}
+                    </Select>
+                    <Select
+                      placeholder="按题型筛选"
+                      style={{ width: 130 }}
+                      allowClear
+                      value={bankType}
+                      onChange={(v) => { setBankType(v); loadBank(1, { type: v }); }}
+                    >
+                      {typeOptions.map(t => <Option key={t.value} value={t.value}>{t.label}</Option>)}
+                    </Select>
+                    <Select
+                      placeholder="按难度筛选"
+                      style={{ width: 110 }}
+                      allowClear
+                      value={bankDifficulty}
+                      onChange={(v) => { setBankDifficulty(v); loadBank(1, { difficulty: v }); }}
+                    >
+                      {difficultyOptions.map(d => <Option key={d.value} value={d.value}>{d.label}</Option>)}
+                    </Select>
+                    <Input
+                      placeholder="搜索题干关键字"
+                      style={{ width: 180 }}
+                      value={bankKeyword}
+                      onChange={(e) => setBankKeyword(e.target.value)}
+                      onPressEnter={() => loadBank(1)}
+                    />
+                    <Button icon={<SearchOutlined />} onClick={() => loadBank(1)}>搜索</Button>
+                  </Space>
+                  <Table
+                    dataSource={bankQuestions}
+                    rowKey="id"
+                    size="small"
+                    loading={bankLoading}
+                    columns={[
+                      {
+                        title: '题干',
+                        dataIndex: 'content',
+                        render: (v: string) => <span style={{ fontSize: 13 }}>{v}</span>,
+                      },
+                      {
+                        title: '题型',
+                        dataIndex: 'type',
+                        width: 80,
+                        render: (v: string) => <Tag color="purple">{questionTypeFullName(v)}</Tag>,
+                      },
+                      {
+                        title: '知识点',
+                        dataIndex: 'knowledge_point',
+                        width: 120,
+                        render: (v: string) => v ? <Tag color="blue">{v}</Tag> : <span style={{ color: '#ccc' }}>-</span>,
+                      },
+                      {
+                        title: '难度',
+                        dataIndex: 'difficulty',
+                        width: 70,
+                        render: (v: string) => difficultyOptions.find(d => d.value === v)?.label || v || '-',
+                      },
+                    ]}
+                    pagination={{
+                      current: bankPage,
+                      pageSize: 10,
+                      total: bankTotal,
+                      onChange: (p) => loadBank(p),
+                      showTotal: (t) => `共 ${t} 题`,
+                    }}
+                    rowSelection={{
+                      selectedRowKeys: Object.keys(bankPicked).map(Number),
+                      onChange: handleBankSelectionChange,
+                    }}
+                    locale={{ emptyText: <Empty description="题库里没有符合条件的题目，可换个筛选条件或改用 AI 生成" /> }}
+                  />
+                  {/* 已选清单跨页保留，勾选后要能看见「到底选了哪几道」，否则翻页后就说不清了 */}
+                  {Object.keys(bankPicked).length > 0 && (
+                    <div style={{ marginTop: 12, padding: '10px 12px', background: '#f6f8fa', borderRadius: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>已选 {Object.keys(bankPicked).length} 道题</span>
+                        <Button size="small" type="link" onClick={() => setBankPicked({})}>清空已选</Button>
+                      </div>
+                      <div style={{ maxHeight: 96, overflowY: 'auto' }}>
+                        {Object.values(bankPicked).map((q: any, i: number) => (
+                          <div key={q.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 0' }}>
+                            <Tag color="blue">{i + 1}</Tag>
+                            <Tag>{questionTypeFullName(q.type)}</Tag>
+                            <span style={{ flex: 1, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q.content}</span>
+                            <Button
+                              type="text"
+                              size="small"
+                              danger
+                              icon={<DeleteOutlined />}
+                              onClick={() => setBankPicked(prev => {
+                                const next = { ...prev };
+                                delete next[q.id];
+                                return next;
+                              })}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+                    <Button icon={<ReloadOutlined />} onClick={() => loadBank(bankPage)} loading={bankLoading}>刷新</Button>
+                    <Button
+                      type="primary"
+                      style={{ flex: 1 }}
+                      icon={<DatabaseOutlined />}
+                      disabled={Object.keys(bankPicked).length === 0}
+                      onClick={startPreviewFromBank}
+                    >
+                      下一步：预览题目 →
+                    </Button>
+                  </div>
+                  <div style={{ textAlign: 'center', color: '#999', fontSize: 12, marginTop: 8 }}>
+                    提示：题库选题不消耗 AI 生成次数；下一步可逐题检查，编辑会同步更新题库里的原题。
+                  </div>
+              </div>
             )
           },
           {
@@ -2424,7 +2734,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 <Alert 
                   type="info" 
                   showIcon 
-                  message={genMode === 'paste'
+                  message={createSource === 'bank'
+                    ? `已从题库选出${generatedData.question_count}道题目，请逐题检查，不想要的点"删除"剔除`
+                    : genMode === 'paste'
                     ? `AI已整理${generatedData.question_count}道题目，请逐题检查内容与答案是否正确，点击"编辑"可修改`
                     : `共${generatedData.question_count}道主题，含${generatedData.total_generated}道含变体。点击"编辑"可修改题目内容/答案，点击"▼ 查看变体题目"查看备用题`}
                   style={{ marginBottom: 12 }} 
@@ -2543,7 +2855,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 </div>
               </div>
             ) : (
-              <Empty description="请先在第一步生成题目" />
+              <Empty description="请先在第一步选择题目（题库勾选或 AI 生成）" />
             )
           },
           {
@@ -2595,7 +2907,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 <Button type="primary" htmlType="submit" block>确认发布作业</Button>
               </Form>
             ) : (
-              <Empty description="请先在第一步生成题目" />
+              <Empty description="请先在第一步选择题目（题库勾选或 AI 生成）" />
             )
           }
         ]} />
