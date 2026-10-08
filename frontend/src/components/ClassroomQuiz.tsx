@@ -9,10 +9,12 @@ import {
   UserOutlined, EyeOutlined, PlayCircleOutlined, RobotOutlined,
   UserSwitchOutlined, SearchOutlined, DeleteOutlined, CodeOutlined,
   CopyOutlined, DownloadOutlined, UploadOutlined,
-  KeyOutlined, ApiOutlined
+  KeyOutlined, ApiOutlined, LoadingOutlined, HistoryOutlined
 } from '@ant-design/icons';
 import { classroomQuizAPI, questionBankAPI, itemAPI, equipmentAPI, adminAPI, agentTokenAPI, agentAPI } from '../utils/api';
-import { pollAiTask } from '../utils/aiTask';
+import { pollAiTask, AI_TASK_URLS } from '../utils/aiTask';
+import { readPendingQuizGen, writePendingQuizGen, clearPendingQuizGen } from '../utils/quizTaskResume';
+import RewardLogDrawer from './RewardLogDrawer';
 import { useAuthStore } from '../store/authStore';
 import { getPetThumbUrl } from '../utils/petImage';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
@@ -265,6 +267,10 @@ const ClassroomQuiz: React.FC = () => {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [rewardModalOpen, setRewardModalOpen] = useState(false);
+  // 跨课堂的奖励发放记录抽屉
+  const [rewardLogOpen, setRewardLogOpen] = useState(false);
+  // 从课堂详情打开记录时带上「只看这一场」的预置筛选
+  const [rewardLogPreset, setRewardLogPreset] = useState<{ quizId?: number; classId?: number }>({});
   const [selectedQuiz, setSelectedQuiz] = useState<any>(null);
   const [quizDetail, setQuizDetail] = useState<any>(null);
   const [questions, setQuestions] = useState<any[]>([]);
@@ -356,10 +362,24 @@ const ClassroomQuiz: React.FC = () => {
   const [aiProgress, setAiProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
   const [aiQuestions, setAiQuestions] = useState<any[]>([]);
   const [aiSelected, setAiSelected] = useState<Set<number>>(new Set());
+  /**
+   * 「接回上一次未完成的出题」的现场。
+   *
+   * resumeInFlightRef：轮询已挂着时置位，避免再点一次按钮起两个循环；
+   * restoreFormRef：弹窗重新打开、表单挂载之后才回填，出题要求不会白填一遍。
+   */
+  const quizResumeInFlightRef = useRef(false);
+  const quizRestoreFormRef = useRef<{ mode: string; values: any } | null>(null);
 
   // 奖励：物品 / 装备列表
   const [items, setItems] = useState<any[]>([]);
   const [equipments, setEquipments] = useState<any[]>([]);
+  // 「已加载」与「正在加载」要分开：只判断items.length===0 的话，
+  // 请求失败时下拉会永远转圈，看起来像还在加载
+  const [itemsLoaded, setItemsLoaded] = useState(false);
+  const [equipmentsLoaded, setEquipmentsLoaded] = useState(false);
+  const [itemsLoading, setItemsLoading] = useState(false);
+  const [equipmentsLoading, setEquipmentsLoading] = useState(false);
 
   // AI生成次数额度（与发布作业共用）
   const [genLimit, setGenLimit] = useState<{ daily_limit: number; daily_used: number; daily_remaining: number; global_tokens_remaining: number } | null>(null);
@@ -384,15 +404,27 @@ const ClassroomQuiz: React.FC = () => {
     return () => { if (rollTimer.current) clearInterval(rollTimer.current); };
   }, []);
 
-  // 奖励类型为物品/装备时，懒加载对应列表
+  // 奖励类型为物品/装备时，懒加载对应列表。
+  // 用教师专用的全量接口（/items/all）：原先复用了学生商店货架（/items），
+  // 被 shop_enabled 开关和「可售类型」过滤双重拦截，403 又被下面的 catch 吞掉，
+  // 表现为选「物品」后下拉一片空白、还一直转圈。加载失败要明确说出来，
+  // 否则老师只会以为是自己哪里点错了。
   useEffect(() => {
-    if (rewardModalOpen && rewardType === 'item' && items.length === 0) {
-      itemAPI.getItems().then((res: any) => setItems(res.data.items || [])).catch(() => {});
+    if (rewardModalOpen && rewardType === 'item' && !itemsLoaded) {
+      setItemsLoading(true);
+      itemAPI.getAllItems()
+        .then((res: any) => { setItems(res.data.items || []); setItemsLoaded(true); })
+        .catch((e: any) => message.error(e?.response?.data?.error || '物品列表加载失败，请稍后重试'))
+        .finally(() => setItemsLoading(false));
     }
-    if (rewardModalOpen && rewardType === 'equipment' && equipments.length === 0) {
-      equipmentAPI.getAll().then((res: any) => setEquipments(res.data.equipments || [])).catch(() => {});
+    if (rewardModalOpen && rewardType === 'equipment' && !equipmentsLoaded) {
+      setEquipmentsLoading(true);
+      equipmentAPI.getAll()
+        .then((res: any) => { setEquipments(res.data.equipments || []); setEquipmentsLoaded(true); })
+        .catch((e: any) => message.error(e?.response?.data?.error || '装备列表加载失败，请稍后重试'))
+        .finally(() => setEquipmentsLoading(false));
     }
-  }, [rewardModalOpen, rewardType]);
+  }, [rewardModalOpen, rewardType, itemsLoaded, equipmentsLoaded]);
 
   const loadClasses = async () => {
     try {
@@ -501,7 +533,89 @@ const ClassroomQuiz: React.FC = () => {
     }
   };
 
+  /**
+   * 出题结果落地：填进题目勾选区并全选。
+   * 首次出题和「接回上次未完成的出题」共用，避免两处逻辑漂移。
+   */
+  const applyGeneratedQuiz = (data: any) => {
+    const list = data?.questions || [];
+    setAiQuestions(list);
+    setAiSelected(new Set(list.map((_: any, i: number) => i)));
+    if (data?.notice) {
+      message.warning(`${data.notice}，已生成 ${list.length} 道题`);
+    } else {
+      message.success(`AI整理出 ${list.length} 道题目，请勾选要使用的题目`);
+    }
+  };
+
+  /**
+   * 接回「上一次没走完的出题任务」。
+   *
+   * 课堂出题动辄一两分钟，老师看到进度条走到一半会顺手叉掉弹窗或切去别的页面。
+   * 这时重新点「AI生成题目」只会撞上后端的同类任务互斥（409），
+   * 或者干脆另开一个新任务、白扣一次生成额度——而原来那个其实还在好好跑。
+   *
+   * @returns 是否接上了某个任务；false 表示没有存档/已失效/已在轮询中，调用方可走全新流程。
+   */
+  const resumePendingQuizGen = async (): Promise<boolean> => {
+    if (!user || quizResumeInFlightRef.current) return false;
+    const stored = readPendingQuizGen(user.id);
+    if (!stored) return false;
+
+    quizResumeInFlightRef.current = true;
+    setAiLoading(true);
+    setCreateSource('ai');
+    setAiProgress({ percent: 0, done: 0, total: stored.total || 1, current: '正在接回上次未完成的出题…' });
+    if (!quizRestoreFormRef.current) {
+      quizRestoreFormRef.current = { mode: stored.mode, values: stored.formValues };
+    }
+    try {
+      const data = await pollAiTask(stored.taskId, AI_TASK_URLS.classroomQuizTask, setAiProgress);
+      // 标记完成但保留存档：老师中途关掉弹窗、甚至刷新页面后回来，
+      // 仍能把这批题取回来接着勾选保存，而不是让已出的题和已扣的额度白扔
+      writePendingQuizGen(user.id, { ...stored, done: true });
+      applyGeneratedQuiz(data);
+      return true;
+    } catch (e: any) {
+      // 任务失效（服务重启/超过保留期）或已失败：清掉存档，
+      // 否则老师每次打开都卡在「接回中」，永远走不到正常的新建流程
+      clearPendingQuizGen(user.id);
+      message.warning(e?.message || '上次未完成的出题已失效，请重新发起');
+      return false;
+    } finally {
+      setAiProgress(null);
+      setAiLoading(false);
+      quizResumeInFlightRef.current = false;
+    }
+  };
+
+  /**
+   * 点「创建课堂做题」。
+   *
+   * 不是无脑开一个空白弹窗：上一次没走完的出题（还在跑 / 出完了但没保存）
+   * 都要接着继续，而不是清掉重来——那会白等一两分钟，还白扣一次生成额度。
+   */
+  const openCreateModal = () => {
+    loadGenLimit();
+    setCreateModalOpen(true);
+    const stored = readPendingQuizGen(user?.id);
+    if (!stored) return;
+    setCreateSource('ai');
+    // 结果还在内存里就别再查一遍后端了
+    if (stored.done && aiQuestions.length > 0) return;
+    resumePendingQuizGen();
+  };
+
   const handleGenerateAI = async () => {
+    // 上一次出题还在后台跑：接回同一个任务看进度，不要重新提交
+    const stored = readPendingQuizGen(user?.id);
+    if (stored && !stored.done) {
+      if (await resumePendingQuizGen()) {
+        message.info('已接回刚才未完成的出题，正在显示它的进度');
+      }
+      return;
+    }
+
     const values = createForm.getFieldsValue(['subject', 'ai_mode', 'ai_topic', 'ai_requirements', 'ai_raw_text', 'ai_type', 'ai_count', 'ai_difficulty', 'ai_batches']);
     if (!values.subject) { message.warning('请先选择科目'); return; }
     const mode = values.ai_mode || 'topic';
@@ -538,6 +652,7 @@ const ClassroomQuiz: React.FC = () => {
       payload.raw_text = values.ai_raw_text;
     }
     setAiLoading(true);
+    quizResumeInFlightRef.current = true;
     setAiProgress({ percent: 0, done: 0, total: batches.length || 1, current: '正在提交出题任务' });
     try {
       // 后端改为后台任务：提交只返回 task_id，出题过程靠轮询拿进度
@@ -545,22 +660,44 @@ const ClassroomQuiz: React.FC = () => {
       const taskId: string | undefined = res.data?.task_id;
       if (!taskId) throw new Error('后端未返回任务号，请确认服务端已更新到最新版本');
 
-      const data = await pollAiTask(taskId, '/classroom-quiz/task/:taskId', setAiProgress);
-      setAiProgress(null);
+      // 拿到任务号就立刻存档：中途叉掉弹窗、切页面、刷新，回来都接得上
+      const archive = {
+        taskId,
+        mode,
+        formValues: { ...values },
+        total: batches.length || 1,
+        done: false,
+        createdAt: Date.now(),
+      };
+      writePendingQuizGen(user?.id, archive);
 
-      const list = data.questions || [];
-      setAiQuestions(list);
-      setAiSelected(new Set(list.map((_: any, i: number) => i)));
-      if (data.notice) {
-        message.warning(`${data.notice}，已生成 ${list.length} 道题`);
-      } else {
-        message.success(`AI整理出 ${list.length} 道题目，请勾选要使用的题目`);
-      }
+      const data = await pollAiTask(taskId, AI_TASK_URLS.classroomQuizTask, setAiProgress);
+      // 跑完也留着存档（标记 done）：老师关掉弹窗再回来能把这批题取回来接着勾选保存
+      writePendingQuizGen(user?.id, { ...archive, done: true });
+      applyGeneratedQuiz(data);
     } catch (e: any) {
-      message.error(e?.response?.data?.error || e?.message || 'AI出题失败');
+      const status = e?.response?.status;
+      if (status === 409 && e?.response?.data?.task_id) {
+        // 后端的同类任务互斥：上一次那个任务其实还在跑。
+        // 不当作错误报给老师，直接接回它看进度——这正是老师点第二次时最需要的
+        writePendingQuizGen(user?.id, {
+          taskId: e.response.data.task_id,
+          mode,
+          formValues: { ...values },
+          total: batches.length || 1,
+          done: false,
+          createdAt: Date.now(),
+        });
+        message.warning('已有一个出题任务正在进行，已为你接上它的进度');
+        if (await resumePendingQuizGen()) return;
+      } else {
+        clearPendingQuizGen(user?.id);
+        message.error(e?.response?.data?.error || e?.message || 'AI出题失败');
+      }
     } finally {
       setAiProgress(null);
       setAiLoading(false);
+      quizResumeInFlightRef.current = false;
       loadGenLimit();
     }
   };
@@ -1043,9 +1180,20 @@ const ClassroomQuiz: React.FC = () => {
           <PlayCircleOutlined style={{ marginRight: 8 }} />
           课堂做题
         </Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>
-          创建课堂做题
-        </Button>
+        <Space>
+          {/* 奖励发出去之后要能查：原先只有单场课堂的详情里有记录，
+              「一共发了多少、发给谁都查不到」，这里补一个跨课堂的发放记录入口 */}
+          <Button icon={<HistoryOutlined />} onClick={() => { setRewardLogPreset({}); setRewardLogOpen(true); }}>
+            发放记录
+          </Button>
+          <Button
+            type="primary"
+            icon={aiLoading ? <LoadingOutlined /> : <PlusOutlined />}
+            onClick={openCreateModal}
+          >
+            {aiLoading ? '查看出题进度' : '创建课堂做题'}
+          </Button>
+        </Space>
       </div>
 
       <Table
@@ -1062,6 +1210,7 @@ const ClassroomQuiz: React.FC = () => {
         title="创建课堂做题"
         open={createModalOpen}
         onCancel={() => {
+          const wasGenerating = aiLoading;
           setCreateModalOpen(false);
           createForm.resetFields();
           setCreateSource('manual');
@@ -1072,6 +1221,10 @@ const ClassroomQuiz: React.FC = () => {
           setImportText('');
           setImportedQuestions([]);
           setImportSelected(new Set());
+          if (wasGenerating) {
+            // 出题任务还在后台跑，撤销不了；存档留着，下次打开「创建课堂做题」直接接回它
+            message.info('AI 还在后台继续出题，完成后再点「查看出题进度」就能接着用');
+          }
         }}
         onOk={() => createForm.submit()}
         width={880}
@@ -1084,6 +1237,22 @@ const ClassroomQuiz: React.FC = () => {
           if (mySubject) preset.subject = mySubject;
           if (defaultClassId) preset.class_id = defaultClassId;
           if (Object.keys(preset).length > 0) createForm.setFieldsValue(preset);
+          // 接回上一次未完成的出题：回填当时填的要求，让老师看到「是在按什么出题」
+          const restore = quizRestoreFormRef.current;
+          quizRestoreFormRef.current = null;
+          if (restore) {
+            setCreateSource('ai');
+            createForm.setFieldsValue({ ...restore.values });
+            return;
+          }
+          // 题目已经生成出来、只是还没保存：直接回到出题区，别让老师以为白跑了
+          const stored = readPendingQuizGen(user?.id);
+          if (stored) {
+            setCreateSource('ai');
+            if (stored.done && !aiQuestions.length) {
+              resumePendingQuizGen();
+            }
+          }
         }}
       >
         <Form form={createForm} layout="vertical" onFinish={handleCreate} onValuesChange={handleQuizClassChange}>
@@ -1378,6 +1547,7 @@ const ClassroomQuiz: React.FC = () => {
                   <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
                     {aiProgress.current}
                     {aiProgress.total > 1 && `（${aiProgress.done}/${aiProgress.total} 组题型已完成）`}
+                    ，可以关掉弹窗，出题会在后台继续；随时点「查看出题进度」都能接回这个任务
                   </div>
                 </div>
               )}
@@ -1731,13 +1901,32 @@ const ClassroomQuiz: React.FC = () => {
                   key: 'rewards',
                   label: `奖励记录 (${rewards.length})`,
                   children: (
-                    <Table
-                      dataSource={rewards}
-                      columns={rewardColumns}
-                      rowKey="id"
-                      pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
-                      size="small"
-                    />
+                    <>
+                      <div style={{ marginBottom: 8, fontSize: 12, color: '#888' }}>
+                        这里只显示本场的发放记录；要看全部课堂的，去列表页「发放记录」。
+                      </div>
+                      <Table
+                        dataSource={rewards}
+                        columns={rewardColumns}
+                        rowKey="id"
+                        pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
+                        size="small"
+                      />
+                      {rewards.length > 0 && (
+                        <div style={{ marginTop: 8 }}>
+                          <Button
+                            size="small"
+                            icon={<HistoryOutlined />}
+                            onClick={() => {
+                              setRewardLogPreset({ quizId: quizDetail.id, classId: quizDetail.class_id });
+                              setRewardLogOpen(true);
+                            }}
+                          >
+                            在全部发放记录中查看
+                          </Button>
+                        </div>
+                      )}
+                    </>
                   ),
                 },
                 {
@@ -1802,6 +1991,14 @@ const ClassroomQuiz: React.FC = () => {
           {randomRolling && <div style={{ marginTop: 12, color: '#999' }}>正在随机抽取中...</div>}
         </div>
       </Modal>
+
+      {/* 课堂奖励发放记录（跨课堂聚合，可按班级/类型/关键字筛） */}
+      <RewardLogDrawer
+        open={rewardLogOpen}
+        onClose={() => setRewardLogOpen(false)}
+        presetQuizId={rewardLogPreset.quizId ?? null}
+        presetClassId={rewardLogPreset.classId ?? null}
+      />
 
       {/* 发放奖励 */}
       <Modal
@@ -1889,8 +2086,9 @@ const ClassroomQuiz: React.FC = () => {
                     <Select
                       showSearch
                       optionFilterProp="label"
-                      loading={items.length === 0}
-                      placeholder="选择要发放的物品"
+                      loading={itemsLoading}
+                      placeholder={itemsLoading ? '正在加载物品...' : items.length === 0 ? '暂无可发放的物品' : '选择要发放的物品'}
+                      notFoundContent={itemsLoading ? '加载中...' : '没有可发放的物品'}
                       options={items.map((it: any) => ({
                         value: it.id,
                         label: `${it.name}（${it.price ?? '-'}金币）`,
@@ -1902,8 +2100,9 @@ const ClassroomQuiz: React.FC = () => {
                     <Select
                       showSearch
                       optionFilterProp="label"
-                      loading={equipments.length === 0}
-                      placeholder="选择要发放的装备"
+                      loading={equipmentsLoading}
+                      placeholder={equipmentsLoading ? '正在加载装备...' : equipments.length === 0 ? '暂无可发放的装备' : '选择要发放的装备'}
+                      notFoundContent={equipmentsLoading ? '加载中...' : '没有可发放的装备'}
                       options={equipments.map((eq: any) => ({
                         value: eq.id,
                         label: `${eq.name}（${({ common: '普通', rare: '稀有', epic: '史诗', legendary: '传说' } as Record<string, string>)[eq.rarity] || eq.rarity}）`,
@@ -1920,12 +2119,20 @@ const ClassroomQuiz: React.FC = () => {
               )}
             </Col>
           </Row>
-          <Form.Item name="reward_name" label="奖励名称（选物品/装备时自动填写）">
-            <Input placeholder="如：100金币、体力药剂" />
-          </Form.Item>
-          <Form.Item name="reason" label="奖励原因（可选）">
-            <Input placeholder="如：回答正确、表现优秀" />
-          </Form.Item>
+          {/* 奖励名称与奖励原因并排：原来两个各占一整行，弹窗被撑得很高，
+              金币类奖励只需填两项，竖着摆白白多占一半高度 */}
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="reward_name" label="奖励名称（选物品/装备时自动填写）">
+                <Input placeholder="如：100金币、体力药剂" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="reason" label="奖励原因（可选）">
+                <Input placeholder="如：回答正确、表现优秀" />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
 

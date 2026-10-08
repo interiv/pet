@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Button, Select, InputNumber, Input, Tag, Avatar, Empty, Spin, message, Checkbox, Space, Modal, Table, Slider, Progress
+  Button, Select, InputNumber, Input, Tag, Avatar, Empty, Spin, message, Checkbox, Space, Modal, Table, Slider, Progress, Alert
 } from 'antd';
 import {
   LeftOutlined, RightOutlined, CloseOutlined, ThunderboltOutlined,
@@ -10,7 +10,9 @@ import {
 } from '@ant-design/icons';
 import { pinyin } from 'pinyin-pro';
 import { classroomQuizAPI, itemAPI, equipmentAPI } from '../utils/api';
-import { pollAiTask } from '../utils/aiTask';
+import { pollAiTask, AI_TASK_URLS } from '../utils/aiTask';
+import { readPendingQuizJudge, writePendingQuizJudge, clearPendingQuizJudge } from '../utils/quizTaskResume';
+import { useAuthStore } from '../store/authStore';
 import { getPetThumbUrl } from '../utils/petImage';
 
 const REWARD_TYPES: Record<string, string> = {
@@ -39,6 +41,7 @@ interface ConsoleProps {
 }
 
 const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, onRewarded }) => {
+  const { user } = useAuthStore();
   // 题目展示
   const [index, setIndex] = useState(0);
   const [autoPlay, setAutoPlay] = useState(false);
@@ -71,6 +74,11 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
   // 物品 / 装备列表
   const [items, setItems] = useState<any[]>([]);
   const [equipments, setEquipments] = useState<any[]>([]);
+  // 「已加载」与「正在加载」分开：只判断 length===0 的话，请求失败时下拉会永远转圈
+  const [itemsLoaded, setItemsLoaded] = useState(false);
+  const [equipmentsLoaded, setEquipmentsLoaded] = useState(false);
+  const [itemsLoading, setItemsLoading] = useState(false);
+  const [equipmentsLoading, setEquipmentsLoading] = useState(false);
 
   // 语音朗读（TTS）
   const [voices, setVoices] = useState<any[]>([]);
@@ -97,6 +105,10 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     return isNaN(v) ? 1 : Math.min(1.8, Math.max(0.7, v));
   });
   const recRef = useRef<any>(null);
+  /** 接回未完成判分时的防重入闸：轮询已挂着就别再起第二个循环 */
+  const judgeResumeInFlightRef = useRef(false);
+  /** 进入控制台时只尝试恢复一次 */
+  const judgeAutoResumedRef = useRef(false);
 
   // 题目课件 / 参考答案（有就显示按钮，课件可投屏给学生操作后再作答）
   const [showCourseware, setShowCourseware] = useState(false);
@@ -117,7 +129,18 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     }
   }, [questions.length, index]);
 
-  // ===== 语音朗读 =====
+  // 打开控制台时自动接回上一次没跑完的 AI 判分。
+// 老师误刷新、或切到别的课堂再回来时，之前那次判分不该白等——
+// 判分结果会展示出来等TA确认，不会自动记进答题记录。
+useEffect(() => {
+  if (!user || !quiz?.id || judgeAutoResumedRef.current) return;
+  judgeAutoResumedRef.current = true;
+  if (readPendingQuizJudge(user.id)) {
+    resumePendingJudge();
+  }
+}, [user, quiz?.id]);
+
+// ===== 语音朗读 =====
   const loadVoices = () => {
     const synth = window.speechSynthesis;
     if (!synth) return;
@@ -262,11 +285,22 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
     } else {
       setRewardValue(null);
     }
-    if ((rewardType === 'item' && items.length === 0)) {
-      itemAPI.getItems().then((res: any) => setItems(res.data.items || [])).catch(() => {});
+    // 用教师专用的全量接口（/items/all）：原先复用了学生商店货架（/items），
+    // 被 shop_enabled 开关和「可售类型」过滤双重拦截，403 又被 catch 吞掉，
+    // 表现为选「物品」后下拉一片空白。
+    if ((rewardType === 'item' && !itemsLoaded)) {
+      setItemsLoading(true);
+      itemAPI.getAllItems()
+        .then((res: any) => { setItems(res.data.items || []); setItemsLoaded(true); })
+        .catch((e: any) => message.error(e?.response?.data?.error || '物品列表加载失败，请稍后重试'))
+        .finally(() => setItemsLoading(false));
     }
-    if ((rewardType === 'equipment' && equipments.length === 0)) {
-      equipmentAPI.getAll().then((res: any) => setEquipments(res.data.equipments || [])).catch(() => {});
+    if ((rewardType === 'equipment' && !equipmentsLoaded)) {
+      setEquipmentsLoading(true);
+      equipmentAPI.getAll()
+        .then((res: any) => { setEquipments(res.data.equipments || []); setEquipmentsLoaded(true); })
+        .catch((e: any) => message.error(e?.response?.data?.error || '装备列表加载失败，请稍后重试'))
+        .finally(() => setEquipmentsLoading(false));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rewardType]);
@@ -415,8 +449,119 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
   };
 
   // ===== AI 评判 =====
+  /**
+   * 判分结果落地。
+   *
+   * autoSave=true  是刚判完这一次，顺手把答案记进本课堂的答题记录；
+   * autoSave=false 是「接回上次未完成的判分」——那时老师可能已经切到别的题、
+   *   换了答题人，自动保存容易把判分记到别人头上，所以只展示，由TA确认后再存。
+   */
+  const showJudgeResult = async (
+    r: any,
+    ctx: { student: any; questionId?: number; studentId?: number; answer: string; questionIndex: number; autoSave: boolean }
+  ) => {
+    setJudgeResult({
+      ...r,
+      student: ctx.student,
+      answer: ctx.answer,
+      questionIndex: ctx.questionIndex,
+      coins: 0,
+      pendingSave: ctx.autoSave ? null : {
+        questionId: ctx.questionId,
+        studentId: ctx.studentId,
+        answerText: ctx.answer,
+      },
+    });
+    if (!ctx.autoSave) return;
+    // autoSave=true 只来自「刚刚判完这一次」，题号与答题人必然都在；
+    // 恢复路径不走这里（那批由老师点确认后再存）
+    if (ctx.questionId == null || ctx.studentId == null) return;
+    try {
+      const saved = await classroomQuizAPI.saveAnswer(quiz.id, {
+        question_id: ctx.questionId,
+        student_id: ctx.studentId,
+        answer_text: ctx.answer,
+        judged_by_ai: true,
+        is_correct: r.is_correct,
+        score: r.score,
+        coin_rewarded: 0,
+      });
+      setJudgeResult((prev: any) => ({ ...prev, answerId: saved.data.answer_id }));
+    } catch (e) { /* 记录失败不影响展示 */ }
+    loadAnswers();
+    stopSpeech();
+  };
+
+  /** 老师确认后，把「接回来」的那次判分正式记入答题记录 */
+  const savePendingJudge = async () => {
+    const p = judgeResult?.pendingSave;
+    if (!p?.questionId || !p?.studentId) return;
+    try {
+      const saved = await classroomQuizAPI.saveAnswer(quiz.id, {
+        question_id: p.questionId,
+        student_id: p.studentId,
+        answer_text: p.answerText,
+        judged_by_ai: true,
+        is_correct: judgeResult.is_correct,
+        score: judgeResult.score,
+        coin_rewarded: 0,
+      });
+      setJudgeResult((prev: any) => ({ ...prev, answerId: saved.data.answer_id, pendingSave: null }));
+      message.success('判分结果已保存到本课堂的答题记录');
+      loadAnswers();
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || '保存失败，请重试');
+    }
+  };
+
+  /**
+   * 接回「上一次没跑完的 AI 判分」。
+   *
+   * 判分要等大模型读完学生的作答再给分，几十秒起步。老师可能误刷新、
+   * 切到别的课堂再回来，原来那次判分就白跑了。存档里记着判的是哪道题、
+   * 谁的作答，恢复出来仍能对上。
+   */
+  const resumePendingJudge = async (): Promise<boolean> => {
+    if (!user || judgeResumeInFlightRef.current) return false;
+    const stored = readPendingQuizJudge(user.id);
+    if (!stored) return false;
+
+    judgeResumeInFlightRef.current = true;
+    setJudging(true);
+    setJudgeProgress({ percent: 0, done: 0, total: 1, current: '正在接回上次未完成的 AI 评判…' });
+    try {
+      const r = await pollAiTask(stored.taskId, AI_TASK_URLS.classroomQuizTask, setJudgeProgress);
+      clearPendingQuizJudge(user.id);
+      const name = stored.studentName || '学生';
+      await showJudgeResult(r, {
+        student: { id: stored.studentId, real_name: name, username: name },
+        questionId: stored.questionId,
+        studentId: stored.studentId,
+        answer: stored.studentAnswer,
+        questionIndex: stored.questionIndex ?? 0,
+        autoSave: false,
+      });
+      return true;
+    } catch (e: any) {
+      clearPendingQuizJudge(user.id);
+      message.warning(e?.message || '上次未完成的 AI 评判已失效，请重新提交');
+      return false;
+    } finally {
+      setJudgeProgress(null);
+      setJudging(false);
+      judgeResumeInFlightRef.current = false;
+    }
+  };
+
   const handleJudge = async () => {
     if (!currentQuestion) return;
+    // 上一次判分还在后台跑：接回它看结果，而不是撞上 409 或重复提交一次
+    if (readPendingQuizJudge(user?.id)) {
+      if (await resumePendingJudge()) {
+        message.info('已接回刚才未完成的 AI 评判，这是它的结果');
+      }
+      return;
+    }
     if (!answerText.trim()) {
       message.warning('请先录入学生回答：点麦克风语音录入，或手动输入');
       return;
@@ -433,7 +578,18 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
       return;
     }
     setJudging(true);
+    judgeResumeInFlightRef.current = true;
     setJudgeProgress({ percent: 0, done: 0, total: 1, current: 'AI 正在评判作答' });
+    const archive = {
+      subject: quiz.subject,
+      questionId: currentQuestion.id,
+      questionText: currentQuestion.question_text,
+      studentAnswer: answerText,
+      studentId: answerer.id,
+      studentName: answerer.real_name || answerer.username,
+      questionIndex: index,
+      createdAt: Date.now(),
+    };
     try {
       // 后端改为后台任务：提交只返回 task_id，判分过程靠轮询拿进度
       const res = await classroomQuizAPI.aiJudge({
@@ -443,28 +599,34 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
       });
       const taskId: string | undefined = res.data?.task_id;
       if (!taskId) throw new Error('后端未返回任务号，请确认服务端已更新到最新版本');
-      const r = await pollAiTask(taskId, '/classroom-quiz/task/:taskId', setJudgeProgress);
-      setJudgeProgress(null);
-      setJudgeResult({ ...r, student: answerer, answer: answerText, questionIndex: index, coins: 0 });
-      try {
-        const saved = await classroomQuizAPI.saveAnswer(quiz.id, {
-          question_id: currentQuestion.id,
-          student_id: answerer.id,
-          answer_text: answerText,
-          judged_by_ai: true,
-          is_correct: r.is_correct,
-          score: r.score,
-          coin_rewarded: 0,
-        });
-        setJudgeResult((prev: any) => ({ ...prev, answerId: saved.data.answer_id }));
-      } catch (e) { /* 记录失败不影响展示 */ }
-      loadAnswers();
-      stopSpeech();
+      // 拿到任务号就存档：中途刷新/切走再回来，判分结果还能接回来
+      writePendingQuizJudge(user?.id, { ...archive, taskId });
+
+      const r = await pollAiTask(taskId, AI_TASK_URLS.classroomQuizTask, setJudgeProgress);
+      clearPendingQuizJudge(user?.id);
+      await showJudgeResult(r, {
+        student: answerer,
+        questionId: currentQuestion.id,
+        studentId: answerer.id,
+        answer: answerText,
+        questionIndex: index,
+        autoSave: true,
+      });
     } catch (e: any) {
-      message.error(e?.response?.data?.error || e?.message || 'AI评判失败');
+      if (e?.response?.status === 409 && e?.response?.data?.task_id) {
+        // 后端同类任务互斥：上一次那个判分还在跑，直接接回它
+        writePendingQuizJudge(user?.id, { ...archive, taskId: e.response.data.task_id });
+        message.warning('已有一个 AI 判分任务正在进行，已为你接上它的结果');
+        judgeResumeInFlightRef.current = false;
+        if (await resumePendingJudge()) return;
+      } else {
+        clearPendingQuizJudge(user?.id);
+        message.error(e?.response?.data?.error || e?.message || 'AI评判失败');
+      }
     } finally {
       setJudgeProgress(null);
       setJudging(false);
+      judgeResumeInFlightRef.current = false;
     }
   };
 
@@ -597,7 +759,23 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
             </div>
           )}
           <div style={{ color: '#888', fontSize: 'clamp(14px, 1.6vw, 20px)', marginTop: 12 }}>回答：{judgeResult.answer}</div>
+          {/* 接回上次判分的结果：先不落库，等老师确认再记进答题记录 */}
+          {judgeResult.pendingSave && (
+            <div style={{ marginTop: 16 }}>
+              <Alert
+                type="warning"
+                showIcon
+                message="这是接回的上一次判分结果"
+                description={`第 ${judgeResult.questionIndex + 1} 题 · ${judgeResult.student.real_name || judgeResult.student.username}的作答。确认无误后再保存到答题记录，避免记错人。`}
+              />
+            </div>
+          )}
           <Space style={{ marginTop: 24 }} wrap>
+            {judgeResult.pendingSave && (
+              <Button type="primary" icon={<CheckCircleOutlined />} onClick={savePendingJudge}>
+                保存这个判分结果
+              </Button>
+            )}
             {judgeResult.coins > 0 ? (
               <Tag color="gold" style={{ fontSize: 16, padding: '4px 12px' }}>已发放 {judgeResult.coins} 金币</Tag>
             ) : (
@@ -667,7 +845,9 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
       );
     }
     return (
-      <div style={{ textAlign: 'center', width: '100%' }}>
+      // 题目改为左对齐：题干常有二三行，居中时每行都长短不齐，学生视线要来回跳，
+      // 投影到大屏上尤其明显。左对齐后第一行起始位置固定，读起来更顺。
+      <div style={{ textAlign: 'left', width: '100%' }}>
         <div style={{ color: '#666', fontSize: 'clamp(16px, 1.8vw, 24px)', marginBottom: 12 }}>
           第 {index + 1} / {questions.length} 题
           {autoPlay && <Tag color="blue" style={{ marginLeft: 12 }}>自动播放中</Tag>}
@@ -840,7 +1020,9 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
                   loading={judging}
                   onClick={handleJudge}
                 >
-                  {judging ? `AI评判中... 已等待${judgeSeconds}秒` : '提交AI评判'}
+                  {judging
+                    ? `AI评判中... 已等待${judgeSeconds}秒`
+                    : readPendingQuizJudge(user?.id) ? '查看上次判分结果' : '提交AI评判'}
                 </Button>
                 {/* 判分进度：让老师看得见在做什么，而不是一个停不下来的转圈 */}
                 {judging && judgeProgress && (
@@ -955,7 +1137,8 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
                   optionFilterProp="label"
                   style={{ flex: 2 }}
                   placeholder="选择物品/装备"
-                  loading={rewardType === 'item' ? items.length === 0 : equipments.length === 0}
+                  loading={rewardType === 'item' ? itemsLoading : equipmentsLoading}
+                  notFoundContent={(rewardType === 'item' ? itemsLoading : equipmentsLoading) ? '加载中...' : '没有可发放的物品/装备'}
                   value={rewardValue ?? undefined}
                   options={rewardType === 'item'
                     ? items.map((it: any) => ({ value: it.id, label: `${it.name}（${it.price ?? '-'}金币）`, name: it.name }))

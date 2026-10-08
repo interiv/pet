@@ -11,7 +11,7 @@ const { getChinaDate } = require('../config/timezone');
 const { getAIConfig, isAIConfigured } = require('../config/ai');
 const { chatCompletion } = require('../services/aiClient');
 const { getPrompt, fillTemplate } = require('../config/prompts');
-const { grantReward } = require('../services/rewards');
+const { grantReward, recordItemChange } = require('../services/rewards');
 const { collectQuestions, normalizeQuestion } = require('../services/aiQuestion');
 const { startAsyncTask, handleTaskQuery } = require('../utils/asyncTask');
 const { beginUsage, settleUsage, countBilledUsage } = require('../services/aiUsage');
@@ -739,6 +739,119 @@ router.get('/classroom-quiz', authenticateToken, (req, res) => {
 });
 
 // 获取课堂做题详情（含题目和奖励记录）
+/**
+ * 奖励记录里「物品/装备的名称」SQL 片段。
+ *
+ * 为什么需要：
+ * classroom_quiz_rewards.reward_value 这一列对不同类型存的东西不一样——
+ * gold/exp 存数量（100），item/equipment 存的是**物品 id**。
+ * 于是日志界面直接显示 reward_value 时，物品奖励会显示成一个裸数字，
+ * 老师根本看不出发的是什么。
+ *
+ * 这里按 reward_type 反查回名称（reward_name 为空时兜底），
+ * 让前端能显示成「体力药剂 ×1」而不是「1」。
+ * 写成标量子查询而不是 LEFT JOIN，是为了让两个查询都能直接复用同一段 SQL。
+ */
+const REWARD_REF_NAME_SQL = `
+  COALESCE(
+    cqr.reward_name,
+    CASE cqr.reward_type
+      WHEN 'item' THEN (SELECT i.name FROM items i WHERE i.id = CAST(cqr.reward_value AS INTEGER))
+      WHEN 'equipment' THEN (SELECT e.name FROM equipment e WHERE e.id = CAST(cqr.reward_value AS INTEGER))
+      ELSE NULL
+    END
+  ) AS reward_ref_name
+`;
+
+/**
+ * 课堂奖励发放日志（跨课堂聚合）。
+ *
+ * 单场课堂的记录早就写进 classroom_quiz_rewards 了（见下方 GET /classroom-quiz/:quizId），
+ * 但那只覆盖「这一场」，老师想查「这学期一共发了多少、按类型/班级/学生筛」就没有入口。
+ * 这个路由补的就是这个聚合视图，支持按班级、课堂、学生、奖励类型、时间筛选。
+ *
+ * 权限沿用发放奖励那一套：管理员 / 课堂创建者 / 该班班主任。
+ * 非管理员只能看自己班级的记录——否则等于让任何教师翻全站的学生奖励流水。
+ */
+router.get('/classroom-quiz/rewards', authenticateToken, (req, res) => {
+  try {
+    const {
+      class_id, quiz_id, student_id, reward_type,
+      page = 1, pageSize = 20,
+    } = req.query;
+
+    const where = [];
+    // better-sqlite3 只认位置参数（?），条件与参数必须严格同序追加
+    const params = [];
+
+    if (class_id) { where.push('cq.class_id = ?'); params.push(Number(class_id)); }
+    if (quiz_id) { where.push('cqr.quiz_id = ?'); params.push(Number(quiz_id)); }
+    if (student_id) { where.push('cqr.student_id = ?'); params.push(Number(student_id)); }
+    if (reward_type) { where.push('cqr.reward_type = ?'); params.push(String(reward_type)); }
+
+    // 非管理员只能看自己任教的班级，否则等于让任何教师翻全站的学生奖励流水
+    if (req.user.role !== 'admin') {
+      const myClassIds = db.prepare(
+        'SELECT class_id FROM class_teachers WHERE teacher_id = ?'
+      ).all(req.user.userId).map(r => r.class_id);
+      const scope = myClassIds.length
+        ? (class_id && !myClassIds.includes(Number(class_id)) ? [] : (class_id ? [Number(class_id)] : myClassIds))
+        : [];
+      if (scope.length === 0) {
+        return res.json({ logs: [], total: 0, page: 1, pageSize: Number(pageSize), byType: [] });
+      }
+      where.push(`cq.class_id IN (${scope.map(() => '?').join(',')})`);
+      params.push(...scope);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const baseFrom = `
+      FROM classroom_quiz_rewards cqr
+      JOIN users u ON cqr.student_id = u.id
+      LEFT JOIN pets p ON cqr.pet_id = p.id
+      JOIN users a ON cqr.awarded_by = a.id
+      JOIN classroom_quizzes cq ON cqr.quiz_id = cq.id
+      LEFT JOIN classes c ON cq.class_id = c.id
+    `;
+
+    const total = db.prepare(`SELECT COUNT(*) as n ${baseFrom} ${whereSql}`).get(...params).n;
+
+    const p = Math.max(1, parseInt(page, 10) || 1);
+    const ps = Math.min(100, Math.max(1, parseInt(pageSize, 10) || 20));
+    const logs = db.prepare(`
+      SELECT cqr.*,
+        COALESCE(u.real_name, u.username) as student_name,
+        p.name as pet_name,
+        COALESCE(a.real_name, a.username) as awarder_name,
+        cq.title as quiz_title,
+        c.name as class_name,
+        ${REWARD_REF_NAME_SQL}
+      ${baseFrom}
+      ${whereSql}
+      ORDER BY cqr.awarded_at DESC, cqr.id DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, ps, (p - 1) * ps);
+
+    // 按奖励类型汇总，给前端顶部统计卡片用。
+    // 求和只对 gold/exp 有意义：物品/装备的 reward_value 存的是 id，
+    // 把一批 id 加起来毫无意义（那类前端只取 count）。
+    const byType = db.prepare(`
+      SELECT cqr.reward_type as type,
+        COUNT(*) as count,
+        SUM(CASE WHEN cqr.reward_type IN ('gold','exp')
+                 THEN CAST(cqr.reward_value AS INTEGER) ELSE 0 END) as total_value
+      ${baseFrom}
+      ${whereSql}
+      GROUP BY cqr.reward_type
+    `).all(...params);
+
+    res.json({ logs, total, page: p, pageSize: ps, byType });
+  } catch (error) {
+    console.error('获取课堂奖励日志失败:', error);
+    res.status(500).json({ error: '获取课堂奖励日志失败' });
+  }
+});
+
 router.get('/classroom-quiz/:quizId', authenticateToken, (req, res) => {
   try {
     const { quizId } = req.params;
@@ -763,7 +876,8 @@ router.get('/classroom-quiz/:quizId', authenticateToken, (req, res) => {
 
     const rewards = db.prepare(`
       SELECT cqr.*, COALESCE(u.real_name, u.username) as student_name, p.name as pet_name,
-        COALESCE(a.real_name, a.username) as awarder_name
+        COALESCE(a.real_name, a.username) as awarder_name,
+        ${REWARD_REF_NAME_SQL}
       FROM classroom_quiz_rewards cqr
       JOIN users u ON cqr.student_id = u.id
       LEFT JOIN pets p ON cqr.pet_id = p.id
@@ -1071,6 +1185,18 @@ router.post('/classroom-quiz/:quizId/reward', authenticateToken, (req, res) => {
               db.prepare('INSERT INTO user_items (user_id, item_id, quantity) VALUES (?, ?, 1)')
                 .run(sid, itemId);
             }
+            // 记一笔资产流水：学生端「个人中心 → 资产明细」才能看到课堂发的道具。
+            // 金币走 grantReward 时已经记了，物品/装备原先漏了，
+            // 表现为学生金币查得到、道具却查不到。
+            const itemRow = db.prepare('SELECT name FROM items WHERE id = ?').get(itemId);
+            recordItemChange(sid, {
+              refType: 'item',
+              refId: itemId,
+              name: itemRow?.name || reward_name || `物品#${itemId}`,
+              quantity: 1,
+              reason: `课堂奖励: ${quiz.title}${reason ? ` - ${reason}` : ''}`,
+              source: 'classroom_quiz',
+            });
             break;
           }
 
@@ -1078,6 +1204,15 @@ router.post('/classroom-quiz/:quizId/reward', authenticateToken, (req, res) => {
             db.prepare(`INSERT INTO user_equipment (user_id, equipment_id, equipped, obtained_at)
               VALUES (?, ?, 0, CURRENT_TIMESTAMP)`)
               .run(sid, value);
+            const eqRow = db.prepare('SELECT name FROM equipment WHERE id = ?').get(value);
+            recordItemChange(sid, {
+              refType: 'equipment',
+              refId: value,
+              name: eqRow?.name || reward_name || `装备#${value}`,
+              quantity: 1,
+              reason: `课堂奖励: ${quiz.title}${reason ? ` - ${reason}` : ''}`,
+              source: 'classroom_quiz',
+            });
             break;
           }
 

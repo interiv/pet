@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { db } = require('../config/database');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { requireFeature } = require('../middleware/featureFlags');
 const { recordItemChange, recordGoldChange } = require('../services/rewards');
 
@@ -30,6 +30,26 @@ router.get('/', authenticateToken, shopOff, (req, res) => {
     res.json({ items });
   } catch (error) {
     console.error('获取物品列表错误:', error);
+    res.status(500).json({ error: '获取物品列表失败' });
+  }
+});
+
+/**
+ * 教师发奖用的全量物品列表（对齐 equipment.js 的 GET /equipment/all）。
+ *
+ * 为什么不能复用上面的商店货架：
+ *   货架挂 shopOff，商店一关就403；而且只返回 SELLABLE_EFFECT_TYPES 里那几种，
+ *   教师想发保护罩/改名卡/双倍经验卡这些非卖品道具时就一个都选不到。
+ *   发奖励是教学环节，不该受商店开关和「可售性」摆布。
+ * 之前教师端就是复用了货架接口，于是 403 被前端 .catch(()=>{}) 静默吞掉，
+ * 表现为「奖励类型选物品，下拉一片空白」。
+ */
+router.get('/all', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
+  try {
+    const items = db.prepare('SELECT * FROM items ORDER BY effect_type, id').all();
+    res.json({ items });
+  } catch (error) {
+    console.error('获取物品列表(教师)错误:', error);
     res.status(500).json({ error: '获取物品列表失败' });
   }
 });

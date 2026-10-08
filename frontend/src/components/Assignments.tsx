@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Table, Tag, Button, Modal, Form, Input, DatePicker, Select, InputNumber, message, Space, Radio, Checkbox, Progress, Card, Alert, Upload, Image, Divider, Empty, Statistic, Row, Col, Tabs, Badge, Popconfirm, Tooltip, Spin } from 'antd';
 import { assignmentAPI, adminAPI, classroomQuizAPI, questionBankAPI } from '../utils/api';
-import { pollAiTask } from '../utils/aiTask';
+import { pollAiTask, AI_TASK_URLS } from '../utils/aiTask';
+import { readPendingGenTask, writePendingGenTask, clearPendingGenTask } from '../utils/genTaskResume';
 import { useAuthStore } from '../store/authStore';
 import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
@@ -198,6 +199,23 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [generating, setGenerating] = useState(false);
   // 出题任务进度（后端异步执行，这里轮询拿）
   const [genProgress, setGenProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
+  /**
+   * 「接回上一次未完成的出题」的两个现场。
+   *
+   * resumeInFlightRef：已经挂上轮询时置位，防止再点一次按钮起两个轮询循环。
+   * restoreGenFormRef：弹窗重新打开、表单挂载之后（afterOpenChange）才回填，
+   *   放 ref 是因为那时才拿到最新的 generateForm 实例；提前写 state 会拿到上一轮的值。
+   */
+  const resumeInFlightRef = useRef(false);
+  const restoreGenFormRef = useRef<{ mode: 'topic' | 'requirements' | 'paste'; values: any } | null>(null);
+  /**
+   * 恢复出来的出题要求留一份底稿。
+   *
+   * topic / requirements / raw_text 这三项标了 preserve={false}（切出题方式时
+   * 要清掉互斥的旧内容），代价是 Tab 一销毁就丢：老师生成完切到预览，再回到
+   * 第 1 步会看到一片空白，得把要求重打一遍。留个底稿专门补这个。
+   */
+  const genFormDraftRef = useRef<any>(null);
   const [genMode, setGenMode] = useState<'topic' | 'requirements' | 'paste'>('topic');
   /**
    * 第一步的题目来源：题库选题 / AI 生成。
@@ -369,6 +387,23 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     }
   }, [createModalTab, generatedData, form]);
 
+  /**
+   * 回到「1. 选择题目」时，把被 preserve={false} 清掉的那个输入框补回底稿。
+   *
+   * 只在字段为空时补，老师自己改过的内容一律不覆盖。
+   * 挂在 useEffect 里是因为 Tabs 切换 pane 是同步渲染的，到这里表单已经挂载，
+   * 直接在 onChange 里写会触发 antd「useForm 未连接」告警。
+   */
+  useEffect(() => {
+    if (!isCreateModalVisible || createModalTab !== 'generate' || createSource !== 'ai') return;
+    const draft = genFormDraftRef.current;
+    if (!draft) return;
+    const fieldKey = genMode === 'topic' ? 'topic' : genMode === 'requirements' ? 'requirements' : 'raw_text';
+    if (draft[fieldKey] && !generateForm.getFieldValue(fieldKey)) {
+      generateForm.setFieldsValue({ [fieldKey]: draft[fieldKey] });
+    }
+  }, [isCreateModalVisible, createModalTab, createSource, genMode, generateForm]);
+
   const loadClasses = async () => {
     try {
       const res = await adminAPI.getClasses();
@@ -434,16 +469,108 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
    * 每次请求都在 1 秒内结束，因此不受 Nginx proxy_read_timeout 影响。
    */
   const pollGenerateTask = (taskId: string) =>
-    pollAiTask(taskId, '/assignments/generate/:taskId', setGenProgress);
+    pollAiTask(taskId, AI_TASK_URLS.assignmentGenerate, setGenProgress);
+
+  /**
+   * 出题结果的收尾：填题、给第 3 步备好默认值、跳到「2. 题目预览」。
+   *
+   * 首次生成和「接回上次未完成的生成」共用这一段，
+   * 两处各写一份的话，迟早会出现「恢复出来的题没有默认标题」这类不一致。
+   */
+  const applyGeneratedResult = (data: GeneratedResult) => {
+    setGeneratedData(data);
+    pendingPublishDefaults.current = {
+      title: data.title,
+      description: data.description,
+      question_type: data.question_type,
+      subject: data.subject,
+      class_ids: classes.map(c => c.id),
+      due_date: dayjs().add(1, 'day').startOf('day')
+    };
+    setShowVariantQuestions({});
+    setCreateModalTab('preview');
+    if (data.warning) {
+      message.warning(data.warning);
+    }
+    if ((data.shortfall || 0) > 0) {
+      message.warning(`AI 本次只生成了 ${data.question_count} 道（目标 ${data.requested_count} 道），可再次点击生成补齐剩余题目`);
+    } else {
+      const qTypes = data.question_types || [];
+      const typeSummary = qTypes.length > 1 ? `${qTypes.length} 种题型` : '';
+      message.success(`成功生成 ${data.question_count} 道题目${typeSummary ? `（${typeSummary}）` : ''}，共${data.total_generated}道含变体`);
+    }
+    loadGenLimit();
+  };
+
+  /**
+   * 接回「上一次没走完的出题任务」。
+   *
+   * 为什么需要它：出题在后台跑（多题型实测 250 秒以上），老师看到进度条
+   * 走到一半时经常顺手把弹窗叉掉，或者切去别的菜单、过一会儿再回来。
+   * 这时如果重新点一次「AI生成题目」，只会另开一个新任务——白等几分钟，
+   * 还多扣一次生成额度（后端也会因同类任务互斥直接返回 409）。
+   *
+   * 做法：task_id 和当时填的表单已经存在本地（utils/genTaskResume），
+   * 这里重新挂上同一个任务的轮询，进度条接着上次的位置继续走；
+   * 若任务其实已经跑完（老师是在关掉弹窗之后才回来的），就把结果取回来直接进预览。
+   *
+   * @returns 是否确实接上了某个任务；false 表示没有存档/存档已失效/已在轮询中，
+   *          调用方可以按「全新一次」继续走。
+   */
+  const resumePendingGeneration = async (): Promise<boolean> => {
+    if (!user || resumeInFlightRef.current) return false;
+    const stored = readPendingGenTask(user.id);
+    if (!stored) return false;
+
+    resumeInFlightRef.current = true;
+    setGenerating(true);
+    setCreateSource('ai');
+    setCreateModalTab('generate');
+    setGenProgress({ percent: 0, done: 0, total: stored.total || 1, current: '正在接回上次未完成的生成…' });
+    if (!restoreGenFormRef.current) {
+      restoreGenFormRef.current = { mode: stored.mode, values: stored.formValues };
+    }
+    try {
+      const polled = await pollGenerateTask(stored.taskId);
+      // 结果已拿到：存档标记为已完成但保留下来，老师中途关掉弹窗甚至刷新页面后
+      // 回来，仍能从后端把这批题重新取回来接着发布（任务在保留期内一直查得到）
+      writePendingGenTask(user.id, { ...stored, done: true, usageId: (polled as GeneratedResult)?.usage_id });
+      applyGeneratedResult(polled as GeneratedResult);
+      return true;
+    } catch (e: any) {
+      // 任务失效（服务重启过/超过保留期）或已失败：清掉存档，
+      // 否则老师每次打开都卡在「接回中」，永远走不到正常的新建流程
+      clearPendingGenTask(user.id);
+      message.warning(e?.message || '上次未完成的生成已失效，请重新发起');
+      return false;
+    } finally {
+      setGenProgress(null);
+      setGenerating(false);
+      resumeInFlightRef.current = false;
+    }
+  };
 
   const handleGenerateQuestions = async (values: any) => {
+    // 上一次出题还在后台跑（老师叉掉弹窗后又点了一次生成）：
+    // 接回同一个任务看进度，不要重新提交——那会白等几分钟还多扣一次额度。
+    // resume 返回 false 也直接返回：说明轮询已经挂着（进度条正在走），
+    // 这时再提交一个新任务只会被后端 409 拦下来，白等一场。
+    const stored = readPendingGenTask(user?.id);
+    if (stored && !stored.done) {
+      if (await resumePendingGeneration()) {
+        message.info('已接回刚才未完成的生成任务，正在显示它的进度');
+      }
+      return;
+    }
+
     // 粘贴模式不校验题型：题型由 AI 逐题自动判断，也不需要出题规格
     const isPaste = genMode === 'paste';
 
     setGenerating(true);
+    resumeInFlightRef.current = true;
     try {
       // 上一次生成还没发布就又点「生成」：先撤销上一次，别让它白占次数
-      if (await discardGeneration(generatedData?.usage_id)) {
+      if (await discardGeneratedData(generatedData?.usage_id)) {
         loadGenLimit();
       }
 
@@ -491,34 +618,23 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       if (!taskId) {
         throw new Error('后端未返回任务号，请确认服务端已更新到最新版本');
       }
-      const polled = await pollGenerateTask(taskId);
-      setGenProgress(null);
-      const res: { data: GeneratedResult } = { data: polled };
-      setGeneratedData(res.data);
-      const nextDayMidnight = dayjs().add(1, 'day').startOf('day');
-      const allClassIds = classes.map(c => c.id);
-      pendingPublishDefaults.current = {
-        title: res.data.title,
-        description: res.data.description,
-        question_type: res.data.question_type,
-        subject: res.data.subject,
-        class_ids: allClassIds,
-        due_date: nextDayMidnight
+      // 拿到任务号就立刻存档：中途关掉弹窗、切菜单、刷新页面，回来都接得上
+      const pending = {
+        taskId,
+        mode: genMode,
+        formValues: { ...values },
+        total: specs.length || 1,
+        done: false,
+        createdAt: Date.now(),
       };
-      setShowVariantQuestions({});
-      setCreateModalTab('preview');
-      if (res.data.warning) {
-        message.warning(res.data.warning);
-      }
-      if ((res.data.shortfall || 0) > 0) {
-        message.warning(`AI 本次只生成了 ${res.data.question_count} 道（目标 ${res.data.requested_count} 道），可再次点击生成补齐剩余题目`);
-      } else {
-        const qTypes = res.data.question_types || [];
-        const typeSummary = qTypes.length > 1 ? `${qTypes.length} 种题型` : '';
-        message.success(`成功生成 ${res.data.question_count} 道题目${typeSummary ? `（${typeSummary}）` : ''}，共${res.data.total_generated}道含变体`);
-      }
-      loadGenLimit();
+      writePendingGenTask(user?.id, pending);
+      const polled = await pollGenerateTask(taskId);
+      // 跑完了也留着存档（标记 done）：老师关掉弹窗再回来时能直接把这批题取回来接着发布，
+      // 而不是让已经生成好的题目和已扣掉的额度白扔
+      writePendingGenTask(user?.id, { ...pending, done: true, usageId: (polled as GeneratedResult)?.usage_id });
+      applyGeneratedResult(polled as GeneratedResult);
     } catch (e: any) {
+      clearPendingGenTask(user?.id);
       const status = e.response?.status;
       if (status === 409) {
         // 后端拦截了重复点击：同一教师同时只允许一个生成任务
@@ -539,6 +655,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     } finally {
       setGenProgress(null);
       setGenerating(false);
+      resumeInFlightRef.current = false;
     }
   };
 
@@ -649,6 +766,19 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     setCreateModalTab('preview');
   };
 
+  /**
+   * 丢弃一次已生成但还没发布的 AI 结果。
+   *
+   * 在 discardGeneration（后端删题+退额度）之外，还要清掉本地那份出题存档：
+   * 否则下次打开「发布新作业」会把这一批已经被删掉的题重新捞回来，
+   * 老师点下去就是一个发不出去的作业。
+   */
+  const discardGeneratedData = async (usageId?: number, notify = false) => {
+    const ok = await discardGeneration(usageId, notify);
+    if (usageId) clearPendingGenTask(user?.id);
+    return ok;
+  };
+
   /** 切换题目来源：清掉上一步的产物，避免 AI 结果和题库选题串在一起 */
   const switchCreateSource = (source: 'bank' | 'ai') => {
     if (source === createSource) return;
@@ -658,8 +788,54 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     setShowVariantQuestions({});
     setCreateSource(source);
     // 生成过但没发布的 AI 结果：撤销一次生成并退还额度，行为与关闭弹窗一致
-    if (pendingUsageId) discardGeneration(pendingUsageId, true).then((ok) => { if (ok) loadGenLimit(); });
+    if (pendingUsageId) discardGeneratedData(pendingUsageId, true).then((ok) => { if (ok) loadGenLimit(); });
     if (source === 'bank') loadBank(1);
+  };
+
+  /**
+   * 点「发布新作业」。
+   *
+   * 这里不是无脑开一个空白弹窗。发布流程被打断的地方有三处，
+   * 都应该「接着上次继续」，而不是清掉重来：
+   *   ① AI 还在后台生成          → 回填表单 + 重新挂上轮询，进度条接着走
+   *   ② 生成完了但还没发布       → 直接回到「2. 题目预览」
+   *   ③ 以上都没有               → 全新一次发布
+   * 之前这里是无条件 reset，叉号关掉弹窗后回来就等于把已出的题和已扣的额度都扔了。
+   */
+  const openCreateModal = () => {
+    loadGenLimit();
+    const stored = readPendingGenTask(user?.id);
+
+    if (stored) {
+      // ①/②：上一次没走完。结果还在内存里就别再查一遍后端了，直接进预览
+      if (stored.done && generatedData) {
+        setCreateModalTab('preview');
+        setIsCreateModalVisible(true);
+        return;
+      }
+      setCreateSource('ai');
+      setCreateModalTab('generate');
+      // 表单要等弹窗挂载后才能回填（见 afterOpenChange），先交给 resumePendingGeneration 记着
+      restoreGenFormRef.current = { mode: stored.mode, values: stored.formValues };
+      setIsCreateModalVisible(true);
+      resumePendingGeneration();
+      return;
+    }
+
+    if (generatedData) {
+      // 题库选题的结果还在预览里没发布，接着发布
+      setCreateModalTab('preview');
+      setIsCreateModalVisible(true);
+      return;
+    }
+
+    // ③ 全新一次
+    setGeneratedData(null);
+    pendingPublishDefaults.current = null;
+    setCreateModalTab('generate');
+    setShowVariantQuestions({});
+    setBankPicked({});
+    setIsCreateModalVisible(true);
   };
 
   const handleCreateAssignment = async (values: any) => {
@@ -705,6 +881,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       setIsCreateModalVisible(false);
       pendingPublishDefaults.current = null;
       setGeneratedData(null);
+      // 题目已被作业引用，存档留着只会在下次打开时把这一批题又捞回来
+      clearPendingGenTask(user?.id);
       loadAssignments();
     } catch (e: any) {
       message.error(e.response?.data?.error || '发布失败');
@@ -2053,8 +2231,12 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             }}>错题本</Button>
           )}
           {isTeacher && (
-            <Button type="primary" icon={<FileTextOutlined />} onClick={() => { discardGeneration(generatedData?.usage_id); setIsCreateModalVisible(true); setGeneratedData(null); pendingPublishDefaults.current = null; setCreateModalTab('generate'); setShowVariantQuestions({}); setBankPicked({}); loadGenLimit(); }}>
-              发布新作业
+            <Button
+              type="primary"
+              icon={generating ? <LoadingOutlined /> : <FileTextOutlined />}
+              onClick={openCreateModal}
+            >
+              {generating ? '查看生成进度' : generatedData ? '继续发布作业' : '发布新作业'}
             </Button>
           )}
         </Space>
@@ -2378,22 +2560,43 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         title="📄 发布新作业（题库选题 / AI生成）"
         open={isCreateModalVisible}
         onCancel={() => {
+          const wasGenerating = generating;
           const pendingUsageId = generatedData?.usage_id;
           setIsCreateModalVisible(false);
+          if (wasGenerating) {
+            // 任务还在后台跑，撤销不了；出题存档留着，下次打开直接接回这个任务继续看进度
+            message.info('AI 还在后台继续生成，完成后再点「查看生成进度」就能接着发布');
+            return;
+          }
           setGeneratedData(null);
           // 生成了但没发布就关闭：撤销本次生成并退还额度
-          discardGeneration(pendingUsageId, true).then((ok) => { if (ok) loadGenLimit(); });
+          discardGeneratedData(pendingUsageId, true).then((ok) => { if (ok) loadGenLimit(); });
         }}
         afterOpenChange={(open) => {
           if (!open) return;
           setShowVariantQuestions({});
+          // 恢复上次未完成的生成时要回填表单，不能被下面的 resetFields 冲掉
+          const restore = restoreGenFormRef.current;
+          restoreGenFormRef.current = null;
           // 题库选题：不碰 generateForm（AI 表单此时根本没挂载，写值会触发 useForm 未连接告警）
-          if (createSource === 'bank') {
+          if (createSource === 'bank' && !restore) {
             setBankPicked({});
             loadBank(1);
             return;
           }
           generateForm.resetFields();
+          if (restore) {
+            // 把上次填的要求原样带回来，老师一眼能看到「是在按什么出题」，而不是空白表单
+            setGenMode(restore.mode);
+            genFormDraftRef.current = restore.values;
+            generateForm.setFieldsValue({
+              ...restore.values,
+              type_specs: Array.isArray(restore.values?.type_specs) && restore.values.type_specs.length > 0
+                ? restore.values.type_specs
+                : [defaultTypeSpec()],
+            });
+            return;
+          }
           // 默认带出教师自己的任教科目，仍可手动改成其他科目
           if (mySubject) generateForm.setFieldsValue({ subject: mySubject });
           // 出题规格默认给一行，用加号再加（粘贴模式不用题型，故无需初始化）
@@ -2563,7 +2766,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
                       {genProgress.current}
                       {genProgress.total > 1 && `（${genProgress.done}/${genProgress.total} 种题型已完成）`}
-                      ，可以关掉弹窗，生成会在后台继续
+                      ，可以关掉弹窗，生成会在后台继续；随时点「查看生成进度」都能接回这个任务
                     </div>
                   </div>
                 )}
@@ -2849,9 +3052,27 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                   ))}
                 </div>
                 <div style={{ marginTop: 16, textAlign: 'center' }}>
-                  <Button type="primary" onClick={() => setCreateModalTab('publish')}>
-                    确认题目，下一步 →
-                  </Button>
+                  <Space>
+                    <Popconfirm
+                      title="回到第 1 步重新选题？"
+                      description={generatedData.usage_id
+                        ? '上一次生成的这批题目会被撤销，并退还 1 次生成次数。'
+                        : '上一次选好的题目将被清空，重新勾选或出题。'}
+                      onConfirm={() => {
+                        discardGeneratedData(generatedData?.usage_id).then(() => loadGenLimit());
+                        setGeneratedData(null);
+                        pendingPublishDefaults.current = null;
+                        setCreateModalTab('generate');
+                      }}
+                      okText="重新选题"
+                      cancelText="取消"
+                    >
+                      <Button icon={<ReloadOutlined />}>重新选题</Button>
+                    </Popconfirm>
+                    <Button type="primary" onClick={() => setCreateModalTab('publish')}>
+                      确认题目，下一步 →
+                    </Button>
+                  </Space>
                 </div>
               </div>
             ) : (

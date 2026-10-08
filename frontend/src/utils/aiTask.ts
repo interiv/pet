@@ -34,6 +34,22 @@ const POLL_INTERVAL = 2000;
 /** 兜底上限：单批AI 调用最长 300s，多步任务留足余量 */
 const MAX_WAIT_MS = 12 * 60 * 1000;
 
+/**
+ * 各功能的「进度查询」路径模板，集中在这里而不是散落在各组件里。
+ *
+ * 起因：课堂做题原来在组件里手写成 '/classroom-quiz/task/:taskId'，
+ * 而后端这条路由挂在 /api/cards 下（server.js: app.use('/api/cards', cardRoutes)），
+ * 于是每次轮询都 404，被当成「任务已失效」抛给老师——
+ * 其实后端任务好好地在跑，额度也照扣，再点一次还会撞上 409 互斥。
+ * 手写路径就是这么容易漂移，收敛到一处后改路由只需改这里。
+ */
+export const AI_TASK_URLS = {
+  /** 作业出题：backend/src/routes/assignments.js */
+  assignmentGenerate: '/assignments/generate/:taskId',
+  /** 课堂做题出题与 AI 判分共用：backend/src/routes/cards.js */
+  classroomQuizTask: '/cards/classroom-quiz/task/:taskId',
+} as const;
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**

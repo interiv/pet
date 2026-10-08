@@ -171,9 +171,11 @@ export const assignmentAPI = {
   paperSubmitBatch: (id: number, data: { submissions: { student_id: number; results: { question_id: number; is_correct: boolean; score?: number; student_answer?: string }[]; note?: string }[]; note?: string }) =>
     api.post(`/assignments/${id}/paper-submit-batch`, data),
 
-  /** 纸质作业识别进度（出题与批量判分共用同一套任务查询） */
-  getPaperJudgeProgress: (taskId: string) =>
-    api.get(`/assignments/generate/${taskId}`, { timeout: 15000 }),
+  // 注：以前这里有个 getPaperJudgeProgress，注释写「纸质作业识别进度」，
+  // 实际指向 /assignments/generate/:taskId —— 那是「作业 AI 出题」的任务路由，
+  // 全仓库无人调用。纸质作业的 AI 识别走 paper_scan_batches 批次表
+  // （见下面的 startScan / getScanBatch / resumeScan），
+  // 进度本来就落库、可断点续跑，不需要这种内存态任务查询，故删除。
 
   getMyPersonalBank: (params?: { subject?: string; assignment_type?: string; only_wrong?: string | number; keyword?: string; page?: number; page_size?: number }) =>
     api.get('/assignments/personal-bank/my', { params }),
@@ -443,6 +445,9 @@ export const battleAPI = {
 // 物品相关 API
 export const itemAPI = {
   getItems: () => api.get('/items'),
+
+  /** 教师发奖用：全量物品，不受商店开关与「可售类型」过滤（对齐 equipmentAPI.getAll） */
+  getAllItems: () => api.get('/items/all'),
   
   buyItem: (data: { item_id: number; quantity?: number }) => 
     api.post('/items/buy', data),
@@ -882,6 +887,9 @@ export const classroomQuizAPI = {
   }) => api.post(`/cards/classroom-quiz/${quizId}/reward`, data),
   getClassStudents: (classId: number) =>
     api.get(`/cards/classroom-quiz/students/${classId}`),
+  /** 课堂奖励发放日志（跨课堂聚合，可按班级/课堂/学生/类型筛选） */
+  getRewardLogs: (params?: { class_id?: number; quiz_id?: number; student_id?: number; reward_type?: string; page?: number; pageSize?: number }) =>
+    api.get('/cards/classroom-quiz/rewards', { params }),
   // 提交后立即返回 task_id，实际出题在后台跑
   aiGenerate: (data: { subject: string; topic?: string; question_type?: string; count?: number; difficulty?: string; grade_level?: string; mode?: 'topic' | 'requirements' | 'paste'; requirements?: string; raw_text?: string; /** 多组出题：一行一条「题型 + 题目数量」，一次请求只计 1 次生成额度 */ batches?: Array<{ type: string; count: number }> }, timeout?: number) =>
     api.post('/cards/classroom-quiz/ai-generate', data, { timeout: (timeout || 30) * 1000 }),
