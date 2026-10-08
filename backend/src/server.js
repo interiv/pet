@@ -33,6 +33,7 @@ const postRoutes = require('./routes/posts');
 const chatRoutes = require('./routes/chat');
 const forumRoutes = require('./routes/forum');
 const notificationRoutes = require('./routes/notifications');
+const publicRoutes = require('./routes/public');
 const classRoutes = require('./routes/classes');
 const dailyTasksModule = require('./routes/daily-tasks');
 const knowledgePointRoutes = require('./routes/knowledge-points');
@@ -186,6 +187,8 @@ app.use('/api/posts', postRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/forum', forumRoutes);
 app.use('/api/notifications', notificationRoutes);
+// 首页面向访客的公开接口（全部免登录，收口在 routes/public.js 里）
+app.use('/api/public', publicRoutes);
 app.use('/api/classes', classRoutes);
 app.use('/api/daily-tasks', dailyTasksModule.router);
 app.use('/api/knowledge-points', knowledgePointRoutes);

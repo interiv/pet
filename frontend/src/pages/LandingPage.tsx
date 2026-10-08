@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { Layout, Button, Row, Col, Card, Statistic, List, Tag, Avatar, Spin, Space, Typography } from 'antd';
 import {
   LoginOutlined, UserAddOutlined, TrophyOutlined, TeamOutlined,
-  HeartOutlined, ThunderboltOutlined, FireOutlined,
+  HeartOutlined, ThunderboltOutlined,
   RocketOutlined, BookOutlined, BulbOutlined,
-  ArrowDownOutlined, RightOutlined, LogoutOutlined,
+  ArrowDownOutlined, RightOutlined, LogoutOutlined, UserSwitchOutlined,
 } from '@ant-design/icons';
-import { adminAPI, petAPI, leaderboardAPI, schoolAPI, classAPI } from '../utils/api';
+import { adminAPI, petAPI, leaderboardAPI, schoolAPI, classAPI, publicAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import { flagEnabled } from '../utils/featureFlags';
 
@@ -76,38 +76,101 @@ const LandingPage: React.FC = () => {
   const [species, setSpecies] = useState<any[]>([]);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [schools, setSchools] = useState<any[]>([]);
-  const [publicClasses, setPublicClasses] = useState<any[]>([]);
-  const [noticeVisible, setNoticeVisible] = useState(true);
+    /* 年级概览：各年级的班级数/学生数/教师数（公开聚合，之前没有这个接口） */
+  /* 年级概览：各年级的班级数/学生数/教师数（公开聚合，之前没有这个接口） */
+    const [gradeStats, setGradeStats] = useState<any[]>([]);
+    /** 全校公告（公开，只含 class_id 为空的） */
+    const [announcements, setAnnouncements] = useState<any[]>([]);
+    /** 登录用户的「我的班级」概览（学生/教师/admin 各不相同） */
+  const [myClass, setMyClass] = useState<any>(null);
+  const [myClassLoading, setMyClassLoading] = useState(false);
+    /** 学校卡片展开后按需加载的班级明细，key 是 schoolId */
+      const [schoolClassesMap, setSchoolClassesMap] = useState<Record<number, any[]>>({});
+      /** 当前展开的学校卡片 */
+      const [expandedSchool, setExpandedSchool] = useState<number | null>(null);
+    const [noticeVisible, setNoticeVisible] = useState(true);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+    useEffect(() => {
+        loadData();
+      }, []);
 
-  const loadData = async () => {
-    const results = await Promise.allSettled([
+      // 登录用户额外拉「我的班级」概览。
+      // 首页对访客展示全校概览，对已登录用户则要回答「我的班怎么样了」——
+      // 两者关心的不是同一件事，所以分开取数而不是共用一份数据硬渲染。
+      useEffect(() => {
+        if (!isAuthenticated || !user) return;
+        let cancelled = false;
+        setMyClassLoading(true);
+        const load = async () => {
+          try {
+            const classId = (user as any).class_id;
+            if (classId) {
+              // 本班学生/本班教师：home-summary 返回人数、教师、公告、班级动态
+              const res = await classAPI.getHomeSummary(classId);
+              if (!cancelled) setMyClass(res.data);
+            } else if (isTeacher) {
+              // 教师没有单一班级，取任教班级列表
+              const res = await adminAPI.getClasses();
+              if (!cancelled) setMyClass({ teacherClasses: res.data.classes || [] });
+            }
+          } catch (e) {
+      // 没班/无权限时静默：首页不该因为这个接口失败而报错
+          } finally {
+            if (!cancelled) setMyClassLoading(false);
+          }
+        };
+        load();
+        return () => { cancelled = true; };
+      }, [isAuthenticated, user?.class_id, isTeacher]);
+
+    const loadData = async () => {
+      // 排行榜改用公开榜：原来的 getLevelLeaderboard 需要登录，
+      // 未登录时 401 → 数组为空 → 整个排行榜区块对访客不渲染（等于白做）。
+      // 公开榜返回的是脱敏数据（无学生真名、无金币）。
+      const results = await Promise.allSettled([
       adminAPI.getPublicSettings(),
-      adminAPI.getPublicStatistics(),
-      petAPI.getSpecies(),
-      leaderboardAPI.getLevelLeaderboard({ limit: 10 }),
-      schoolAPI.getSchools(),
-      classAPI.getPublicClasses(),
-    ]);
+        adminAPI.getPublicStatistics(),
+        petAPI.getSpecies(),
+        leaderboardAPI.getPublicLeaderboard({ limit: 10 }),
+        schoolAPI.getSchools(),
+              publicAPI.getByGrade(),
+        publicAPI.getAnnouncements({ limit: 5 }),
+      ]);
 
-    const [settingsRes, statsRes, speciesRes, lbRes, schoolsRes, classesRes] = results;
+      const [settingsRes, statsRes, speciesRes, lbRes, schoolsRes, gradeRes, annRes] = results;
 
-    if (settingsRes.status === 'fulfilled') {
+      if (settingsRes.status === 'fulfilled') {
       const s = settingsRes.value.data.settings || {};
-      setSiteSettings(s);
-      document.title = s.site_name || '班级宠物养成系统';
-    }
+        setSiteSettings(s);
+        document.title = s.site_name || '班级宠物养成系统';
+      }
     if (statsRes.status === 'fulfilled') setStats(statsRes.value.data.statistics);
-    if (speciesRes.status === 'fulfilled') setSpecies(speciesRes.value.data.species || []);
+      if (speciesRes.status === 'fulfilled') setSpecies(speciesRes.value.data.species || []);
     if (lbRes.status === 'fulfilled') setLeaderboard(lbRes.value.data.leaderboard || []);
-    if (schoolsRes.status === 'fulfilled') setSchools(schoolsRes.value.data.schools || []);
-    if (classesRes.status === 'fulfilled') setPublicClasses(classesRes.value.data.classes || []);
+      if (schoolsRes.status === 'fulfilled') setSchools(schoolsRes.value.data.schools || []);
+      /* 公开班级列表不再在首屏拉取：学校卡片现在用后端聚合字段，
+      班级明细改成点「查看班级」才按需加载，首屏少发一个请求。*/
+      if (gradeRes.status === 'fulfilled') setGradeStats(gradeRes.value.data.grades || []);
+      if (annRes.status === 'fulfilled') setAnnouncements(annRes.value.data.announcements || []);
 
-    setLoading(false);
-  };
+      setLoading(false);
+    };
+
+    /** 展开学校卡片时才去拉该校的班级明细，避免首屏一次请求十几个学校 */
+    const toggleSchool = async (schoolId: number) => {
+      if (expandedSchool === schoolId) {
+        setExpandedSchool(null);
+        return;
+      }
+      setExpandedSchool(schoolId);
+      if (schoolClassesMap[schoolId]) return;
+      try {
+     const res = await schoolAPI.getClassesOfSchool(schoolId);
+        setSchoolClassesMap((prev) => ({ ...prev, [schoolId]: res.data.classes || [] }));
+      } catch (e) {
+        setSchoolClassesMap((prev) => ({ ...prev, [schoolId]: [] }));
+      }
+    };
 
   const scrollToStats = () => {
     statsRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -207,27 +270,106 @@ const LandingPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Stats Section */}
-        {stats && (
-          <div ref={statsRef} style={{ maxWidth: 1200, margin: isMobile ? '-30px auto 0' : '-40px auto 0', padding: isMobile ? '0 12px' : '0 24px', position: 'relative', zIndex: 10 }}>
-            <Row gutter={[16, 16]}>
-              {[
-                { icon: <TeamOutlined />, color: '#667eea', value: stats.students, title: '注册学生' },
-                { icon: <TeamOutlined />, color: '#52c41a', value: stats.classes, title: '班级数量' },
-                { icon: <HeartOutlined />, color: '#eb2f96', value: stats.pets, title: '宠物总数' },
-                { icon: <FireOutlined />, color: '#fa541c', value: stats.battles, title: '战斗次数' },
-              ].map((item, idx) => (
-                <Col xs={12} sm={6} key={idx}>
-                  <Card style={{ borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.08)', textAlign: 'center', borderTop: `3px solid ${item.color}` }} styles={{ body: { padding: isMobile ? '16px 8px' : '24px 16px' } }}>
-                    <div style={{ fontSize: isMobile ? 24 : 32, color: item.color, marginBottom: 8 }}>{item.icon}</div>
-                    <Statistic value={item.value} valueStyle={{ color: item.color, fontSize: isMobile ? 22 : 28, fontWeight: 'bold' }} />
-                    <div style={{ color: '#8c8c8c', fontSize: 13, marginTop: 4 }}>{item.title}</div>
-                  </Card>
-                </Col>
-              ))}
-            </Row>
+        {/* 我的班级：登录用户置顶展示，回答「我的班怎么样了」而不是「全校怎么样」 */}
+        {isAuthenticated && !myClassLoading && (myClass?.class || (myClass?.teacherClasses?.length ?? 0) > 0) && (
+          <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '24px 12px 0' : '32px 24px 0' }}>
+ <Card
+              style={{ borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.08)', borderLeft: `4px solid ${myClass?.class?.school_theme || '#667eea'}` }}
+          >
+     <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <div style={{ flex: 1, minWidth: 200 }}>
+     <Text strong style={{ fontSize: isMobile ? 16 : 18 }}>
+       {myClass?.class ? myClass.class.name : '我任教的班级'}
+      </Text>
+        <div style={{ color: '#8c8c8c', fontSize: 12, marginTop: 4 }}>
+  {myClass?.class
+      ? [myClass.class.school_name, myClass.class.grade].filter(Boolean).join(' · ')
+     : `${myClass?.teacherClasses?.length || 0} 个任教班级`}
+          </div>
+        </div>
+        {myClass?.class && (
+     <Space size={isMobile ? 12 : 24} wrap>
+   <Statistic title="班级人数" value={myClass.student_count || 0} valueStyle={{ fontSize: isMobile ? 18 : 22, color: '#52c41a' }} />
+            <Statistic title="任课教师" value={myClass.teachers?.length || 0} valueStyle={{ fontSize: isMobile ? 18 : 22, color: '#667eea' }} />
+            </Space>
+          )}
+  <Button type="primary" onClick={handleEnterClass} icon={<RocketOutlined />}>
+        进入我的班级
+       </Button>
+          </div>
+    </Card>
           </div>
         )}
+
+        {/* Stats Section */}
+                {stats && (
+            <div ref={statsRef} style={{ maxWidth: 1200, margin: isMobile ? '-30px auto 0' : '-40px auto 0', padding: isMobile ? '0 12px' : '0 24px', position: 'relative', zIndex: 10 }}>
+                    <Row gutter={[16, 16]}>
+            {[
+                    /* 学校与班级/学生/教师是访客最关心的「这学校什么规模」；
+             宠物总数、战斗次数对访客判断学校没有意义，去掉换成教师与学校数。 */
+            { icon: <TeamOutlined />, color: '#667eea', value: stats.schools, title: '学校数量' },
+         { icon: <TeamOutlined />, color: '#52c41a', value: stats.classes, title: '班级数量' },
+                  { icon: <UserAddOutlined />, color: '#fa8c16', value: stats.teachers, title: '在职教师' },
+                 { icon: <UserAddOutlined />, color: '#eb2f96', value: stats.students, title: '在校学生' },
+            ].map((item, idx) => (
+                   <Col xs={12} sm={6} key={idx}>
+           <Card style={{ borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.08)', textAlign: 'center', borderTop: `3px solid ${item.color}` }} styles={{ body: { padding: isMobile ? '16px 8px' : '24px 16px' } }}>
+                    <div style={{ fontSize: isMobile ? 24 : 32, color: item.color, marginBottom: 8 }}>{item.icon}</div>
+           <Statistic value={item.value} valueStyle={{ color: item.color, fontSize: isMobile ? 22 : 28, fontWeight: 'bold' }} />
+                    <div style={{ color: '#8c8c8c', fontSize: 13, marginTop: 4 }}>{item.title}</div>
+            </Card>
+               </Col>
+           ))}
+          </Row>
+                  </div>
+              )}
+
+                {/* Grade Overview：按年级聚合，公开接口。之前全仓库没有 GROUP BY grade 的查询 */}
+              {gradeStats.length > 0 && (
+                  <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '40px 16px' : '60px 24px' }}>
+              <div style={{ textAlign: 'center', marginBottom: isMobile ? 24 : 40 }}>
+                      <Title level={2} style={{ marginBottom: 8, fontSize: isMobile ? 20 : undefined }}>各年级概览</Title>
+           <Paragraph style={{ color: '#8c8c8c', fontSize: isMobile ? 14 : 16 }}>看看各年级的班级与学生规模</Paragraph>
+                    </div>
+               <Row gutter={[16, 16]}>
+           {gradeStats.map((g: any) => (
+                    <Col xs={12} sm={8} md={6} key={g.grade}>
+         <Card style={{ borderRadius: 12, textAlign: 'center', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}
+            styles={{ body: { padding: isMobile ? '14px 8px' : '20px 16px' } }}>
+         <div style={{ fontSize: isMobile ? 17 : 20, fontWeight: 'bold', marginBottom: 10, color: '#333' }}>{g.grade}</div>
+            <Space size={isMobile ? 4 : 12} wrap style={{ justifyContent: 'center' }}>
+           <Text type="secondary" style={{ fontSize: isMobile ? 11 : 13 }}>{g.class_count} 个班</Text>
+           <Text type="secondary" style={{ fontSize: isMobile ? 11 : 13 }}>{g.student_count} 名学生</Text>
+           <Text type="secondary" style={{ fontSize: isMobile ? 11 : 13 }}>{g.teacher_count} 位老师</Text>
+                    </Space>
+                 </Card>
+              </Col>
+                  ))}
+                  </Row>
+              </div>
+                )}
+
+                {/* Announcements：全校公告（公开）。班级内部公告不在这里出现 */}
+                {announcements.length > 0 && (
+             <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '0 16px 40px' : '0 24px 60px' }}>
+             <Title level={3} style={{ marginBottom: isMobile ? 16 : 24 }}>📢 校园公告</Title>
+            <Card style={{ borderRadius: 12, boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+                {announcements.map((a: any, i: number) => (
+              <div key={a.id} style={{ padding: isMobile ? '10px 0' : '14px 0', borderTop: i === 0 ? 'none' : '1px solid #f0f0f0' }}>
+             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+               {a.priority > 0 && <Tag color="red">置顶</Tag>}
+          <Text strong style={{ fontSize: isMobile ? 14 : 16 }}>{a.title}</Text>
+                <span style={{ color: '#bbb', fontSize: 12, marginLeft: 'auto' }}>
+                 {a.created_at ? new Date(a.created_at).toLocaleDateString('zh-CN') : ''}
+               </span>
+                 </div>
+          {a.content && <Paragraph style={{ margin: 0, color: '#666', fontSize: isMobile ? 12 : 14 }} ellipsis={{ rows: 2 }}>{a.content}</Paragraph>}
+              </div>
+                  ))}
+              </Card>
+             </div>
+                )}
 
         {/* How It Works */}
         <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '40px 16px' : '60px 24px' }}>
@@ -302,7 +444,11 @@ const LandingPage: React.FC = () => {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 'bold', fontSize: isMobile ? 13 : 15 }}>{item.name || item.pet_name || '宠物'}</div>
                         <div style={{ color: '#8c8c8c', fontSize: isMobile ? 11 : 13, marginTop: 2 }}>
-                          {item.owner_name || item.username || '-'} · {item.species_name || '-'}
+                          {/* 公开榜刻意不返回学生真名，展示的是宠物昵称 + 所属学校/班级。
+       登录用户看到的榜单（含真名）走的是另一个需要登录的接口。*/}
+      {item.species_name || '-'}
+              {item.school_name ? ` · ${item.school_name}` : ''}
+        {item.class_name ? ` ${item.class_name}` : ''}
                         </div>
                       </div>
                       <div style={{ textAlign: 'right', flexShrink: 0 }}>
@@ -327,8 +473,7 @@ const LandingPage: React.FC = () => {
               </div>
               <Row gutter={[20, 20]}>
                 {schools.map((school: any) => {
-                  const schoolClasses = publicClasses.filter((c: any) => c.school_id === school.id || c.school_name === school.name);
-                  return (
+                                  return (
                     <Col xs={24} sm={12} md={8} key={school.id}>
                       <Card hoverable style={{ borderRadius: 12, borderLeft: `4px solid ${school.theme_color || '#667eea'}`, height: '100%' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
@@ -338,24 +483,71 @@ const LandingPage: React.FC = () => {
                             <div style={{ color: '#8c8c8c', fontSize: 12 }}>{school.city || ''}{school.city && school.region ? ' · ' : ''}{school.region || ''}</div>
                           </div>
                         </div>
-                        <Space size={16}>
-                          <Text type="secondary"><TeamOutlined /> {school.class_count || 0} 个班级</Text>
-                          <Text type="secondary"><UserAddOutlined /> {schoolClasses.reduce((sum: number, c: any) => sum + (c.student_count || 0), 0)} 名学生</Text>
-                        </Space>
-                        {schoolClasses.length > 0 && (
-                          <div style={{ marginTop: 12, borderTop: '1px solid #f0f0f0', paddingTop: 12 }}>
-                            {schoolClasses.slice(0, 3).map((c: any) => (
-                              <Tag key={c.id} style={{ marginBottom: 4, cursor: 'pointer' }} onClick={() => navigate(`/c/${c.slug}`)}>
-                                {c.name} {c.grade ? `(${c.grade})` : ''} <RightOutlined style={{ fontSize: 10 }} />
-                              </Tag>
-                            ))}
-                            {schoolClasses.length > 3 && <Tag>+{schoolClasses.length - 3} 个班级</Tag>}
-                          </div>
-                        )}
+                        <Space size={isMobile ? 8 : 16} wrap>
+                                  <Text type="secondary"><TeamOutlined /> {school.class_count || 0} 个班级</Text>
+                              {/* 学生数改用后端聚合值 school.student_count。
+                          原先这里是前端把 publicClasses 里的 student_count 相加，
+                                  而那张列表只含 is_public=1 的班 —— 私密班的学生被漏掉了。*/}
+                                  <Text type="secondary"><UserAddOutlined /> {school.student_count || 0} 名学生</Text>
+                                  {school.teacher_count > 0 && (
+                              <Text type="secondary"><UserSwitchOutlined /> {school.teacher_count} 位教师</Text>
+                                  )}
+                           </Space>
+                              {school.grades && school.grades.length > 0 && (
+                            <div style={{ marginTop: 8 }}>
+                            {school.grades.map((g: string) => <Tag key={g} color="blue">{g}</Tag>)}
+                         </div>
+                                      )}
+                               {/* 班级明细：点「查看班级」才加载，避免首屏把每个学校都拉一遍 */}
+                             <div style={{ marginTop: 12, borderTop: '1px solid #f0f0f0', paddingTop: 10 }}>
+                            <Button
+                           type="link"
+                              size="small"
+                              style={{ padding: 0, color: school.theme_color || '#667eea' }}
+                           onClick={() => toggleSchool(school.id)}
+                               >
+                             {expandedSchool === school.id ? '收起班级' : `查看班级 (${school.class_count || 0})`}
+                             <ArrowDownOutlined style={{ fontSize: 10, transform: expandedSchool === school.id ? 'rotate(180deg)' : undefined, transition: 'transform .2s' }} />
+                                  </Button>
+                                    {expandedSchool === school.id && (
+                                        <div style={{ marginTop: 8 }}>
+                         {schoolClassesMap[school.id] === undefined ? (
+                                    <Spin size="small"><span style={{ paddingLeft: 8, color: '#999', fontSize: 12 }}>加载中…</span></Spin>
+                                ) : schoolClassesMap[school.id].length === 0 ? (
+                             <div style={{ color: '#999', fontSize: 12, padding: '6px 0' }}>该校暂未创建班级</div>
+                             ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                {schoolClassesMap[school.id].map((c: any) => (
+                                 <div
+                                key={c.id}
+                               style={{
+                           display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
+                                  background: '#fafafa', borderRadius: 6, cursor: c.slug ? 'pointer' : 'default',
+                             }}
+                             onClick={() => c.slug && navigate(`/c/${c.slug}`)}
+                                  >
+                                <span style={{ fontSize: 13, color: '#333', fontWeight: 500 }}>{c.name}</span>
+                                      {c.grade && <Tag color="blue" style={{ margin: 0, fontSize: 11 }}>{c.grade}</Tag>}
+                                    {c.head_teacher_name && (
+                           <span style={{ fontSize: 11, color: '#999' }}>班主任 {c.head_teacher_name}</span>
+                                 )}
+                            <span style={{ marginLeft: 'auto', fontSize: 11, color: '#bbb' }}>
+                               {c.student_count || 0} 人
+                                    </span>
+                            {c.is_public
+                            ? <RightOutlined style={{ fontSize: 10, color: '#ccc' }} />
+                           : <Tag style={{ margin: 0, fontSize: 10, color: '#999' }}>未公开</Tag>}
+                           </div>
+                               ))}
+                            </div>
+                           )}
+                            </div>
+                          )}
+                        </div>
                       </Card>
-                    </Col>
-                  );
-                })}
+                                                        </Col>
+                                                    );
+                                                 })}
               </Row>
             </div>
           </div>

@@ -4,17 +4,40 @@ const router = express.Router();
 const { db } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 
-// 学校列表（公开，供注册时选择）
+// 学校列表（公开，供注册时选择、首页展示）
+//
+// 聚合字段说明：
+//   class_count   该校下的班级数
+//   student_count 真实学生数（含私密班）。原先首页是把这个数字算在前端的，
+//                 而前端只能看到 is_public=1 的班，于是私密班的学生被漏掉，
+//                 学校显示的人数一直偏少。人数必须由服务端算。
+//   teacher_count 该校下的教师数（班主任 + 任课教师，去重）
+//   grades        该校出现的年级列表，供首页展开后按年级分组展示
 router.get('/', (req, res) => {
   try {
     const schools = db
       .prepare(
-        `SELECT id, name, city, region, logo, theme_color,
-           (SELECT COUNT(*) FROM classes WHERE school_id = schools.id) AS class_count
-         FROM schools
-         ORDER BY name ASC`
+        `SELECT s.id, s.name, s.city, s.region, s.logo, s.theme_color,
+           (SELECT COUNT(*) FROM classes WHERE school_id = s.id) AS class_count,
+           (SELECT COUNT(*)
+              FROM users u JOIN classes c ON c.id = u.class_id
+             WHERE c.school_id = s.id AND u.role = 'student') AS student_count,
+           (SELECT COUNT(DISTINCT ct.teacher_id)
+              FROM class_teachers ct JOIN classes c ON c.id = ct.class_id
+             WHERE c.school_id = s.id) AS teacher_count,
+           (SELECT GROUP_CONCAT(DISTINCT c.grade)
+              FROM classes c
+             WHERE c.school_id = s.id AND c.grade IS NOT NULL AND TRIM(c.grade) <> '') AS grades
+         FROM schools s
+         ORDER BY student_count DESC, s.name ASC`
       )
-      .all();
+      .all()
+      // grades 取出后拆成数组：SQLite 的 GROUP_CONCAT 返回逗号分隔的字符串，
+      // 直接丢给前端的话前端还得再 split 一次，不如后端就拆好
+      .map((s) => ({
+        ...s,
+        grades: s.grades ? String(s.grades).split(',').filter(Boolean) : [],
+      }));
     res.json({ schools });
   } catch (error) {
     console.error('获取学校列表失败:', error);
@@ -111,7 +134,11 @@ router.delete('/:id', authenticateToken, (req, res) => {
   }
 });
 
-// 学校下的班级列表（公开主页用）
+// 学校下的班级列表（公开主页 + 首页展开用）
+//
+// 隐私口径：is_public=0 的私密班也返回，但只给基础信息（名字/年级/人数），
+// 不返回 slug —— slug 是班级公开主页的钥匙，私密班不该被外人顺着链接进去。
+// 首页据此把私密班标成「未公开」，不提供跳转。
 router.get('/:id/classes', (req, res) => {
   try {
     const schoolId = parseInt(req.params.id, 10);
@@ -120,12 +147,15 @@ router.get('/:id/classes', (req, res) => {
     const classes = db
       .prepare(
         `SELECT c.id, c.name, c.grade, c.slug, c.is_public,
-           (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') AS student_count
+           (SELECT COUNT(*) FROM users WHERE class_id = c.id AND role = 'student') AS student_count,
+           (SELECT COUNT(DISTINCT ct.teacher_id) FROM class_teachers ct WHERE ct.class_id = c.id) AS teacher_count,
+           (SELECT COALESCE(u.real_name, u.username) FROM users u WHERE u.id = c.head_teacher_id) AS head_teacher_name
          FROM classes c
          WHERE c.school_id = ?
-         ORDER BY c.created_at DESC`
+      ORDER BY c.grade ASC, c.created_at DESC`
       )
-      .all(schoolId);
+      .all(schoolId)
+      .map((c) => ({ ...c, slug: c.is_public ? c.slug : null }));
     res.json({ school, classes });
   } catch (error) {
     console.error('获取学校班级失败:', error);

@@ -526,6 +526,12 @@ export const petExtendedAPI = {
 
 // 排行榜相关 API
 export const leaderboardAPI = {
+  /**
+   * 公开榜（免登录，供首页给访客看）。
+   * 与下面几个榜单的区别是脱敏：不含学生真名、不含金币，只出宠物昵称+等级+学校班级。
+   */
+  getPublicLeaderboard: (params?: { limit?: number }) =>
+    api.get('/leaderboard/public', { params }),
   getLevelLeaderboard: (params?: { class_id?: number; limit?: number }) =>
     api.get('/leaderboard/level', { params }),
   getBattleLeaderboard: (params?: { class_id?: number; limit?: number }) =>
@@ -803,7 +809,20 @@ export const classAPI = {
 };
 
 // 学校相关 API
+/**
+ * 首页面向访客的公开接口（全部免登录）。
+ * 对应后端 backend/src/routes/public.js —— 那里只放「泄露出去没风险」的数据。
+ */
+export const publicAPI = {
+  /** 全校公告（不含班级内部公告、不含已过期） */
+  getAnnouncements: (params?: { limit?: number }) =>
+    api.get('/public/announcements', { params }),
+  /** 年级概览：各年级的班级数/学生数/教师数/涉及学校数 */
+  getByGrade: () => api.get('/public/by-grade'),
+};
+
 export const schoolAPI = {
+  /** 学校列表（含 class_count / student_count / teacher_count / grades） */
   getSchools: () => api.get('/schools'),
   createSchool: (data: { name: string; city?: string; region?: string; theme_color?: string }) =>
     api.post('/schools', data),
@@ -872,8 +891,18 @@ export const classroomQuizAPI = {
   createQuiz: (data: {
     title: string; description?: string; subject?: string;
     class_id: number;
-    /** 题干必填；courseware_html 为该题附带的 HTML 课件（可选），answer_text 为参考答案（可选） */
-    questions: Array<{ question_text: string; courseware_html?: string; answer_text?: string }>;
+    /**
+     * 题干必填。question_type/options/标准答案/讲解都是选填，
+     * 但填了 objective 题才能在控制台点选项直接判对错（不必等 AI 判分）。
+     */
+    questions: Array<{
+      question_text: string;
+      courseware_html?: string;
+      answer_text?: string;
+      question_type?: string;
+      options?: Array<{ key: string; text: string }>;
+      explanation?: string;
+    }>;
   }) => api.post('/cards/classroom-quiz', data),
   getQuizzes: (params?: { class_id?: number; status?: string }) =>
     api.get('/cards/classroom-quiz', { params }),
@@ -895,10 +924,13 @@ export const classroomQuizAPI = {
     api.post('/cards/classroom-quiz/ai-generate', data, { timeout: (timeout || 30) * 1000 }),
   aiJudge: (data: { subject?: string; question_text: string; reference_answer?: string; student_answer: string }, timeout?: number) =>
     api.post('/cards/classroom-quiz/ai-judge', data, { timeout: (timeout || 30) * 1000 }),
+  /** 课堂答题 AI 答疑：只讲解不判分，与 aiJudge 分开（kind 不同，可并行） */
+  aiExplain: (data: { subject?: string; question_text: string; reference_answer?: string; student_answer?: string; student_question: string }, timeout?: number) =>
+    api.post('/cards/classroom-quiz/ai-explain', data, { timeout: (timeout || 30) * 1000 }),
   /** 课堂做题出题/判分进度 */
   getQuizTaskProgress: (taskId: string) =>
     api.get(`/cards/classroom-quiz/task/${taskId}`, { timeout: 15000 }),
-  saveAnswer: (quizId: number, data: { question_id?: number; student_id: number; answer_text?: string; judged_by_ai?: boolean; is_correct?: boolean; score?: number; coin_rewarded?: number }) =>
+  saveAnswer: (quizId: number, data: { question_id?: number; student_id: number; answer_text?: string; judged_by_ai?: boolean; /** 判分来源：local=本地秒判 / ai=AI 判分 / teacher=老师手工录入 */ judged_by?: 'local' | 'ai' | 'teacher'; is_correct?: boolean; score?: number; coin_rewarded?: number }) =>
     api.post(`/cards/classroom-quiz/${quizId}/answers`, data),
   updateAnswerReward: (answerId: number, coin_rewarded: number) =>
     api.put(`/cards/classroom-quiz/answers/${answerId}`, { coin_rewarded }),

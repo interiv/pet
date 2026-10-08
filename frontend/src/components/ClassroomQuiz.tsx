@@ -15,6 +15,7 @@ import { classroomQuizAPI, questionBankAPI, itemAPI, equipmentAPI, adminAPI, age
 import { pollAiTask, AI_TASK_URLS } from '../utils/aiTask';
 import { readPendingQuizGen, writePendingQuizGen, clearPendingQuizGen } from '../utils/quizTaskResume';
 import RewardLogDrawer from './RewardLogDrawer';
+import { normalizeQuestionType } from '../utils/questionTypes';
 import { useAuthStore } from '../store/authStore';
 import { getPetThumbUrl } from '../utils/petImage';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
@@ -29,6 +30,19 @@ const REWARD_TYPES: Record<string, { label: string; color: string }> = {
   equipment: { label: '装备', color: 'blue' },
   exp: { label: '经验', color: 'orange' },
 };
+
+/**
+ * 课堂做题的题型选项。与后端 services/classroomQuiz.js 的 QUESTION_TYPES 一致。
+ * 前三种（选择/多选/判断）填了选项和标准答案后，控制台可以点选项直接判对错；
+ * 后两种仍走语音/文本 + AI 判分。
+ */
+const QUIZ_TYPE_OPTIONS = [
+  { value: 'choice_single', label: '单选题' },
+  { value: 'choice_multi', label: '多选题' },
+  { value: 'judgment', label: '判断题' },
+  { value: 'fill_blank', label: '填空题' },
+  { value: 'essay', label: '简答题' },
+];
 
 const subjectOptions = SUBJECT_OPTIONS;
 const aiTypeOptions = [
@@ -709,12 +723,25 @@ const ClassroomQuiz: React.FC = () => {
       if (createSource === 'manual') {
         if (manualMode === 'rows') {
           // 逐题录入：题干 + 参考答案（选填）+ HTML 课件（选填）
+          // 逐题录入：题干 + 题型 + 选项 + 参考答案（选填）+ HTML 课件（选填）
+          // 题型与选项是为了让客观题能在控制台本地秒判；不填也不影响，
+          // 后端会按简答处理、走原来的 AI 判分流程
           questions = (values.manual_questions || [])
             .filter((q: any) => q && String(q.question_text || '').trim())
             .map((q: any) => ({
               question_text: String(q.question_text).trim(),
               answer_text: String(q.answer_text || '').trim() || undefined,
               courseware_html: String(q.courseware_html || '').trim() || undefined,
+              question_type: String(q.question_type || '').trim() || undefined,
+              options: (Array.isArray(q.options) && q.options.length > 0)
+                ? q.options
+                  .map((o: any, i: number) => ({
+                    key: String(o?.key ?? String.fromCharCode(65 + i)).trim().toUpperCase(),
+                    text: String(o?.text ?? '').trim(),
+                  }))
+                  .filter((o: any) => o.text)
+                : undefined,
+              explanation: String(q.explanation || '').trim() || undefined,
             }));
         } else {
           questions = (values.question_texts || '')
@@ -740,21 +767,44 @@ const ClassroomQuiz: React.FC = () => {
           .map(id => {
             const q = bankQuestions.find(b => b.id === id);
             const lines = [q?.content || ''];
-            if (q?.options && Array.isArray(q.options) && q.options.length > 0) {
-              q.options.forEach((opt: string, i: number) => {
-                lines.push(`${String.fromCharCode(65 + i)}. ${opt}`);
-              });
+            // 选项继续拼进题干（保证投屏时格式完整），
+            // 同时把结构化的题型/选项/标准答案一并带上，控制台才能本地秒判
+            const opts: { key: string; text: string }[] | null =
+              (q?.options && Array.isArray(q.options) && q.options.length > 0)
+                ? q.options.map((opt: string, i: number) => ({ key: String.fromCharCode(65 + i), text: String(opt) }))
+                : null;
+            if (opts) {
+              opts.forEach((o) => lines.push(`${o.key}. ${o.text}`));
             }
-            return { question_text: lines.filter(Boolean).join('\n') };
+            return {
+              question_text: lines.filter(Boolean).join('\n'),
+              question_type: normalizeQuestionType(q?.type) || undefined,
+              options: opts || undefined,
+              answer_text: String(q?.answer || '').trim() || undefined,
+              explanation: String(q?.explanation || q?.analysis || '').trim() || undefined,
+            };
           });
       } else {
         if (aiSelected.size === 0) {
           message.warning('请先点击"AI生成题目"并勾选要使用的题目');
           return;
         }
+        // AI 出题本来就会返回题型、选项、答案、讲解，此前入库时被压成纯文本丢掉了，
+        // 导致客观题只能靠 AI 判分。这里一并带上，控制台就能本地秒判。
         questions = aiQuestions
           .filter((_, i) => aiSelected.has(i))
-          .map(q => ({ question_text: q.content, answer_text: q.answer || undefined }));
+          .map(q => ({
+            question_text: q.content,
+            question_type: normalizeQuestionType(q.type) || undefined,
+            options: (Array.isArray(q.options) && q.options.length > 0)
+              ? q.options.map((o: any, i: number) => ({
+                  key: String(o?.key ?? String.fromCharCode(65 + i)),
+                  text: String(o?.text ?? o ?? '').trim(),
+                }))
+              : undefined,
+            answer_text: q.answer || undefined,
+            explanation: q.explanation || q.analysis || undefined,
+          }));
       }
 
       if (questions.length === 0) {
@@ -771,9 +821,18 @@ const ClassroomQuiz: React.FC = () => {
       });
 
       const coursewareCount = questions.filter((q: any) => q.courseware_html).length;
-      message.success(coursewareCount > 0
-        ? `课堂做题创建成功，其中 ${coursewareCount} 道题带 HTML 课件`
-        : '课堂做题创建成功');
+      // 客观题（选择/多选/判断，且有标准答案）能在控制台点选项直接判对分，
+      // 告诉老师有多少道可以省掉 AI 判分那一轮等待
+      const objectiveCount = questions.filter(
+        (q: any) => ['choice_single', 'choice_multi', 'judgment'].includes(q.question_type) && String(q.answer_text || '').trim()
+      ).length;
+      message.success(
+        [
+          '课堂做题创建成功',
+          coursewareCount > 0 ? `${coursewareCount} 道题带 HTML 课件` : '',
+          objectiveCount > 0 ? `${objectiveCount} 道客观题可点选项直接判分` : '',
+        ].filter(Boolean).join('，')
+      );
       setCreateModalOpen(false);
       createForm.resetFields();
       setCreateSource('manual');
@@ -1385,9 +1444,74 @@ const ClassroomQuiz: React.FC = () => {
                             >
                               <Input.TextArea rows={2} placeholder="题干（课堂上投屏展示）" />
                             </Form.Item>
+                            {/* 题型 + 选项：填了就能在控制台点选项直接判对错，省掉等 AI 判分那一轮。
+                                不填也不影响——按简答处理，走原来的 AI 判分流程。 */}
+                            <Space wrap style={{ marginBottom: 8 }}>
+                              <Form.Item {...field} name={[field.name, 'question_type']} style={{ marginBottom: 0 }}>
+                                <Select
+                                  style={{ width: 140 }}
+                                  placeholder="题型（选填）"
+                                  allowClear
+                                  options={QUIZ_TYPE_OPTIONS}
+                                />
+                              </Form.Item>
+                              {(['choice_single', 'choice_multi', 'judgment'] as const)
+                                .includes(manualRows[field.name]?.question_type) && (
+                                <Button
+                                  size="small"
+                                  icon={<PlusOutlined />}
+                                  onClick={() => {
+                                    const cur = createForm.getFieldValue(['manual_questions', field.name, 'options']) || [];
+                                    createForm.setFieldValue(
+                                      ['manual_questions', field.name, 'options'],
+                                      [...cur, { key: String.fromCharCode(65 + cur.length), text: '' }]
+                                    );
+                                  }}
+                                >
+                                  添加选项
+                                </Button>
+                              )}
+                            </Space>
+                            {(['choice_single', 'choice_multi', 'judgment'] as const)
+                              .includes(manualRows[field.name]?.question_type) && (
+                              <div style={{ marginBottom: 8 }}>
+                                {(createForm.getFieldValue(['manual_questions', field.name, 'options']) || []).map((o: any, oi: number) => (
+                                  <Space key={oi} style={{ display: 'flex', marginBottom: 4 }} align="center">
+                                    <span style={{ width: 20, color: '#666', fontWeight: 600 }}>{o?.key}</span>
+                                    <Form.Item
+                                      {...field}
+                                      name={[field.name, 'options', oi, 'text']}
+                                      preserve
+                                      style={{ marginBottom: 0 }}
+                                    >
+                                      <Input style={{ width: 320 }} placeholder={`选项 ${o?.key} 的内容`} />
+                                    </Form.Item>
+                                    <Popconfirm
+                                      title="删掉这个选项？"
+                                      onConfirm={() => {
+                                        const cur = createForm.getFieldValue(['manual_questions', field.name, 'options']) || [];
+                                        createForm.setFieldValue(
+                                          ['manual_questions', field.name, 'options'],
+                                          cur.filter((_: any, i: number) => i !== oi)
+                                        );
+                                      }}
+                                      okText="删除"
+                                      cancelText="取消"
+                                    >
+                                      <Button type="text" danger size="small" icon={<DeleteOutlined />} />
+                                    </Popconfirm>
+                                  </Space>
+                                ))}
+                              </div>
+                            )}
                             <Space wrap>
                               <Form.Item {...field} name={[field.name, 'answer_text']} style={{ marginBottom: 0 }}>
-                                <Input style={{ width: 240 }} placeholder="参考答案（选填，仅教师可见）" />
+                                <Input
+                                  style={{ width: 240 }}
+                                  placeholder={['choice_single', 'choice_multi', 'judgment'].includes(manualRows[field.name]?.question_type)
+                                    ? '标准答案（填选项字母，如 B 或 AB）'
+                                    : '参考答案（选填，仅教师可见）'}
+                                />
                               </Form.Item>
                               <Form.Item {...field} name={[field.name, 'courseware_html']} hidden>
                                 <Input.TextArea />
@@ -1416,7 +1540,7 @@ const ClassroomQuiz: React.FC = () => {
                           </div>
                         );
                       })}
-                      <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ question_text: '', answer_text: '', courseware_html: '' })}>
+                      <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ question_text: '', answer_text: '', courseware_html: '', options: [] })}>
                         添加一道题
                       </Button>
                       <div style={{ color: '#999', fontSize: 12, marginTop: 6 }}>

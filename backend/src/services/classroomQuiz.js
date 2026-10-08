@@ -13,6 +13,15 @@ const MAX_COURSEWARE_LEN = 200 * 1024;
 const MAX_QUESTION_LEN = 2000;
 const MAX_TITLE_LEN = 100;
 const MAX_QUESTIONS_PER_CALL = 50; // 单次提交最多 50 道题
+const MAX_OPTION_LEN = 500;
+const MAX_OPTIONS = 8;
+
+/**
+ * 允许的题型。
+ * choice_single 单选 / choice_multi 多选 / judgment 判断 / fill_blank 填空 / essay 简答作文。
+ * 前端 utils/questionTypes.ts 是同一份口径，改这里要同步改那里。
+ */
+const QUESTION_TYPES = ['choice_single', 'choice_multi', 'judgment', 'fill_blank', 'essay'];
 
 /** 裁剪文本（超长截断，空值返回 null） */
 function clipText(raw, maxLen) {
@@ -23,7 +32,65 @@ function clipText(raw, maxLen) {
 }
 
 /**
- * 规整提交的题目：兼容纯字符串题干与 { question_text, answer_text, courseware_html }
+ * 规整结构化选项：兼容 [{key,text}] 与 {A:'文本',B:'文本'} 两种写法。
+ *
+ * 为什么要单独规整：AI 出题、题库选题、老师手动录入三处的选项格式各不相同，
+ * 而 options 要以同一形态落库，前端才能用同一套逻辑渲染按钮、判分。
+ * 落库统一存 JSON 字符串 [{"key":"A","text":"..."}]。
+ */
+function normalizeOptions(raw) {
+  if (!raw) return null;
+
+  let list = raw;
+  if (typeof raw === 'string') {
+    const text = raw.trim();
+    if (!text) return null;
+    try {
+      list = JSON.parse(text);
+    } catch (e) {
+      return null; // 不是 JSON 就当作没有选项，判分自动退回 AI 流程
+    }
+  }
+  if (!Array.isArray(list)) {
+    // {A:'文本', B:'文本'} 形式
+    if (list && typeof list === 'object') {
+      list = Object.entries(list).map(([key, text]) => ({ key, text }));
+    } else {
+      return null;
+    }
+  }
+
+  const out = [];
+  const used = new Set();
+  list.forEach((o, idx) => {
+    if (!o) return;
+    const text = clipText(o.text ?? o.label ?? o.content ?? o.value, MAX_OPTION_LEN);
+    if (!text) return;
+    let key = String(o.key ?? o.label_key ?? '').trim().toUpperCase();
+    if (!key) key = String.fromCharCode(65 + idx); // 没给 key 就按顺序补 A/B/C…
+    if (used.has(key)) return;
+    used.add(key);
+    out.push({ key, text });
+  });
+
+  return out.length ? out.slice(0, MAX_OPTIONS) : null;
+}
+
+/**
+ * 从题干纯文本里识别并拆出结构化选项。
+ * 实现放在 services/classroomQuestionText.js（纯函数、不依赖数据库），
+ * 因为迁移脚本回填存量题时也要用同一套判据，而那里不能再开数据库连接。
+ */
+const { splitInlineOptions, looksLikeJudgment, inferTypeFromOptions } = require('./classroomQuestionText');
+
+/**
+ * 规整提交的题目：兼容纯字符串题干与 { question_text, answer_text, courseware_html,
+ * question_type, options, explanation }。
+ *
+ * question_type/options/explanation 是本地判分的前提：
+ * 课堂答题要能对客观题秒判对错，就必须知道题型、选项和标准答案，
+ * 以前这三样都没有，只能把作答送去给 AI 判。
+ *
  * 返回 { questions, warnings }，warnings 提示哪些内容被裁剪 / 忽略
  */
 function normalizeQuestions(rawList) {
@@ -43,10 +110,36 @@ function normalizeQuestions(rawList) {
       warnings.push(`第 ${i + 1} 题的 HTML 课件内容为空，已忽略`);
     }
 
+    // 题型：认不出来就留空（前端按简答处理，走原有 AI 判分，行为不变）
+    const rawType = isObj ? (q.question_type ?? q.type) : null;
+    let type = QUESTION_TYPES.includes(String(rawType)) ? String(rawType) : null;
+
+    // 选项：优先用显式传入的；没有就从题干里拆。
+    // 题干保留原样（选项也留在题干里，投屏时题干与选项一起看才完整），
+    // options 只是额外多一份结构化数据，供控制台渲染按钮与本地判分。
+    let options = normalizeOptions(isObj ? (q.options ?? q.option_list ?? q.choices) : null);
+    if (!options) {
+      const parsed = splitInlineOptions(text);
+      if (parsed) {
+        options = parsed.options;
+        // 没显式指定题型时按选项形态推断：判断题是「正确/错误」两选项
+        if (!type) type = inferTypeFromOptions(options);
+      }
+    }
+    // 填空/简答不该有选项，防止脏数据把主观题误判成客观题
+    if (type === 'fill_blank' || type === 'essay') options = null;
+
+    if (type && type !== 'fill_blank' && type !== 'essay' && !options?.length) {
+      warnings.push(`第 ${i + 1} 题是客观题但没有可用选项，将按简答处理（走 AI 判分）`);
+    }
+
     questions.push({
       question_text: text.length > MAX_QUESTION_LEN ? text.slice(0, MAX_QUESTION_LEN) : text,
       answer_text: clipText(isObj ? (q.answer_text ?? q.answer ?? q.reference_answer) : null, 2000),
       courseware_html: courseware,
+      question_type: type,
+      options: options ? JSON.stringify(options) : null,
+      explanation: clipText(isObj ? (q.explanation ?? q.analysis ?? q.explain) : null, 2000),
     });
 
     if (text.length > MAX_QUESTION_LEN) {
@@ -98,11 +191,16 @@ function appendQuizQuestions(quizId, questions) {
 function insertQuestions(quizId, questions, startOrder) {
   if (!questions.length) return 0;
   const stmt = db.prepare(`
-    INSERT INTO classroom_quiz_questions (quiz_id, question_text, sort_order, courseware_html, answer_text)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO classroom_quiz_questions
+      (quiz_id, question_text, sort_order, courseware_html, answer_text, question_type, options, explanation)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   questions.forEach((q, i) => {
-    stmt.run(quizId, q.question_text, startOrder + i, q.courseware_html || null, q.answer_text || null);
+    stmt.run(
+      quizId, q.question_text, startOrder + i,
+      q.courseware_html || null, q.answer_text || null,
+      q.question_type || null, q.options || null, q.explanation || null
+    );
   });
   return questions.length;
 }
@@ -134,7 +232,8 @@ function getClassroomQuiz(quizId) {
   `).get(quizId);
   if (!quiz) return null;
   const questions = db.prepare(`
-    SELECT id, sort_order, question_text, answer_text, courseware_html
+    SELECT id, sort_order, question_text, answer_text, courseware_html,
+           question_type, options, explanation
     FROM classroom_quiz_questions WHERE quiz_id = ? ORDER BY sort_order ASC, id ASC
   `).all(quizId);
   return { ...quiz, questions };
@@ -146,6 +245,8 @@ module.exports = {
   MAX_TITLE_LEN,
   MAX_QUESTIONS_PER_CALL,
   clipText,
+  splitInlineOptions,
+  looksLikeJudgment,
   normalizeQuestions,
   listTeacherClasses,
   getTeachingSubject,

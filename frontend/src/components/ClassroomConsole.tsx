@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Button, Select, InputNumber, Input, Tag, Avatar, Empty, Spin, message, Checkbox, Space, Modal, Table, Slider, Progress, Alert
+  Button, Select, InputNumber, Input, Tag, Avatar, Empty, Spin, message, Checkbox, Space, Modal, Table, Progress, Alert, Tooltip
 } from 'antd';
 import {
   LeftOutlined, RightOutlined, CloseOutlined, ThunderboltOutlined,
@@ -12,6 +12,8 @@ import { pinyin } from 'pinyin-pro';
 import { classroomQuizAPI, itemAPI, equipmentAPI } from '../utils/api';
 import { pollAiTask, AI_TASK_URLS } from '../utils/aiTask';
 import { readPendingQuizJudge, writePendingQuizJudge, clearPendingQuizJudge } from '../utils/quizTaskResume';
+import { judgeLocally, isLocalJudgeable, normalizeOptions, normalizeAnswer, type LocalJudgeResult } from '../utils/quizLocalJudge';
+import { splitInlineOptions } from '../utils/classroomQuestionText';
 import { useAuthStore } from '../store/authStore';
 import { getPetThumbUrl } from '../utils/petImage';
 
@@ -33,6 +35,33 @@ const KEYPAD_ROWS = [
 const rarityLabel = (r: string) =>
   ({ common: '普通', rare: '稀有', epic: '史诗', legendary: '传说' } as Record<string, string>)[r] || r;
 
+/**
+ * 「老师自己答题」时的占位答题人。
+ * isTeacher 用来区分：判分结果要照常展示，但**不写进学生的答题记录、
+ * 也不发金币**——那些是给学生的记录，老师自己回答不该占学生的名额。
+ */
+const TEACHER_ANSWERER = { id: -1, real_name: '教师', username: 'teacher', isTeacher: true };
+
+/** 答题人展示名（学生取姓名，教师固定显示「教师」） */
+const answererName = (s: any): string =>
+  !s ? '' : (s.isTeacher ? '教师' : (s.real_name || s.username || ''));
+
+/**
+ * 作答区统一高度。
+ * 客观题是按钮、主观题是输入框+按钮，两种内容天然高度不同；
+ * 不锁minHeight 的话每换一题版面就跳一下，投影时尤其明显。
+ */
+const ANSWER_AREA_MIN_HEIGHT = 104;
+
+/**
+ * 投屏字号缩放范围。
+ * 下限 0.5：后排学生看不清投屏时，0.7 倍仍然偏大，实际需要更小才看得清。
+ * 上限 2.5：给最后一排自己调大看板用。
+ */
+const FONT_SCALE_MIN = 0.5;
+const FONT_SCALE_MAX = 2.5;
+const FONT_SCALE_STEP = 0.1;
+
 interface ConsoleProps {
   quiz: any;
   questions: any[];
@@ -50,6 +79,19 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
   // 抢答倒计时
   const [buzzTotal, setBuzzTotal] = useState(30);
   const [buzzLeft, setBuzzLeft] = useState<number | null>(null);
+
+  /**
+   * 右侧学生名单是否展开。
+   *
+   * 课堂大屏上，左边的题目才是主角，名单常年占着三四十厘米宽度并不划算——
+   * 多数时候老师只是需要「指定某个人回答」时扫一眼名单。所以默认折叠：
+   * 需要点名时展开，不需要时把整块还给题目。
+   *
+   * 关键约定：折叠只藏名单，**不会丢掉「当前答题人是谁」**。
+   * 随机点名抽中的人，即使名单折着，顶部工具栏与折叠条上也会一直挂着名字，
+   * 老师随时知道现在该谁回答（见下面的答题人标记）。
+   */
+  const [studentPanelOpen, setStudentPanelOpen] = useState(false);
 
   // 学生面板
   const [students, setStudents] = useState<any[]>([]);
@@ -88,9 +130,54 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
 
   // 语音答题 + AI 评判
   const [answerer, setAnswerer] = useState<any>(null);
+  /**
+   * 答题模式：还没定人 / 指定某位学生 / 老师自己 answering。
+   *
+   * 以前这里隐含假设「答题人一定是个学生」，于是没选人时：
+   *   - 客观题点选项直接崩（judgeResult.student 是 null，渲染时读 .real_name 白屏）
+   *   - 主观题提交 AI 判分只能弹窗把人拦下来
+   * 但课堂上老师自己回答板书、带着学生一起讲，是很常见的用法。
+   * 现在把「教师」也当成一种合法答题人，只是落库和发金币时要跳过。
+   */
+  const [answerMode, setAnswerMode] = useState<'none' | 'student' | 'teacher'>('none');
+  /** 未定答题人时的三选一弹窗（随机点名 / 自己选学生 / 老师自己回答） */
+  const [pickerOpen, setPickerOpen] = useState(false);
+  /**
+   * 还没定答题人时点了某个选项——先记下来，选定答题人后接着把这次判分做完。
+   * 没有这个中间态的话，老师点了 A、弹窗选完「教师回答」后还得再点一次 A。
+   */
+  /**
+   * 上面那个 state 的 ref 镜像。
+   * 随机点名要等 2 秒名字才停下来，那时读到的是旧闭包里的值，
+   * 用 ref 拿到的才是「此刻」真实待处理的选项。
+   */
+  const pendingPickRef = useRef<string | null>(null);
+  /**
+   * 最近一次「点名」抽中的人。
+   * 与 answerer 分开存是两个意思：
+   *   answerer    现在正由谁回答（判分、发金币都算在他头上）
+   *   pickedStudent 刚刚被随机抽到过（哪怕名单折着，也要看得出抽到了谁）
+   * 两者可能不同：抽中后老师又手动点了别人当答题人，此时被抽到的那个人
+   * 仍然值得一个标记，免得忘了刚才点到了谁。
+   */
+  const [pickedStudent, setPickedStudent] = useState<any>(null);
   const [answerText, setAnswerText] = useState('');
   const [listening, setListening] = useState(false);
   const [judging, setJudging] = useState(false);
+  /**
+   * 客观题本地作答：选中的选项键（多选可多个）。
+   * 判分在浏览器里直接做完，不调 AI——单选/多选/判断本该是确定性判断，
+   * 让大模型判不仅慢还花 token，且会给出「答对了给 95 分」这种含糊结果。
+   */
+  const [pickedKeys, setPickedKeys] = useState<string[]>([]);
+  /** 本地判分的结果；null 表示还没作答或判不了（后者退回 AI 流程） */
+  const [localResult, setLocalResult] = useState<LocalJudgeResult | null>(null);
+  /** 「问 AI」答疑：老师手工选定答案后，可补一句学生的疑问交给 AI 讲解 */
+  const [explainOpen, setExplainOpen] = useState(false);
+  const [explainQuestion, setExplainQuestion] = useState('');
+  const [explaining, setExplaining] = useState(false);
+  const [explainProgress, setExplainProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
+  const [explainResult, setExplainResult] = useState<{ explanation: string; key_point: string } | null>(null);
   // AI 判分进度（后端后台执行，这里轮询刷新）
   const [judgeProgress, setJudgeProgress] = useState<{ percent: number; done: number; total: number; current: string } | null>(null);
   const [judgeSeconds, setJudgeSeconds] = useState(0);
@@ -102,9 +189,15 @@ const ClassroomConsole: React.FC<ConsoleProps> = ({ quiz, questions, onClose, on
   // 投屏字号缩放
   const [fontScale, setFontScale] = useState<number>(() => {
     const v = parseFloat(localStorage.getItem('cls_font_scale') || '1');
-    return isNaN(v) ? 1 : Math.min(1.8, Math.max(0.7, v));
+    return isNaN(v) ? 1 : Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, v));
   });
   const recRef = useRef<any>(null);
+  /** 统一改字号：加减按钮与直接输入都走这里，保证钳制与持久化一致 */
+  const applyFontScale = (v: number) => {
+    const n = Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, Number(v) || 1));
+    setFontScale(n);
+    localStorage.setItem('cls_font_scale', String(n));
+  };
   /** 接回未完成判分时的防重入闸：轮询已挂着就别再起第二个循环 */
   const judgeResumeInFlightRef = useRef(false);
   /** 进入控制台时只尝试恢复一次 */
@@ -395,6 +488,18 @@ useEffect(() => {
     }, 150);
   };
 
+  /**
+   * 指定答题人（手动点卡片 / 随机点名抽中）时把名单展开并滚到该学生。
+   * 这两种都是「老师正要看着名单挑人」的场景，名单折着会挡住卡片。
+   * 注意：折叠状态下顶部与折叠条仍会显示当前答题人，不会因此丢失信息。
+   */
+  const revealStudent = (s: any) => {
+    setStudentPanelOpen(true);
+    scrollStudentIntoView(s.id);
+    // 点名是异步的（名字滚动约 2 秒才停），选人真正完成的那一刻才接上这次判分
+    discardPendingPick();
+  };
+
   // 随机点名（自动绑定为答题人）
   const startRandomPick = () => {
     if (students.length === 0) { message.warning('班级暂无学生'); return; }
@@ -411,12 +516,219 @@ useEffect(() => {
         rollTimer.current = null;
         setRandomState({ rolling: false, name: s.real_name || s.username, student: s });
         setAnswerer(s);
-        scrollStudentIntoView(s.id);
+        setAnswerMode('student');
+        setPickedStudent(s);
+        // 抽中的人要看得见：自动展开名单并滚到那张卡片。
+        // 万一老师又手动折叠了，顶部和折叠条上仍挂着「当前答题人」，
+        // 随时知道该谁回答，不用重新点名。
+        revealStudent(s);
       }
     }, 90);
   };
 
-  // ===== 语音录入 =====
+  // ===== 客观题本地判分 =====
+
+/**
+ * 当前题能否走本地秒判，以及要渲染哪些选项按钮。
+ *
+ * 两条取选项的路径：
+ *   1. options 字段（AI 出题、题库选题、以及后端已拆分过的题）——首选
+ *   2. 从题干纯文本里拆（库里改动之前建的题，options 列是空的）
+ * 两条都拿不到才退回 AI 判分。
+ */
+const localOptions = useMemo(() => {
+  if (!currentQuestion) return [];
+  const fromField = normalizeOptions(currentQuestion.options);
+  if (fromField.length) return fromField;
+  const parsed = splitInlineOptions(currentQuestion.question_text);
+  if (parsed) return normalizeOptions(parsed.options);
+  return [];
+}, [currentQuestion]);
+
+/** 题干里内嵌了选项时，题干区只显示 stem，避免和下方按钮重复展示一遍 */
+const localStem = useMemo(() => {
+  if (!currentQuestion) return '';
+  if (normalizeOptions(currentQuestion.options).length) return currentQuestion.question_text;
+  return splitInlineOptions(currentQuestion.question_text)?.stem || currentQuestion.question_text;
+}, [currentQuestion]);
+
+const localJudgeable = !!currentQuestion && isLocalJudgeable(currentQuestion) && localOptions.length > 0;
+
+/**
+ * 当前生效的答题人：教师模式下是「教师」，否则是选中的学生（可能还没选）。
+ * 判分结果一律用它填 student，渲染处就不会再读到 null。
+ */
+const effectiveAnswerer = answerMode === 'teacher' ? TEACHER_ANSWERER : answerer;
+
+/** 换题时清掉上一题的作答与判分结果，别把 A 题的答案带到 B 题 */
+useEffect(() => {
+  setPickedKeys([]);
+  setLocalResult(null);
+  setAnswerText('');
+  setExplainOpen(false);
+  setExplainQuestion('');
+  setExplainResult(null);
+  // 换题要重新指定答题人：上一题是谁答的，和这一题没关系。
+  // 否则老师切题后判分会算到上一题那个学生头上。
+  setAnswerMode('none');
+  setAnswerer(null);
+  setPickedStudent(null);
+}, [index]);
+
+/**
+ * 从判分结果里安全取答题人。
+ *
+ * 任何一条路径只要存进去的 student 是 null（历史记录、异常流程），
+ * 渲染都不能崩——之前就是这里读 .real_name 导致整页白屏，
+ * 一崩整个控制台就没了，连切题都做不了。
+ */
+const resultStudent = (r: any): any => r?.student ?? null;
+
+/**
+ * 点选项：单选/判断点一下即判，多选先攒着、等老师点「提交答案」。
+ *
+ * 还没指定答题人时不会直接判：先把这次点的选项记下来，弹出
+ * 「随机点名 / 我自己选学生 / 教师自己回答」让人选，
+ * 指定学生或随机点名时，之前点的那个选项要作废（见 discardPendingPick）：
+ * 那个人是刚被指定的、还没开口回答。只有「教师自己回答」才提交那个选项。
+ */
+const pickOption = (key: string) => {
+  if (!currentQuestion) return;
+  if (answerMode === 'none') {
+    pendingPickRef.current = key;
+    setPickerOpen(true);
+    return;
+  }
+  commitPick(key);
+};
+
+/** 真正执行一次本地判分（已确定答题人） */
+const commitPick = (key: string) => {
+  if (!currentQuestion) return;
+  const isMulti = currentQuestion.question_type === 'choice_multi';
+  const next = isMulti
+    ? (pickedKeys.includes(key) ? pickedKeys.filter(k => k !== key) : [...pickedKeys, key])
+    : [key];
+
+  setPickedKeys(next);
+  // 多选选完一个就提交语义不对，等老师点提交
+  if (isMulti) {
+    setLocalResult(null);
+    return;
+  }
+  applyLocalJudge(next);
+};
+
+/**
+ * 指定了某个学生之后，此前那次点击作废。
+ *
+ * 为什么不自动提交那个选项：老师点 A 时想的是「让某个学生答这题」，
+ * 人定下来之后他是刚被指定的、还没开口回答。把老师随手点的 A 记成他的作答，
+ * 会写进他的答题记录、还可能发金币，等于凭空造了一条不存在的作答记录。
+ */
+const discardPendingPick = () => {
+  if (pendingPickRef.current === null) return;
+  pendingPickRef.current = null;
+  setPickedKeys([]);
+  setLocalResult(null);
+};
+
+/** 用选中的选项做本地判分并写入答题记录 */
+const applyLocalJudge = async (keys: string[], overrideWho?: any) => {
+    if (!currentQuestion) return null;
+    // 用当前解析出的选项构造判分入参：
+    // 存量题的options 字段是空的，judgeLocally 只认 options，
+    // 直接传原题会永远返回 null（于是又退回 AI 判分）
+  const judgeTarget = {
+    ...currentQuestion,
+    options: localOptions.length ? localOptions : (currentQuestion.options ?? null),
+  };
+  const result = judgeLocally(judgeTarget, keys);
+  if (!result) return null; // 判不了，调用方退回 AI 流程
+  setLocalResult(result);
+
+  // 兜底：答题人缺失时给占位对象，绝不让 null 流到渲染层。
+  // 之前把 null 存进 judgeResult.student，渲染时读 .real_name 直接白屏，
+  // 一崩整个控制台都没了，连切题都做不了。正常流程已在 pickOption 拦过，
+  // 这里只是最后一道保险。
+  //
+  // overrideWho：教师自己回答时显式传入。setAnswerMode 是异步的，
+  // 同一 tick 里读 effectiveAnswerer 拿到的还是旧值（null），
+  // 所以用参数把「教师」这个身份直接传进来，不依赖 state 时序。
+  const who = overrideWho
+    || effectiveAnswerer
+    || { id: 0, real_name: String(), username: String(), noAnswerer: true };
+  setJudgeResult({
+    is_correct: result.isCorrect,
+    score: result.score,
+    comment: result.isCorrect
+      ? `回答正确（${result.studentAnswer}）`
+      : `回答错误，正确答案是 ${result.correctAnswer}`,
+    correct_answer: result.correctAnswer,
+    student: who,
+    answer: result.studentAnswer,
+    questionIndex: index,
+    coins: 0,
+    localJudge: true,
+  });
+
+  // 只有「某个学生」作答才写进他的答题记录；老师自己回答不占学生名额
+  if (who && !who.isTeacher) {
+    try {
+      const saved = await classroomQuizAPI.saveAnswer(quiz.id, {
+        question_id: currentQuestion.id,
+    student_id: who.id,
+        answer_text: result.studentAnswer,
+        judged_by_ai: false,
+        judged_by: 'local',
+        is_correct: result.isCorrect,
+        score: result.score,
+        coin_rewarded: 0,
+      });
+      setJudgeResult((prev: any) => ({ ...prev, answerId: saved.data.answer_id }));
+    } catch (e) { /* 记录失败不影响判分展示 */ }
+    loadAnswers();
+  }
+  return result;
+};
+
+// ===== 「问 AI」答疑 =====
+/**
+ * 把题目 + 学生答案 + 老师的疑问交给 AI 讲解。
+ *
+ * 与「提交AI评判」是两件事：判分本地已经秒判完了，AI 该做的是把「为什么」讲清楚。
+ * 老师手工选定学生答案、再补一句学生的疑问就能用，不额外占生成次数。
+ */
+const handleExplain = async () => {
+  if (!currentQuestion) return;
+  if (!explainQuestion.trim()) {
+    message.warning('请先填写学生的疑问，例如「为什么选 B 不选 C」');
+    return;
+  }
+  const studentAnswer = localResult?.studentAnswer || answerText.trim();
+  setExplaining(true);
+  setExplainProgress({ percent: 0, done: 0, total: 1, current: 'AI 正在讲解（通常需 10-30 秒）' });
+  try {
+    const res = await classroomQuizAPI.aiExplain({
+      subject: quiz.subject,
+      question_text: currentQuestion.question_text,
+      reference_answer: currentQuestion.answer_text || '',
+      student_answer: studentAnswer || '未作答',
+      student_question: explainQuestion.trim(),
+    });
+    const taskId: string | undefined = res.data?.task_id;
+    if (!taskId) throw new Error('后端未返回任务号，请确认服务端已更新到最新版本');
+    const r = await pollAiTask(taskId, AI_TASK_URLS.classroomQuizTask, setExplainProgress);
+    setExplainResult({ explanation: r.explanation || '', key_point: r.key_point || '' });
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || e?.message || 'AI答疑失败');
+  } finally {
+    setExplainProgress(null);
+    setExplaining(false);
+  }
+};
+
+// ===== 语音录入 =====
   const startListening = () => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) {
@@ -566,17 +878,14 @@ useEffect(() => {
       message.warning('请先录入学生回答：点麦克风语音录入，或手动输入');
       return;
     }
-    if (!answerer) {
-      Modal.confirm({
-        title: '请先确定答题人',
-        content: '提交AI评判前需要确定是谁在回答。点击右侧学生卡片指定，或现在随机点名（自动绑定答题人）。',
-        okText: '随机点名',
-        cancelText: '我自己选',
-        zIndex: 3000,
-        onOk: () => startRandomPick(),
-      });
+    if (answerMode === 'none') {
+      // 三选一：随机点名 / 我自己选学生 / 老师自己回答。
+      // 「老师自己回答」是必须给的出口——课上老师经常自己先讲一遍，
+      // 或带着全班一起答，这时并不存在「谁在回答」这回事。
+      setPickerOpen(true);
       return;
     }
+    const who = effectiveAnswerer;
     setJudging(true);
     judgeResumeInFlightRef.current = true;
     setJudgeProgress({ percent: 0, done: 0, total: 1, current: 'AI 正在评判作答' });
@@ -585,8 +894,8 @@ useEffect(() => {
       questionId: currentQuestion.id,
       questionText: currentQuestion.question_text,
       studentAnswer: answerText,
-      studentId: answerer.id,
-      studentName: answerer.real_name || answerer.username,
+      studentId: who?.id,
+      studentName: answererName(who),
       questionIndex: index,
       createdAt: Date.now(),
     };
@@ -605,12 +914,12 @@ useEffect(() => {
       const r = await pollAiTask(taskId, AI_TASK_URLS.classroomQuizTask, setJudgeProgress);
       clearPendingQuizJudge(user?.id);
       await showJudgeResult(r, {
-        student: answerer,
+      student: who,
         questionId: currentQuestion.id,
-        studentId: answerer.id,
+        studentId: who?.isTeacher ? undefined : who?.id,
         answer: answerText,
         questionIndex: index,
-        autoSave: true,
+        autoSave: !who?.isTeacher,
       });
     } catch (e: any) {
       if (e?.response?.status === 409 && e?.response?.data?.task_id) {
@@ -633,6 +942,13 @@ useEffect(() => {
   // 按AI结果发放金币
   const handleRewardByResult = async () => {
     if (!judgeResult) return;
+    // 老师自己示范回答时不发金币：奖励是给学生的，
+    // 而且这个模式下压根没有 student_id 可以发给。
+    const rs = resultStudent(judgeResult);
+    if (!rs || rs.isTeacher) {
+      message.info(rs?.isTeacher ? '教师示范回答不发金币，可在右侧学生列表里选人后再发' : '还没有确定答题人，无法发放奖励');
+      return;
+    }
     const coins = Math.max(0, Math.round((judgeResult.score / 100) * perQValue));
     if (coins <= 0) {
       message.warning('按当前得分计算发放为0，可调大本题分值后再发');
@@ -647,7 +963,7 @@ useEffect(() => {
         question_id: currentQuestion?.id,
         reason: `第${judgeResult.questionIndex + 1}题AI评判${judgeResult.score}分`,
       });
-      message.success(`已向 ${judgeResult.student.real_name || judgeResult.student.username} 发放 ${coins} 金币`);
+      message.success(`已向 ${answererName(judgeResult.student)} 发放 ${coins} 金币`);
       setJudgeResult((r: any) => ({ ...r, coins }));
       // 把金币数额回填到该条答题记录
       if (judgeResult.answerId) {
@@ -690,19 +1006,31 @@ useEffect(() => {
   const renderStudentCard = (s: any) => {
     const selected = selectedIds.has(s.id);
     const isAnswerer = answerer?.id === s.id;
+    // 被随机点名抽中过的人：即使名单后来被折叠，也要能一眼认出来。
+    // 用金色描边 + 「点名」角标，和「当前答题人」的绿框区分开：
+    // 前者是「刚被抽到」，后者是「现在正由他回答」。
+    const wasPicked = pickedStudent?.id === s.id;
     return (
       <div
         key={s.id}
         ref={(el) => { cardRefs.current[s.id] = el; }}
-        onClick={() => { setAnswerer(s); setJudgeResult(null); setAnswerText(''); }}
+        onClick={() => {
+   setAnswerer(s); setAnswerMode('student'); setPickedStudent(s);
+  setJudgeResult(null); setAnswerText('');
+          // 若是「先点了选项、弹窗里选我自己选学生」走过来的，这里接着判
+          discardPendingPick();
+        }}
         style={{
           display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
           borderRadius: 8, cursor: 'pointer', marginBottom: 6,
-          background: isAnswerer ? '#113a1f' : selected ? '#15325b' : '#1f1f1f',
-          border: isAnswerer ? '2px solid #52c41a' : selected ? '2px solid #1890ff' : '1px solid #333',
+          background: isAnswerer ? '#113a1f' : wasPicked ? '#3a2f0b' : selected ? '#15325b' : '#1f1f1f',
+          border: isAnswerer ? '2px solid #52c41a' : wasPicked ? '2px solid #faad14' : selected ? '2px solid #1890ff' : '1px solid #333',
         }}
         title="点击设为答题人"
       >
+        {wasPicked && !isAnswerer && (
+          <Tag color="gold" style={{ marginRight: 0, fontSize: 11, lineHeight: '16px' }}>点名</Tag>
+        )}
         <Checkbox
           checked={selected}
           onChange={() => toggleRewardSelect(s.id)}
@@ -732,14 +1060,14 @@ useEffect(() => {
   const mainArea = () => {
     if (judgeResult) {
       const coins = Math.max(0, Math.round((judgeResult.score / 100) * perQValue));
-      const resultText = `${judgeResult.student.real_name || judgeResult.student.username}同学，${judgeResult.is_correct ? '回答正确' : '回答不够准确'}，得分${judgeResult.score}分。${judgeResult.comment}${judgeResult.correct_answer ? ` 正确答案是：${judgeResult.correct_answer}。` : ''}`;
+      const resultText = `${resultStudent(judgeResult)?.isTeacher ? '' : answererName(judgeResult.student) + '同学，'}${judgeResult.is_correct ? '回答正确' : '回答不够准确'}，得分${judgeResult.score}分。${judgeResult.comment}${judgeResult.correct_answer ? ` 正确答案是：${judgeResult.correct_answer}。` : ''}`;
       return (
         <div style={{ textAlign: 'center', width: '100%', padding: '0 24px' }}>
           <div style={{ color: '#aaa', fontSize: 'clamp(16px, 1.8vw, 24px)', marginBottom: 8 }}>
-            第 {judgeResult.questionIndex + 1} 题 · 答题人
+            第 {judgeResult.questionIndex + 1} 题 · {resultStudent(judgeResult)?.isTeacher ? '教师示范' : '答题人'}
           </div>
           <div style={{ color: '#fff', fontSize: `calc(clamp(30px, 4vw, 56px) * ${fontScale})`, fontWeight: 'bold' }}>
-            {judgeResult.student.real_name || judgeResult.student.username}
+            {answererName(judgeResult.student)}
           </div>
           <div style={{ margin: '20px 0' }}>
             {judgeResult.is_correct
@@ -749,7 +1077,11 @@ useEffect(() => {
               {judgeResult.score}分
             </span>
           </div>
-          <div style={{ color: '#ddd', fontSize: `calc(clamp(18px, 2.4vw, 32px) * ${fontScale})`, maxWidth: 900, margin: '0 auto' }}>{judgeResult.comment}</div>
+          <div style={{ color: '#ddd', fontSize: `calc(clamp(18px, 2.4vw, 32px) * ${fontScale})`, maxWidth: 900, margin: '0 auto' }}>
+              {/* AI 判分返回的 comment 本身就是讲解，不再单独让老师点一次「让 AI 讲解」——
+                  判分和讲解本来就是同一轮 AI 输出里一起回来的。 */}
+              {judgeResult.comment}
+            </div>
           {judgeResult.correct_answer && (
             <div style={{
               color: '#bae637', fontSize: `calc(clamp(18px, 2.2vw, 30px) * ${fontScale})`, maxWidth: 900, margin: '16px auto 0',
@@ -766,7 +1098,7 @@ useEffect(() => {
                 type="warning"
                 showIcon
                 message="这是接回的上一次判分结果"
-                description={`第 ${judgeResult.questionIndex + 1} 题 · ${judgeResult.student.real_name || judgeResult.student.username}的作答。确认无误后再保存到答题记录，避免记错人。`}
+                description={`第 ${judgeResult.questionIndex + 1} 题 · ${answererName(judgeResult.student)}的作答。确认无误后再保存到答题记录，避免记错人。`}
               />
             </div>
           )}
@@ -791,7 +1123,7 @@ useEffect(() => {
               <Button icon={<PauseCircleOutlined />} onClick={pauseSpeech}>暂停朗读</Button>
             )}
             {speaking && <Button icon={<StopOutlined />} onClick={stopSpeech}>停止</Button>}
-            <Button onClick={() => { stopSpeech(); setJudgeResult(null); setAnswerText(''); }}>继续答题</Button>
+                <Button onClick={() => { stopSpeech(); setJudgeResult(null); setAnswerText(''); setPickedKeys([]); setLocalResult(null); }}>继续答题</Button>
           </Space>
         </div>
       );
@@ -808,7 +1140,7 @@ useEffect(() => {
           {!randomState.rolling && (
             <Space style={{ marginTop: 24 }}>
               <Button onClick={startRandomPick} icon={<ReloadOutlined />}>再来一次</Button>
-              <Button onClick={() => setRandomState(null)}>开始答题</Button>
+              <Button onClick={() => { setRandomState(null); }}>开始答题</Button>
             </Space>
           )}
         </div>
@@ -851,10 +1183,11 @@ useEffect(() => {
         <div style={{ color: '#666', fontSize: 'clamp(16px, 1.8vw, 24px)', marginBottom: 12 }}>
           第 {index + 1} / {questions.length} 题
           {autoPlay && <Tag color="blue" style={{ marginLeft: 12 }}>自动播放中</Tag>}
-          {answerer && <Tag color="green" style={{ marginLeft: 12 }}>答题人：{answerer.real_name || answerer.username}</Tag>}
+          {answerer && <Tag color="green" style={{ marginLeft: 12 }}>答题人：{answererName(answerer)}</Tag>}
         </div>
         <div style={{ color: '#fff', fontSize: `calc(clamp(30px, 4.5vw, 64px) * ${fontScale})`, fontWeight: 500, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
-          {currentQuestion?.question_text || '暂无题目'}
+          {/* 题干里内嵌了选项时只显示 stem，选项交给下方按钮呈现，不重复显示两遍 */}
+          {localJudgeable ? (localStem || currentQuestion?.question_text) : (currentQuestion?.question_text || '暂无题目')}
         </div>
 
         {/* 题目附带的 HTML 课件：先让学生看课件、操作思考，再回到题目作答 */}
@@ -969,6 +1302,24 @@ useEffect(() => {
           <span style={{ marginLeft: 12, color: '#888' }}>课堂控制台（←/→ 翻题，Esc 退出）</span>
         </div>
         <Space>
+          {/* 当前答题人：名单折叠时也一直挂在这里。
+              折叠只是把名单收起来，绝不能把「现在该谁回答」一起收掉——
+              那是老师上课时最需要随时瞄一眼的信息。 */}
+          {effectiveAnswerer && (
+                   <Tag
+             color={answerMode === 'teacher' ? 'blue' : 'green'}
+                style={{ fontSize: 13, padding: '3px 10px', marginInlineEnd: 0 }}
+               >
+                      <UserSwitchOutlined style={{ marginRight: 4 }} />
+                      {answerMode === 'teacher' ? '教师示范' : `答题人：${answererName(answerer)}`}
+                    </Tag>
+                  )}
+          <Button
+            icon={studentPanelOpen ? <RightOutlined /> : <UserSwitchOutlined />}
+            onClick={() => setStudentPanelOpen((v) => !v)}
+          >
+            {studentPanelOpen ? '收起名单' : `学生名单（${students.length}）`}
+          </Button>
           <Button icon={<BarChartOutlined />} onClick={() => setSummaryOpen(true)}>课堂总结（{records.length}条）</Button>
           <Button icon={<CloseOutlined />} ghost onClick={onClose}>退出控制台</Button>
         </Space>
@@ -987,50 +1338,199 @@ useEffect(() => {
 
             {/* 答题录入栏（展示结果时隐藏） */}
             {!judgeResult && !randomState && buzzLeft === null && (
-              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap', borderTop: '1px solid #333', paddingTop: 10, marginTop: 10 }}>
-                <div>
-                  <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>本题分值（金币）</div>
-                  <InputNumber min={1} max={1000} value={perQValue} onChange={(v) => setPerQValue(v || 10)} style={{ width: 110 }} />
-                </div>
-                <div style={{ flex: 1, minWidth: 260 }}>
-                  <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>
-                    学生回答（点麦克风录入，或手动输入）
-                    {answerer && <span style={{ color: '#52c41a', marginLeft: 8 }}>答题人：{answerer.real_name || answerer.username}</span>}
-                  </div>
-                  <Input
-                    value={answerText}
-                    onChange={(e) => setAnswerText(e.target.value)}
-                    placeholder="学生口头回答的内容..."
-                    suffix={
-                      <Button
-                        size="small"
-                        type={listening ? 'primary' : 'default'}
-                        danger={listening}
-                        icon={<AudioOutlined />}
-                        onClick={listening ? stopListening : startListening}
-                      >
-                        {listening ? '停止录音' : '语音录入'}
-                      </Button>
-                    }
-                  />
-                </div>
-                <Button
-                  type="primary"
-                  icon={<ThunderboltOutlined />}
-                  loading={judging}
-                  onClick={handleJudge}
-                >
-                  {judging
-                    ? `AI评判中... 已等待${judgeSeconds}秒`
-                    : readPendingQuizJudge(user?.id) ? '查看上次判分结果' : '提交AI评判'}
-                </Button>
-                {/* 判分进度：让老师看得见在做什么，而不是一个停不下来的转圈 */}
-                {judging && judgeProgress && (
-                  <div style={{ marginTop: 8 }}>
-                    <Progress percent={judgeProgress.percent} size="small" status="active" />
-                    <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{judgeProgress.current}</div>
+              <div style={{ borderTop: '1px solid #333', paddingTop: 10, marginTop: 10 }}>
+                {/* 客观题：直接点选项，本地秒判；不需要语音、不需要 AI */}
+                {localJudgeable && (
+                   <div style={{ minHeight: ANSWER_AREA_MIN_HEIGHT, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                        <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>
+                    点选项直接判对错
+                       {answerMode === 'teacher'
+                       ? <span style={{ color: '#1890ff', marginLeft: 8 }}>教师示范（不记入学生答题）</span>
+                           : answerer
+                        ? <span style={{ color: '#52c41a', marginLeft: 8 }}>答题人：{answererName(answerer)}</span>
+                        : <a style={{ color: '#faad14', marginLeft: 8 }} onClick={() => setPickerOpen(true)}>
+                        未指定答题人，点这里指定（不指定也能判，只是不入库）
+                           </a>}
+                      {currentQuestion?.question_type === 'choice_multi' && (
+                        <span style={{ marginLeft: 8 }}>多选题，可选多个</span>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                      {localOptions.map((o) => {
+                        const picked = pickedKeys.includes(o.key);
+                        const isAnswer = normalizeAnswer(currentQuestion?.answer_text) === o.key;
+                        // 判错时把正确答案标出来：本地判分只给对错，「为什么」靠讲解
+                        const showAnswer = !!localResult && !localResult.isCorrect && isAnswer;
+                        return (
+                          <Button
+                            key={o.key}
+                            size="large"
+                            onClick={() => pickOption(o.key)}
+                            style={{
+                              minWidth: 200, height: 'auto', padding: '12px 16px', whiteSpace: 'normal', textAlign: 'left',
+                              fontSize: 'clamp(15px, 1.4vw, 20px)',
+                              borderColor: picked ? '#1890ff' : undefined,
+                              background: picked ? '#e6f7ff' : undefined,
+                              color: showAnswer ? '#52c41a' : undefined,
+                              fontWeight: showAnswer ? 700 : undefined,
+                            }}
+                          >
+                            <span style={{ marginRight: 8, fontWeight: 700 }}>{o.key}</span>
+                            {o.text}
+                            {showAnswer && <span style={{ marginLeft: 8 }}>← 正确答案</span>}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                    {currentQuestion?.question_type === 'choice_multi' && (
+                      <div style={{ marginTop: 10 }}>
+                        <Button
+                          type="primary"
+                          disabled={!pickedKeys.length || !!localResult}
+                          onClick={() => applyLocalJudge(pickedKeys)}
+                        >
+                          提交答案{pickedKeys.length ? `（${pickedKeys.sort().join('')}）` : ''}
+                        </Button>
+                        {localResult && (
+                          <Button style={{ marginLeft: 10 }} onClick={() => { setPickedKeys([]); setLocalResult(null); }}>
+                            重选
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                    {/* 本地判分给出的对错反馈 */}
+                    {localResult && (
+                      <div style={{
+                        marginTop: 10, padding: '10px 12px', borderRadius: 8,
+                        background: localResult.isCorrect ? '#f6ffed' : '#fff1f0',
+                        border: `1px solid ${localResult.isCorrect ? '#b7eb8f' : '#ffa39e'}`,
+                      }}>
+                        <div style={{ fontSize: 15, fontWeight: 600, color: localResult.isCorrect ? '#389e0d' : '#cf1322' }}>
+                          {localResult.isCorrect ? `回答正确（${localResult.studentAnswer}）` : `回答错误，正确答案是 ${localResult.correctAnswer}`}
+                        </div>
+                        {!localResult.isCorrect && currentQuestion?.explanation && (
+                          <div style={{ color: '#666', fontSize: 13, marginTop: 4, lineHeight: 1.7 }}>
+                            讲解：{currentQuestion.explanation}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
+
+                {/* 主观题 / 缺标准答案的题：语音或手动录入 + AI 判分（原流程） */}
+                <div style={{
+                        display: localJudgeable ? 'none' : 'flex',
+                        alignItems: 'flex-end', gap: 12, flexWrap: 'wrap',
+                     minHeight: ANSWER_AREA_MIN_HEIGHT, alignContent: 'flex-end',
+                      }}>
+                  <div>
+                    <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>本题分值（金币）</div>
+                    <InputNumber min={1} max={1000} value={perQValue} onChange={(v) => setPerQValue(v || 10)} style={{ width: 110 }} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 260 }}>
+                    <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>
+                      学生回答（点麦克风录入，或手动输入）
+                      {answerer && <span style={{ color: '#52c41a', marginLeft: 8 }}>答题人：{answererName(answerer)}</span>}
+                    </div>
+                    <Input
+                      value={answerText}
+                      onChange={(e) => setAnswerText(e.target.value)}
+                      placeholder="学生口头回答的内容..."
+                      suffix={
+                        <Button
+                          size="small"
+                          type={listening ? 'primary' : 'default'}
+                          danger={listening}
+                          icon={<AudioOutlined />}
+                          onClick={listening ? stopListening : startListening}
+                        >
+                          {listening ? '停止录音' : '语音录入'}
+                        </Button>
+                      }
+                    />
+                  </div>
+                  <Button
+                    type="primary"
+                    icon={<ThunderboltOutlined />}
+                    loading={judging}
+                    onClick={handleJudge}
+                  >
+                    {judging
+                      ? `AI评判中... 已等待${judgeSeconds}秒`
+                      : readPendingQuizJudge(user?.id) ? '查看上次判分结果' : '提交AI评判'}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* 「问 AI」答疑：判分本地已经秒判完了，AI 负责把「为什么」讲清楚。
+                老师手工选定学生答案，再补一句学生的疑问即可，不额外占生成次数。 */}
+            {explainOpen && (
+              <div style={{ marginTop: 10, padding: 12, background: '#20242e', borderRadius: 8, border: '1px solid #3a4152' }}>
+                <div style={{ color: '#ccc', fontSize: 13, marginBottom: 8 }}>
+                  追问 AI：把题目、学生的答案和疑问交给 AI，继续往下讲
+                  {localResult && <span style={{ color: '#888', marginLeft: 8 }}>已选答案：{localResult.studentAnswer}</span>}
+                </div>
+                <Input
+                  value={explainQuestion}
+                  onChange={(e) => setExplainQuestion(e.target.value)}
+                  placeholder="学生的疑问，例如：为什么选B 不选 C？"
+                  onPressEnter={handleExplain}
+                />
+                <Space style={{ marginTop: 8 }}>
+                  <Button type="primary" icon={<ThunderboltOutlined />} loading={explaining} onClick={handleExplain}>
+                    {explaining ? 'AI讲解中...' : '让 AI 讲解'}
+                  </Button>
+                  <Button onClick={() => { setExplainOpen(false); setExplainResult(null); }}>收起</Button>
+                </Space>
+                {explaining && explainProgress && (
+                  <div style={{ marginTop: 8 }}>
+                    <Progress percent={explainProgress.percent} size="small" status="active" />
+                    <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>{explainProgress.current}</div>
+                  </div>
+                )}
+                {explainResult && (
+                  <div style={{ marginTop: 10, padding: '10px 12px', background: '#1c2b12', border: '1px solid #3a5318', borderRadius: 8 }}>
+                    {explainResult.key_point && (
+                      <div style={{ color: '#bae637', fontSize: 13, marginBottom: 4, fontWeight: 600 }}>
+                        关键点：{explainResult.key_point}
+                      </div>
+                    )}
+                    <div style={{ color: '#ddd', fontSize: 14, lineHeight: 1.7 }}>{explainResult.explanation}</div>
+                    {!speaking && explainResult.explanation && (
+                      <Button size="small" icon={<SoundOutlined />} style={{ marginTop: 8 }} onClick={() => speakText(explainResult.explanation)}>
+                        朗读讲解
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            {/* 「问 AI」只在有东西可追问时才出现：
+                ① AI 判分后（comment本身就是讲解，学生看完可能还有疑问）
+                ② 题目自带 explanation、本地秒判已经展示过讲解
+                没有讲解可问的时候不摆这个按钮，免得又造一个和「提交AI评判」
+                重复的入口——这正是之前那版设计的问题。*/}
+            {!explainOpen && !randomState && buzzLeft === null && currentQuestion
+              && (judgeResult?.comment || currentQuestion.explanation) && (
+              <div style={{ marginTop: 8 }}>
+                <Button size="small" icon={<ThunderboltOutlined />} onClick={() => setExplainOpen(true)}>
+                  问 AI（把疑问交给 AI 继续讲）
+                </Button>
+              </div>
+            )}
+
+            {/* 判分进度：让老师看得见在做什么，而不是一个停不下来的转圈 */}
+            {!localJudgeable && judging && judgeProgress && (
+              <div style={{ marginTop: 8 }}>
+                <Progress percent={judgeProgress.percent} size="small" status="active" />
+                <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{judgeProgress.current}</div>
+              </div>
+            )}
+            {!!localJudgeable && explaining && explainProgress && (
+              <div style={{ marginTop: 8 }}>
+                <Progress percent={explainProgress.percent} size="small" status="active" />
               </div>
             )}
           </div>
@@ -1043,16 +1543,40 @@ useEffect(() => {
             <Checkbox checked={autoPlay} onChange={(e) => setAutoPlay(e.target.checked)} style={{ color: '#aaa' }}>自动播放</Checkbox>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ color: '#aaa', fontSize: 12 }}>字号</span>
-              <Slider
-                min={0.7}
-                max={1.8}
-                step={0.1}
-                value={fontScale}
-                onChange={(v) => { setFontScale(v); localStorage.setItem('cls_font_scale', String(v)); }}
-                style={{ width: 120, margin: 0 }}
-                tooltip={{ formatter: (v) => `${Math.round((v || 1) * 100)}%` }}
-              />
-            </span>
+    {/* 用数字输入框而不是滑块：滑块只能「大概」拖到某个位置，
+       而投屏字号这事需要能精确落到某个倍数（比如 1.4 倍）并记住。
+       加减号常显（antd 默认 hover 才出现，这里强制显示），
+        课堂上不必精确瞄准、点一下就调一档更省事。*/}
+    <Button
+size="small"
+                  onClick={() => applyFontScale(fontScale - FONT_SCALE_STEP)}
+ disabled={fontScale <= FONT_SCALE_MIN}
+        aria-label="减小字号"
+      >
+        <span style={{ fontSize: 15, lineHeight: 1 }}>−</span>
+           </Button>
+      <InputNumber
+     min={FONT_SCALE_MIN}
+        max={FONT_SCALE_MAX}
+   step={FONT_SCALE_STEP}
+   value={fontScale}
+ onChange={(v) => applyFontScale(Number(v))}
+      style={{ width: 78 }}
+        addonAfter="倍"
+        controls={false}
+   />
+   <Button
+  size="small"
+   onClick={() => applyFontScale(fontScale + FONT_SCALE_STEP)}
+disabled={fontScale >= FONT_SCALE_MAX}
+     aria-label="增大字号"
+      >
+            <span style={{ fontSize: 15, lineHeight: 1 }}>+</span>
+   </Button>
+     <span style={{ color: '#666', fontSize: 12, minWidth: 38 }}>
+       {Math.round(fontScale * 100)}%
+  </span>
+ </span>
             <span>
               <InputNumber min={5} max={300} value={autoSeconds} onChange={(v) => setAutoSeconds(v || 30)} style={{ width: 90 }} />
               <span style={{ color: '#aaa', marginLeft: 4, fontSize: 12 }}>秒/题</span>
@@ -1068,7 +1592,10 @@ useEffect(() => {
           </div>
         </div>
 
-        {/* 右侧：学生面板 + 奖励栏 */}
+        {/* 右侧：学生面板 + 奖励栏。
+            折叠时不整块卸载，而是收成一条窄栏——因为「当前答题人」和
+            「刚被点名的人」这两条信息不能跟着一起消失。 */}
+        {studentPanelOpen ? (
         <div style={{ width: 400, borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {/* 搜索 + 小键盘 */}
           <div style={{ padding: 12, background: '#1a1f29', borderBottom: '1px solid #2a3040' }}>
@@ -1185,7 +1712,116 @@ useEffect(() => {
             </Button>
           </div>
         </div>
+        ) : (
+          /* 折叠态：只留一条窄栏。
+             保留它而不是整块卸载，是因为「现在该谁回答」「刚被点名的是谁」
+             这两条信息在名单折叠时仍然必须一眼可见——老师上课时最常瞄的就是它。 */
+          <div style={{
+            width: 56, borderLeft: '1px solid #333', background: '#1a1f29',
+            display: 'flex', flexDirection: 'column', alignItems: 'center',
+            padding: '12px 0', gap: 12,
+          }}>
+            <Button
+              type="text"
+              icon={<UserSwitchOutlined style={{ color: '#ccc', fontSize: 18 }} />}
+              onClick={() => setStudentPanelOpen(true)}
+              title="展开学生名单"
+            />
+            <span style={{ color: '#666', fontSize: 12, writingMode: 'vertical-rl', letterSpacing: 2 }}>
+              学生名单 {students.length}
+            </span>
+            {/* 折叠时也要能看到答题人：竖排显示名字，比纯图标更明确 */}
+            {effectiveAnswerer && (
+                          <Tooltip title={`当前答题人：${answererName(effectiveAnswerer)}`} placement="left">
+                <div style={{
+                  writingMode: 'vertical-rl', color: '#52c41a', fontSize: 14,
+                  background: '#113a1f', border: '1px solid #52c41a',
+                  borderRadius: 6, padding: '8px 4px', maxHeight: 220, overflow: 'hidden',
+                }}>
+                  {answererName(effectiveAnswerer)}
+                       </div>
+              </Tooltip>
+            )}
+            {/* 被点名的人若不是当前答题人，再单独标一个金色角标 */}
+            {pickedStudent && pickedStudent.id !== answerer?.id && (
+              <Tooltip title={`刚被点名：${pickedStudent.real_name || pickedStudent.username}`} placement="left">
+                <div style={{
+                  writingMode: 'vertical-rl', color: '#faad14', fontSize: 13,
+                  background: '#3a2f0b', border: '1px solid #faad14',
+                  borderRadius: 6, padding: '8px 4px', maxHeight: 180, overflow: 'hidden',
+                }}>
+                  点名 {pickedStudent.real_name || pickedStudent.username}
+                </div>
+              </Tooltip>
+            )}
+            {selectedIds.size > 0 && (
+              <Tooltip title={`已勾选 ${selectedIds.size} 人待发奖`} placement="left">
+                <div style={{
+                  color: '#1890ff', fontSize: 12, background: '#15325b',
+                  border: '1px solid #1890ff', borderRadius: 6, padding: '6px 3px',
+                }}>
+                  {selectedIds.size}
+                </div>
+              </Tooltip>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* 未定答题人时的三选一。
+   antd 的 Modal.confirm 只有 ok/cancel 两个按钮，放不下「教师自己回答」，
+   所以这里用自定义 Modal。*/}
+      <Modal
+title="谁在回答这道题？"
+        open={pickerOpen}
+        onCancel={() => setPickerOpen(false)}
+      footer={null}
+        width={560}
+        zIndex={3100}
+      >
+     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+    <Button
+   block
+        size="large"
+   icon={<ThunderboltOutlined />}
+      onClick={() => { setPickerOpen(false); setStudentPanelOpen(true); startRandomPick(); }}
+        >
+        随机点名（抽中后由该学生现场回答）
+    </Button>
+      <Button
+          block
+    size="large"
+     onClick={() => { setPickerOpen(false); setStudentPanelOpen(true); }}
+        >
+        我自己选学生（点选后由该学生重新作答）
+     </Button>
+          <Button
+            block
+  size="large"
+ type="primary"
+    icon={<UserSwitchOutlined />}
+       onClick={() => {
+        setPickerOpen(false);
+     setAnswerMode('teacher');
+             setAnswerer(null);
+             // 只有「教师自己回答」才把之前点的那个选项提交上去：
+        // 那本来就是老师自己的答案；被指定的学生要自己重新回答。
+        const key = pendingPickRef.current;
+        pendingPickRef.current = null;
+        if (key) {
+          setPickedKeys([key]);
+ applyLocalJudge([key], TEACHER_ANSWERER);
+        }
+           }}
+          >
+     教师自己回答（不记入学生答题）
+     </Button>
+      <div style={{ color: '#999', fontSize: 12, marginTop: 4 }}>
+   选定之后：若刚才已经点了某个选项，那个选项会被清空——被指定的学生要自己重新作答，
+          只有选「教师自己回答」才会把刚才点的选项直接提交上去。
+          </div>
+        </div>
+      </Modal>
 
       {/* 课堂总结 */}
       <Modal

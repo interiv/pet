@@ -625,6 +625,10 @@ async function runQuizGenerate(req, res, onProgress = () => {}) {
     res.json({
       questions: questions.map((q) => ({
         content: q.content,
+        // options 必须带出来：aiQuestion 已经校验并归一过选项与答案字母，
+        // 此前这里漏了它，前端拿到的单选题没有选项，只能退回 AI 判分，
+        // 客观题本地秒判等于从未生效过。
+        options: q.options || null,
         answer: q.answer,
         explanation: q.explanation,
         // 多组出题时把题型带回给前端，方便分组展示与勾选
@@ -912,6 +916,17 @@ router.post('/classroom-quiz/ai-judge', authenticateToken, aiOff, (req, res) => 
   }, (fakeRes, onProgress) => runQuizJudge(req, fakeRes, onProgress));
 });
 
+// 课堂答题 AI 答疑（只讲解，不判分）
+// kind 单独用quiz_explain：与 quiz_judge 不互斥，老师可以一边判分一边讲解
+router.post('/classroom-quiz/ai-explain', authenticateToken, aiOff, (req, res) => {
+  return startAsyncTask(res, {
+    userId: req.user.userId,
+    kind: 'quiz_explain',
+    title: 'AI 答疑',
+    runningMsg: 'AI 正在讲解，请稍候',
+  }, (fakeRes, onProgress) => runQuizExplain(req, fakeRes, onProgress));
+});
+
 async function runQuizJudge(req, res, onProgress = () => {}) {
   try {
     if (req.user.role === 'student') {
@@ -985,6 +1000,93 @@ async function runQuizJudge(req, res, onProgress = () => {}) {
   }
 }
 
+/**
+ * 课堂答题 AI 答疑（只讲解，不判分）
+ *
+ * 为什么要有这个：以前课堂答题只有「判分」一条路，客观题也要送AI 等十几秒。
+ * 现在客观题改成本地秒判，AI 就该去做它真正擅长的事——把「为什么」讲清楚。
+ * 老师手工选定学生答案、再补一句学生的疑问，就能把这条通道用起来。
+ *
+ * 与 runQuizJudge 的区别：不产出 is_correct/score，只产出讲解。
+ * 同样不占每日生成次数，只记 token 用量（和 AI 判分一致）。
+ */
+async function runQuizExplain(req, res, onProgress = () => {}) {
+  try {
+    if (req.user.role === 'student') {
+      return res.status(403).json({ error: '无权操作' });
+    }
+
+    const {
+      subject, question_text, reference_answer = '',
+      student_answer = '', student_question = '',
+    } = req.body;
+
+    if (!question_text || !String(question_text).trim()) {
+      return res.status(400).json({ error: '缺少题目' });
+    }
+    if (!student_question || !String(student_question).trim()) {
+      return res.status(400).json({ error: '请先填写学生的疑问' });
+    }
+
+    const config = getAIConfig();
+    if (!isAIConfigured(config)) {
+      return res.status(500).json({ error: 'AI 配置未完成，请联系管理员' });
+    }
+
+    onProgress({ phase: 'ai', label: 'AI 正在讲解（通常需 10-30 秒）' });
+    const prompt = fillTemplate(getPrompt('explain_classroom_answer'), {
+      subject: subject || '',
+      question_text,
+      reference_answer: reference_answer || '无',
+      student_answer: student_answer || '未作答',
+      student_question,
+    });
+
+    const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
+    const startTime = Date.now();
+    const reply = await chatCompletion({
+      config,
+      prompt,
+      timeoutMs,
+      label: '课堂答题答疑',
+    });
+
+    try {
+      const usage = reply.usage || {};
+      const hasTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='token_usage'`).get();
+      if (hasTable) {
+        db.prepare(`
+          INSERT INTO token_usage (user_id, date, prompt_tokens, completion_tokens, total_tokens, model, subject, topic, question_type, question_count, duration_ms)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(req.user.userId, getChinaDate(), usage.prompt_tokens || 0, usage.completion_tokens || 0, usage.total_tokens || 0, config.ai_model, subject || '课堂答题', 'AI答疑', 'essay', 1, Date.now() - startTime);
+      }
+    } catch (e) {
+      // 统计写入失败不影响讲解
+    }
+
+    const content = reply.content;
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e) {
+      const m = content.match(/\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/);
+      if (!m) return res.status(500).json({ error: 'AI返回格式错误，请重试' });
+      parsed = JSON.parse(m[0]);
+    }
+
+    res.json({
+      explanation: parsed.explanation || '',
+      key_point: parsed.key_point || '',
+    });
+  } catch (error) {
+    console.error('课堂答题AI答疑失败:', error.message);
+    if (error.code === 'ECONNABORTED') {
+      return res.status(500).json({ error: 'AI答疑超时，请重试' });
+    }
+    res.status(500).json({ error: '课堂答题AI答疑失败: ' + (error.message || '未知错误') });
+  }
+}
+
 // 轮询进度（课堂出题与判分共用）
 router.get('/classroom-quiz/task/:taskId', authenticateToken, (req, res) => {
   handleTaskQuery(req, res);
@@ -998,7 +1100,7 @@ router.post('/classroom-quiz/:quizId/answers', authenticateToken, (req, res) => 
     }
 
     const { quizId } = req.params;
-    const { question_id, student_id, answer_text, judged_by_ai, is_correct, score, coin_rewarded } = req.body;
+    const { question_id, student_id, answer_text, judged_by_ai, judged_by, is_correct, score, coin_rewarded } = req.body;
     if (!student_id) {
       return res.status(400).json({ error: '缺少答题学生' });
     }
@@ -1008,19 +1110,46 @@ router.post('/classroom-quiz/:quizId/answers', authenticateToken, (req, res) => 
       return res.status(500).json({ error: '答题记录表未初始化' });
     }
 
-    const result = db.prepare(`
-      INSERT INTO classroom_quiz_answers (quiz_id, question_id, student_id, answer_text, judged_by_ai, is_correct, score, coin_rewarded)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      quizId,
-      question_id || null,
-      parseInt(student_id),
-      answer_text || null,
-      judged_by_ai ? 1 : 0,
-      is_correct === true || is_correct === 1 ? 1 : 0,
-      Math.max(0, Math.min(100, parseInt(score) || 0)),
-      Math.max(0, parseInt(coin_rewarded) || 0)
-    );
+    // 判分来源：local=前端按标准答案本地秒判，ai=AI 判分，teacher=老师手工录入。
+    // 没传 judged_by 时按 judged_by_ai 反推，保证老调用方不传也能落成正确语义。
+    const hasJudgedByColumn = db.prepare(
+      `SELECT name FROM pragma_table_info('classroom_quiz_answers') WHERE name='judged_by'`
+    ).get();
+    const isAI = !!judged_by_ai;
+    let judgedBy = String(judged_by || '').trim();
+    if (!judgedBy) judgedBy = isAI ? 'ai' : 'teacher';
+    if (!['local', 'ai', 'teacher'].includes(judgedBy)) judgedBy = isAI ? 'ai' : 'teacher';
+
+    // judged_by_ai 保留是为了兼容既有读取方（0/1 布尔）；新代码请读 judged_by
+    const result = hasJudgedByColumn
+      ? db.prepare(`
+        INSERT INTO classroom_quiz_answers
+          (quiz_id, question_id, student_id, answer_text, judged_by_ai, judged_by, is_correct, score, coin_rewarded)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        quizId,
+        question_id || null,
+        parseInt(student_id),
+        answer_text || null,
+        isAI ? 1 : 0,
+        judgedBy,
+        is_correct === true || is_correct === 1 ? 1 : 0,
+        Math.max(0, Math.min(100, parseInt(score) || 0)),
+        Math.max(0, parseInt(coin_rewarded) || 0)
+      )
+      : db.prepare(`
+        INSERT INTO classroom_quiz_answers (quiz_id, question_id, student_id, answer_text, judged_by_ai, is_correct, score, coin_rewarded)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        quizId,
+        question_id || null,
+        parseInt(student_id),
+        answer_text || null,
+        isAI ? 1 : 0,
+        is_correct === true || is_correct === 1 ? 1 : 0,
+        Math.max(0, Math.min(100, parseInt(score) || 0)),
+        Math.max(0, parseInt(coin_rewarded) || 0)
+      );
 
     res.json({ message: '答题记录已保存', answer_id: result.lastInsertRowid });
   } catch (error) {

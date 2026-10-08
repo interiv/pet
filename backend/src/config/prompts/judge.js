@@ -81,6 +81,38 @@ module.exports = {
 4. 只返回JSON，不要任何其他内容`
   },
 
+  // ===== 课堂答题：AI 答疑（只讲解，不判分）=====
+
+  explain_classroom_answer: {
+    group: '作业评阅',
+    label: '课堂答题AI答疑',
+    description: '学生答完题后追问「为什么」「怎么做」，AI 针对题目与作答讲解。可用变量：{subject} {question_text} {reference_answer} {student_answer} {student_question}',
+    default: `你是 classroom 里的答疑老师。请只返回纯JSON，不要包含任何其他文字、解释或markdown格式。
+
+任务：学生做了一道题，回答之后还有疑问，请针对他的疑问讲解清楚。
+
+【科目】{subject}
+【题目】
+{question_text}
+
+【参考答案】
+{reference_answer}
+
+【学生作答】
+{student_answer}
+
+【学生的疑问】
+{student_question}
+
+请严格按照以下JSON格式返回：
+{"explanation": "针对学生疑问的讲解（150字以内，口语化，能直接念给学生听）", "key_point": "这道题最关键的一个点（30字以内）"}
+
+要求：
+1. explanation 要直接回应学生的疑问，不要重复念一遍题目
+2. 学生答对了就讲清楚「为什么这么做」，答错了就点出他卡在哪一步
+3. 只返回JSON，不要任何其他内容`
+  },
+
   // ===== 纸质作业 AI 识别评判 =====
 
   judge_paper_assignment: {
