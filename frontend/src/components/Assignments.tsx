@@ -1128,8 +1128,16 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       loadAssignments();
 
       // 用后端给的明确标记判断，不再靠 message 文本里有没有「等待」两个字——
-      // 那种嗅探方式一改文案就失效。这里判断「总分是否已就绪」。
-      const gradedNow = typeof res.data.total_score === 'number' && res.data.total_score > 0;
+      // 那种嗅探方式一改文案就失效。
+      //
+      // 这里必须看 review_status，不能再看「total_score > 0」：
+      // 纯客观题作业学生全部答错时总分就是合法的 0 分，用分数反推会把
+      // 「已经判完的 0 分」误当成「AI 还没评完」，弹窗只转圈不给分—— 
+      // 学生看到的就是「做了却不给分」。缺少该字段（老后端）时才退回按分数判断。
+      const reviewStatus = res.data.review_status;
+      const gradedNow = reviewStatus
+        ? reviewStatus === 'completed'
+        : (typeof res.data.total_score === 'number' && res.data.total_score > 0);
       setSubmitResultAwaitingReview(!gradedNow);
       if (res.data.success && gradedNow) {
         message.success(`提交成功！得分：${res.data.total_score}分，获得 ${res.data.gold_reward} 金币`);
@@ -1188,6 +1196,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         }
       }
       setSubmitResult({
+        // 带上本次的 submission_id：「刷新结果」优先用它，
+        // 缺了就只能退化成「列表里随便找一条有提交的作业」——
+        // 班上有多份作业时会刷新出别人的分数
+        submission_id: sub.id,
         results: answers,
         total_score: sub.total_score,
         total_max_score: sub.total_max_score,

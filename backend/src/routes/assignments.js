@@ -1911,6 +1911,10 @@ for (let i = 0; i < questions.length; i++) {
         success: true,
         message: '批改完成',
         results,
+        // 纯客观题在提交时就判完了，必须显式带上 review_status。
+        // 前端原先是靠「total_score > 0」推断有没有评完，于是学生全部答错拿 0 分时
+        // 被当成「AI 还在评阅」——弹窗只转圈不给分，学生看到的就是「做了却不给分」。
+        review_status: 'completed',
         total_score: totalScore,
         total_max_score: 100,
         gold_reward: goldReward,
@@ -2005,6 +2009,16 @@ for (let i = 0; i < questions.length; i++) {
         VALUES (?, ?, 1, ?, ?, ?, CURRENT_TIMESTAMP)
       `);
 
+      /**
+       * 客观题的判分结果边写库边攒起来，随提交响应一起下发。
+       *
+       * 混合作业提交后还要等 AI 评主观题，原先这里固定回 results: []，
+       * 于是学生在等待期间点开答题详情看到的是一片空白——「我填的答案哪去了」，
+       * 很容易被当成「系统说我这题没作答」。
+       * 客观题（含填空题）在提交这一刻就已经判完了，没有任何理由再压着不给看。
+       */
+      const gradedResults = [];
+
       for (const ans of answers) {
         const q = objectiveQs.find((x) => x.id === Number(ans.question_id));
         if (!q) {
@@ -2018,6 +2032,20 @@ for (let i = 0; i < questions.length; i++) {
           newSubId, q.id, userText, ans.image_url || '',
           isCorrect ? 1 : 0, isCorrect ? perQuestionMax : 0, perQuestionMax, durationOf(q.id)
         );
+
+        // 字段名与纯客观题分支、结果详情接口保持同一套（前端结果卡片只认 user_answer）
+        gradedResults.push({
+          question_id: q.id,
+          question_content: q.content,
+          user_answer: userText,
+          correct_answer: q.answer,
+          is_correct: isCorrect,
+          score: isCorrect ? perQuestionMax : 0,
+          max_score: perQuestionMax,
+          duration_ms: durationOf(q.id),
+          explanation: q.explanation,
+          analysis: q.analysis,
+        });
 
         // 错题本口径与纯客观题作业一致：答错记账、答对清账
         if (isCorrect) {
@@ -2051,7 +2079,9 @@ for (let i = 0; i < questions.length; i++) {
         // 未评出来的分先按 0 占位，并显式带上 review_status='pending'：
         // 前端靠它区分「还没评完」和「评完是 0 分」，否则会把占位 0
         // 当成真实分数展示给学生。
-        results: [],
+        // 注意 total_score 仍是 0（主观题没评完，总分不成立），
+        // 但客观题的逐题判分照常下发，学生不用干等 AI 才知道填空题对不对。
+        results: gradedResults,
         review_status: 'pending',
         total_score: 0,
         // 满分口径与上面 INSERT submissions 时写入的 total_max_score 一致
@@ -2098,11 +2128,31 @@ router.get('/submissions/:id', authenticateToken, (req, res) => {
 
     if (!submission) return res.status(404).json({ error: '提交记录不存在' });
 
+    /**
+     * 逐题作答明细。
+     *
+     * 两个必须守住的点：
+     *  1. 必须带出 user_answer 这个别名。学生端结果卡片读的是 user_answer
+     *     （与提交接口返回的 results 同名字段），而这张表里叫 student_answer。
+     *     原先只返回 student_answer，前端一律取到 undefined ——
+     *     学生明明填了答案，结果页每题都显示「你的答案：(未作答)」，
+     *     填空题尤其扎眼（选择题至少还能从红绿标签看出答对答错）。
+     *  2. 重做会在同一题上留多轮记录，这里只取每题最近一次。
+     *     与提交侧、统计侧的 latestByQ 口径一致；不过滤的话同一道题会重复渲染成
+     *     「第1题/第2题…」两行，旧一轮的空答案会盖在新一轮上面。
+     */
     const answers = db.prepare(`
-      SELECT qa.*, qb.content as question_content, qb.options, qb.answer as correct_answer, qb.explanation, qb.analysis, qb.type
+      SELECT qa.*, qa.student_answer as user_answer,
+             qb.content as question_content, qb.options, qb.answer as correct_answer,
+             qb.explanation, qb.analysis, qb.type
       FROM question_answers qa
       JOIN question_bank qb ON qa.question_bank_id = qb.id
       WHERE qa.submission_id = ?
+        AND qa.id = (
+          SELECT qa2.id FROM question_answers qa2
+          WHERE qa2.submission_id = qa.submission_id AND qa2.question_bank_id = qa.question_bank_id
+          ORDER BY qa2.attempt_number DESC, qa2.id DESC LIMIT 1
+        )
       ORDER BY qa.id
     `).all(req.params.id);
 
