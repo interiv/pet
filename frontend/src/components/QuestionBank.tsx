@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons';
 import { questionBankAPI } from '../utils/api';
 import { questionTypeColor, questionTypeLabel } from '../utils/questionTypes';
+import { LONG_TEXT_TAG_STYLE, answerDisplayText, answerLabel } from '../utils/answerDisplay';
 import dayjs from 'dayjs';
 
 const { Option } = Select;
@@ -122,7 +123,8 @@ const QuestionBank: React.FC = () => {
     if (record.type === 'choice_single' || record.type === 'choice_multi') {
       return <Tag color="green">{record.answer}</Tag>;
     }
-    const text = String(record.answer);
+    // 走与详情页同一套口径：判断题转「正确/错误」，填空题多空用「、」分隔
+    const text = answerDisplayText(record.answer, record.type);
     return text.length > 30 ? text.slice(0, 30) + '...' : text;
   };
 
@@ -162,7 +164,9 @@ const QuestionBank: React.FC = () => {
       },
     },
     {
-      title: '题目内容', dataIndex: 'content', key: 'content', ellipsis: true,
+      // 原先不设 width，这一列会把剩余宽度全吃掉：一行只放得下十几个字，
+      // 反而把答案和知识点挤到看不见。定宽 220 后多出来的留给答案和知识点。
+      title: '题目内容', dataIndex: 'content', key: 'content', width: 220, ellipsis: true,
       render: (text: string) => (
         <Tooltip title={text} placement="topLeft">
           <span>{text}</span>
@@ -170,11 +174,11 @@ const QuestionBank: React.FC = () => {
       ),
     },
     {
-      title: '知识点', dataIndex: 'knowledge_point', key: 'knowledge_point', width: 120, ellipsis: true,
-      render: (kp: string) => kp ? <Tag>{kp}</Tag> : <span style={{ color: '#ccc' }}>-</span>,
+      title: '知识点', dataIndex: 'knowledge_point', key: 'knowledge_point', width: 160,
+      render: (kp: string) => kp ? <Tag style={LONG_TEXT_TAG_STYLE}>{kp}</Tag> : <span style={{ color: '#ccc' }}>-</span>,
     },
     {
-      title: '答案', dataIndex: 'answer', key: 'answer', width: 80,
+      title: '答案', dataIndex: 'answer', key: 'answer', width: 170,
       render: (_: any, record: any) => renderAnswer(record),
     },
     {
@@ -198,13 +202,14 @@ const QuestionBank: React.FC = () => {
       render: (t: string) => t ? dayjs(t).format('MM-DD HH:mm') : '-',
     },
     {
-      title: '操作', key: 'actions', width: 120, fixed: 'right' as const,
+      // 「详情 / 统计」竖排：两个 link 按钮横着排在 fixed 列里宽度不够，经常被挤成两行错位。
+      title: '操作', key: 'actions', width: 90, fixed: 'right' as const,
       render: (_: any, record: any) => (
-        <Space size="small">
-          <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>
+        <Space direction="vertical" size={0}>
+          <Button type="link" size="small" style={{ padding: 0 }} icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>
             详情
           </Button>
-          <Button type="link" size="small" icon={<BarChartOutlined />} onClick={() => handleViewStats(record)}>
+          <Button type="link" size="small" style={{ padding: 0 }} icon={<BarChartOutlined />} onClick={() => handleViewStats(record)}>
             统计
           </Button>
         </Space>
@@ -416,8 +421,13 @@ const QuestionBank: React.FC = () => {
                 ))}
               </Descriptions.Item>
             )}
-            <Descriptions.Item label="正确答案" span={2}>
-              <Tag color="green" style={{ fontSize: 14 }}>{currentQuestion.answer}</Tag>
+            {/* 答案不能裸塞进 Tag：antd Tag 自带 white-space: nowrap，填空题多空答案
+                或简答整句会拉成一条超宽单行、顶破这个 700px 的 Modal。
+                answerDisplayText 顺带把判断题的 true/false 转成对错、填空题按空拆开。 */}
+            <Descriptions.Item label={answerLabel(currentQuestion.type)} span={2}>
+              <Tag color="green" style={{ fontSize: 14, ...LONG_TEXT_TAG_STYLE }}>
+                {answerDisplayText(currentQuestion.answer, currentQuestion.type)}
+              </Tag>
             </Descriptions.Item>
             {currentQuestion.explanation && (
               <Descriptions.Item label="解析" span={2}>

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, lazy, Suspense } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, Modal, Spin, Table, Segmented, Drawer, Button, Steps, message, Alert, Pagination, Badge, Tooltip } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Card, Row, Col, Statistic, Tabs, Modal, Spin, Table, Segmented, Drawer, Button, Steps, message, Alert, Pagination, Badge, Tooltip, Space } from 'antd';
 import {
   HomeOutlined,
   BookOutlined,
@@ -16,6 +16,7 @@ import {
   GiftOutlined,
   PlayCircleOutlined,
   CreditCardOutlined,
+  ExportOutlined,
 } from '@ant-design/icons';
 import { petAPI, leaderboardAPI, adminAPI } from '../utils/api';
 import { notificationAPI } from '../utils/api';
@@ -54,7 +55,7 @@ const useMobile = () => {
 const Home: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { user, logout, isAuthenticated } = useAuthStore();
+  const { user, logout, isAuthenticated, currentClass } = useAuthStore();
   const { pet, setPet } = usePetStore();
   const isMobile = useMobile();
 
@@ -324,16 +325,24 @@ const Home: React.FC = () => {
 
   const allPetsChildren = (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 14, color: '#666' }}>{getPetsTitle()}</span>
-        <Segmented
-          options={[
-            { label: '卡片', value: 'card' },
-            { label: '列表', value: 'list' },
-          ]}
-          value={petsView}
-          onChange={(value) => setPetsView(value as 'card' | 'list')}
-        />
+        <Space size={8} wrap>
+          {/* 班级宠物展示页：访客不登录也能看（主人名脱敏），老师可用它做班级成果展示 */}
+          {currentClass?.slug && (
+            <Button size="small" icon={<ExportOutlined />} onClick={() => window.open(`/c/${currentClass.slug}/pets`, '_blank')}>
+              班级宠物展示页
+            </Button>
+          )}
+          <Segmented
+            options={[
+              { label: '卡片', value: 'card' },
+              { label: '列表', value: 'list' },
+            ]}
+            value={petsView}
+            onChange={(value) => setPetsView(value as 'card' | 'list')}
+          />
+        </Space>
       </div>
       {petsView === 'card' ? (
         <>

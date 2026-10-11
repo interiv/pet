@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Card, Table, Button, Modal, Form, Input, Select, InputNumber,
   message, Space, Tag, Tabs, Descriptions, Row, Col, Typography,
-  List, Avatar, Popconfirm, Empty, Badge, Spin, Radio, Checkbox, Alert, Upload, Progress
+  List, Avatar, Popconfirm, Empty, Badge, Spin, Radio, Checkbox, Alert, Upload, Progress, Tooltip
 } from 'antd';
 import {
   PlusOutlined, GiftOutlined, CheckCircleOutlined,
@@ -19,6 +19,7 @@ import { normalizeQuestionType } from '../utils/questionTypes';
 import { useAuthStore } from '../store/authStore';
 import { getPetThumbUrl } from '../utils/petImage';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
+import { LONG_TEXT_TAG_STYLE } from '../utils/answerDisplay';
 import { SOCKET_URL } from '../utils/apiBase';
 import ClassroomConsole from './ClassroomConsole';
 
@@ -1689,7 +1690,7 @@ const ClassroomQuiz: React.FC = () => {
                       />
                       <span style={{ marginLeft: 8 }}>{i + 1}. {q.content}</span>
                       {q.type_label && <Tag color="blue" style={{ marginLeft: 8 }}>{q.type_label}</Tag>}
-                      {q.answer && <Tag color="green" style={{ marginLeft: 8 }}>答案: {q.answer}</Tag>}
+                      {q.answer && <Tag color="green" style={{ marginLeft: 8, ...LONG_TEXT_TAG_STYLE }}>答案: {q.answer}</Tag>}
                     </div>
                   ))}
                 </div>
@@ -1915,7 +1916,7 @@ const ClassroomQuiz: React.FC = () => {
                     }}
                   />
                   <span style={{ marginLeft: 8 }}>{i + 1}. {q.question_text}</span>
-                  {q.answer_text && <Tag color="green" style={{ marginLeft: 8 }}>答案: {q.answer_text}</Tag>}
+                  {q.answer_text && <Tag color="green" style={{ marginLeft: 8, ...LONG_TEXT_TAG_STYLE }}>答案: {q.answer_text}</Tag>}
                   {q.courseware_html && (
                     <>
                       <Tag color="blue" style={{ marginLeft: 8 }}>课件</Tag>
@@ -2003,7 +2004,7 @@ const ClassroomQuiz: React.FC = () => {
                             title={<span style={{ whiteSpace: 'pre-wrap' }}>{q.question_text}</span>}
                             description={
                               <Space size={4} wrap style={{ marginTop: 4 }}>
-                                {q.answer_text && <Tag color="green">参考答案：{q.answer_text}</Tag>}
+                                {q.answer_text && <Tag color="green" style={LONG_TEXT_TAG_STYLE}>参考答案：{q.answer_text}</Tag>}
                                 {q.courseware_html && (
                                   <>
                                     <Tag color="cyan">含 HTML 课件</Tag>
@@ -2063,7 +2064,21 @@ const ClassroomQuiz: React.FC = () => {
                       pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
                       size="small"
                       columns={[
-                        { title: '学生', dataIndex: 'student_name', width: 100 },
+                        // 题号必须显式给出：答案解析是按号码写在题目列表里的，
+                        // 只有「张三：北京」这种记录，老师还得回题目列表数第几题才能对上。
+                        {
+                          title: '题号', dataIndex: 'question_id', width: 76,
+                          render: (qid: number) => {
+                            const idx = questions.findIndex(q => q.id === qid);
+                            if (idx < 0) return <span style={{ color: '#bbb' }}>-</span>;
+                            return (
+                              <Tooltip title={questions[idx].question_text || ''} placement="topLeft">
+                                <Tag color="blue">第{idx + 1}题</Tag>
+                              </Tooltip>
+                            );
+                          },
+                        },
+                        { title: '学生', dataIndex: 'student_name', width: 90 },
                         { title: '回答', dataIndex: 'answer_text', ellipsis: true },
                         { title: '判定', width: 70, render: (_: any, r: any) => r.is_correct ? <Tag color="green">正确</Tag> : <Tag color="red">错误</Tag> },
                         { title: '得分', width: 60, dataIndex: 'score', render: (v: number) => `${v ?? 0}分` },

@@ -15,6 +15,7 @@ import { aiCoachAPI, knowledgePointAPI } from '../utils/api';
 import { pollAiTask } from '../utils/aiTask';
 import { MasteryRing, AccuracyColumn, CountColumn, WeakPointBar, LearningHeatmap, TrendLine } from './charts/ChartKit';
 import { API_BASE_URL } from '../utils/apiBase';
+import { LONG_TEXT_TAG_STYLE } from '../utils/answerDisplay';
 
 interface KnowledgePointStat {
   knowledge_point: string;
@@ -555,7 +556,7 @@ const LearningDashboard: React.FC = () => {
                     <strong>🎯 核心目标：</strong>
                     <div style={{ marginTop: 6 }}>
                       {aiPlan.priority_goals.map((g: string, i: number) => (
-                        <Tag color="purple" key={i} style={{ marginBottom: 4 }}>{g}</Tag>
+                        <Tag color="purple" key={i} style={{ marginBottom: 4, ...LONG_TEXT_TAG_STYLE }}>{g}</Tag>
                       ))}
                     </div>
                   </div>
@@ -579,7 +580,7 @@ const LearningDashboard: React.FC = () => {
                             <div style={{ marginBottom: 6 }}>
                               <strong>重点知识点：</strong>
                               {d.focus_points.map((p: string, i: number) => (
-                                <Tag color="cyan" key={i}>{p}</Tag>
+                                <Tag color="cyan" key={i} style={LONG_TEXT_TAG_STYLE}>{p}</Tag>
                               ))}
                             </div>
                           )}
@@ -765,7 +766,7 @@ const LearningDashboard: React.FC = () => {
                   <div style={{ marginBottom: 10 }}>
                     <strong style={{ color: '#52c41a' }}>✨ 优势：</strong>
                     {diagnosis.strengths.map((s: string, i: number) => (
-                      <Tag color="green" key={i} style={{ marginBottom: 4 }}>{s}</Tag>
+                      <Tag color="green" key={i} style={{ marginBottom: 4, ...LONG_TEXT_TAG_STYLE }}>{s}</Tag>
                     ))}
                   </div>
                 )}
@@ -773,7 +774,7 @@ const LearningDashboard: React.FC = () => {
                   <div style={{ marginBottom: 10 }}>
                     <strong style={{ color: '#f5222d' }}>⚠️ 问题：</strong>
                     {diagnosis.weaknesses.map((s: string, i: number) => (
-                      <Tag color="red" key={i} style={{ marginBottom: 4 }}>{s}</Tag>
+                      <Tag color="red" key={i} style={{ marginBottom: 4, ...LONG_TEXT_TAG_STYLE }}>{s}</Tag>
                     ))}
                   </div>
                 )}
@@ -808,7 +809,7 @@ const LearningDashboard: React.FC = () => {
                   <div style={{ marginBottom: 10 }}>
                     <strong>🔍 下阶段重点：</strong>
                     {diagnosis.next_focus_points.map((p: string, i: number) => (
-                      <Tag color="cyan" key={i}>{p}</Tag>
+                      <Tag color="cyan" key={i} style={LONG_TEXT_TAG_STYLE}>{p}</Tag>
                     ))}
                   </div>
                 )}

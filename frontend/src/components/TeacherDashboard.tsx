@@ -12,6 +12,7 @@ import {
 } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import { adminAPI, leaderboardAPI, knowledgePointAPI } from '../utils/api';
+import { LONG_TEXT_TAG_STYLE } from '../utils/answerDisplay';
 import { useAuthStore } from '../store/authStore';
 
 const useMobile = () => {
@@ -198,7 +199,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
                     </div>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       {classOverview.top_weak.slice(0, isMobile ? 3 : 5).map((kp: any, idx: number) => (
-                        <Tag key={idx} color="error" style={{ fontSize: isMobile ? 11 : undefined }}>
+                        <Tag key={idx} color="error" style={{ fontSize: isMobile ? 11 : undefined, ...LONG_TEXT_TAG_STYLE }}>
                           {kp.knowledge_point} ({kp.accuracy}%)
                         </Tag>
                       ))}
@@ -213,7 +214,7 @@ const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
                     </div>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       {classOverview.top_mastered.slice(0, isMobile ? 3 : 5).map((kp: any, idx: number) => (
-                        <Tag key={idx} color="success" style={{ fontSize: isMobile ? 11 : undefined }}>
+                        <Tag key={idx} color="success" style={{ fontSize: isMobile ? 11 : undefined, ...LONG_TEXT_TAG_STYLE }}>
                           {kp.knowledge_point} ({kp.accuracy}%)
                         </Tag>
                       ))}

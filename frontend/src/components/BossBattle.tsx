@@ -12,6 +12,7 @@ import {
 import { bossBattleAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import { questionTypeFullName } from '../utils/questionTypes';
+import { LONG_TEXT_TAG_STYLE } from '../utils/answerDisplay';
 
 const useMobile = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -362,7 +363,7 @@ const BossBattle: React.FC = () => {
               <h2 style={{ color: '#fff', margin: '0 0 8px' }}>{boss.boss_name}</h2>
               <Tag color="red">Lv.{boss.boss_level}</Tag>
               {boss.knowledge_point && (
-                <Tag color="blue" style={{ marginLeft: 8 }}>{boss.knowledge_point}</Tag>
+                <Tag color="blue" style={{ marginLeft: 8, ...LONG_TEXT_TAG_STYLE }}>{boss.knowledge_point}</Tag>
               )}
             </Col>
 
@@ -637,7 +638,7 @@ const BossBattle: React.FC = () => {
 
               {boss.knowledge_point && (
                 <div style={{ marginTop: 8 }}>
-                  <Tag color="blue">知识点: {boss.knowledge_point}</Tag>
+                  <Tag color="blue" style={LONG_TEXT_TAG_STYLE}>知识点: {boss.knowledge_point}</Tag>
                 </div>
               )}
 

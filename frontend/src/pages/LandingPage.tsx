@@ -10,6 +10,7 @@ import {
 import { adminAPI, petAPI, leaderboardAPI, schoolAPI, classAPI, publicAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import { flagEnabled } from '../utils/featureFlags';
+import { getSpeciesImage, elementColors } from '../utils/petImage';
 
 const { Header, Content, Footer } = Layout;
 const { Title, Paragraph, Text } = Typography;
@@ -22,30 +23,6 @@ const useMobile = () => {
     return () => window.removeEventListener('resize', handler);
   }, []);
   return isMobile;
-};
-
-const elementColors: Record<string, string> = {
-  '火': '#ff4d4f', '水': '#1890ff', '风': '#52c41a', '土': '#d48806',
-  '光': '#faad14', '暗': '#722ed1', '火系': '#ff4d4f', '水系': '#1890ff',
-  '风系': '#52c41a', '土系': '#d48806', '光系': '#faad14', '暗系': '#722ed1',
-};
-
-const getSpeciesImage = (imageUrls: string | object | null, speciesName: string = ''): string => {
-  try {
-    const urls = typeof imageUrls === 'string' ? JSON.parse(imageUrls) : imageUrls;
-    if (urls && typeof urls === 'object' && Object.keys(urls).length > 0) {
-      const values = Object.values(urls) as string[];
-      const img = (values[0] || '');
-      if (img && !img.includes('_thumb.png')) {
-        return img.replace(/\.png$/, '_thumb.png');
-      }
-      if (img) return img;
-    }
-  } catch { }
-  if (speciesName) {
-    return `/images/pets/${speciesName}/成年期_thumb.png`;
-  }
-  return '';
 };
 
 const LandingPage: React.FC = () => {
@@ -307,17 +284,26 @@ const LandingPage: React.FC = () => {
                     <Row gutter={[16, 16]}>
             {[
                     /* 学校与班级/学生/教师是访客最关心的「这学校什么规模」；
-             宠物总数、战斗次数对访客判断学校没有意义，去掉换成教师与学校数。 */
-            { icon: <TeamOutlined />, color: '#667eea', value: stats.schools, title: '学校数量' },
-         { icon: <TeamOutlined />, color: '#52c41a', value: stats.classes, title: '班级数量' },
-                  { icon: <UserAddOutlined />, color: '#fa8c16', value: stats.teachers, title: '在职教师' },
-                 { icon: <UserAddOutlined />, color: '#eb2f96', value: stats.students, title: '在校学生' },
+             宠物总数、战斗次数对访客判断学校没有意义，去掉换成教师与学校数。
+             每张卡片都可点进对应的名录页：数字是结论，点进去才看得到细节。 */
+            { icon: <TeamOutlined />, color: '#667eea', value: stats.schools, title: '学校数量', path: '/schools' },
+         { icon: <TeamOutlined />, color: '#52c41a', value: stats.classes, title: '班级数量', path: '/classes' },
+                  { icon: <UserAddOutlined />, color: '#fa8c16', value: stats.teachers, title: '在职教师', path: '/teachers' },
+                 { icon: <UserAddOutlined />, color: '#eb2f96', value: stats.students, title: '在校学生', path: '/students' },
             ].map((item, idx) => (
                    <Col xs={12} sm={6} key={idx}>
-           <Card style={{ borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.08)', textAlign: 'center', borderTop: `3px solid ${item.color}` }} styles={{ body: { padding: isMobile ? '16px 8px' : '24px 16px' } }}>
+           <Card
+             hoverable
+             onClick={() => navigate(item.path)}
+             style={{ borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.08)', textAlign: 'center', borderTop: `3px solid ${item.color}`, cursor: 'pointer' }}
+             styles={{ body: { padding: isMobile ? '16px 8px' : '24px 16px' } }}
+           >
                     <div style={{ fontSize: isMobile ? 24 : 32, color: item.color, marginBottom: 8 }}>{item.icon}</div>
            <Statistic value={item.value} valueStyle={{ color: item.color, fontSize: isMobile ? 22 : 28, fontWeight: 'bold' }} />
-                    <div style={{ color: '#8c8c8c', fontSize: 13, marginTop: 4 }}>{item.title}</div>
+                    <div style={{ color: '#8c8c8c', fontSize: 13, marginTop: 4 }}>
+                      {item.title}
+                      <RightOutlined style={{ fontSize: 10, marginLeft: 4, color: '#ccc' }} />
+                    </div>
             </Card>
                </Col>
            ))}

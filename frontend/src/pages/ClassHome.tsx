@@ -134,6 +134,9 @@ const ClassHome: React.FC = () => {
           {cls.grade && <Tag color="gold" style={{ marginLeft: 8 }}>{cls.grade}</Tag>}
         </div>
         <Space>
+          {/* 班级宠物对访客也开放：这是班级对外展示成果最直观的一块，
+              且与工作台入口并列，老师点进来第一眼就能看到。 */}
+          <Button type="primary" ghost onClick={() => navigate(`/c/${cls.slug}/pets`)}>班级宠物</Button>
           {isAuthenticated ? (
             isMember ? (
               <Button type="primary" ghost onClick={enterWorkspace} icon={<RightOutlined />}>进入工作台</Button>
@@ -267,7 +270,14 @@ const ClassHome: React.FC = () => {
               </Card>
 
               {/* 宠物排行榜 */}
-              <Card title={<><TrophyOutlined /> 宠物排行榜 Top10</>}>
+              <Card
+                title={<><TrophyOutlined /> 宠物排行榜 Top10</>}
+                extra={
+                  <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate(`/c/${cls.slug}/pets`)}>
+                    查看全部 <RightOutlined style={{ fontSize: 10 }} />
+                  </Button>
+                }
+              >
                 {pets.length === 0 ? (
                   <Empty description="暂无数据" />
                 ) : (

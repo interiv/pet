@@ -8,6 +8,11 @@ import LandingPage from './pages/LandingPage';
 const Login = lazy(() => import('./pages/Login'));
 const Register = lazy(() => import('./pages/Register'));
 const ClassHome = lazy(() => import('./pages/ClassHome'));
+const ClassPetsPage = lazy(() => import('./pages/ClassPetsPage'));
+const SchoolsPage = lazy(() => import('./pages/SchoolsPage'));
+const ClassesPage = lazy(() => import('./pages/ClassesPage'));
+const TeachersPage = lazy(() => import('./pages/TeachersPage'));
+const StudentsPage = lazy(() => import('./pages/StudentsPage'));
 const Workspace = lazy(() => import('./pages/Workspace'));
 const AboutPage = lazy(() => import('./pages/AboutPage'));
 const HelpPage = lazy(() => import('./pages/HelpPage'));
@@ -107,7 +112,14 @@ const App: React.FC = () => {
           <Route path="/register" element={<Register />} />
           <Route path="/workspace" element={<PrivateRoute><Workspace /></PrivateRoute>} />
           <Route path="/c/:slug" element={<ClassHome />} />
+          {/* 班级宠物页：访客可读（主人名脱敏），本班成员/教师可见真名 */}
+          <Route path="/c/:slug/pets" element={<ClassPetsPage />} />
           <Route path="/c/:slug/app" element={<PrivateRoute><Workspace /></PrivateRoute>} />
+          {/* 首页四个统计卡片点进去的名录页，全部免登录 */}
+          <Route path="/schools" element={<SchoolsPage />} />
+          <Route path="/classes" element={<ClassesPage />} />
+          <Route path="/teachers" element={<TeachersPage />} />
+          <Route path="/students" element={<StudentsPage />} />
           <Route path="/about" element={<AboutPage />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="/privacy" element={<PrivacyPage />} />

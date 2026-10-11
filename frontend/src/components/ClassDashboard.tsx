@@ -10,6 +10,7 @@ import {
 import { io, Socket } from 'socket.io-client';
 import { knowledgePointAPI, adminAPI } from '../utils/api';
 import { SOCKET_URL } from '../utils/apiBase';
+import { LONG_TEXT_TAG_STYLE } from '../utils/answerDisplay';
 import {
   MasteryRing, AccuracyColumn, WeakPointBar, DistributionPie
 } from './charts/ChartKit';
@@ -401,7 +402,7 @@ const ClassDashboard: React.FC = () => {
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: isMobile ? 12 : undefined }}>
                         <strong>{item.real_name || item.username}</strong>
                         <span>提交了</span>
-                        <Tag color="blue" style={{ fontSize: isMobile ? 11 : undefined }}>{item.assignment_title}</Tag>
+                        <Tag color="blue" style={{ fontSize: isMobile ? 11 : undefined, ...LONG_TEXT_TAG_STYLE }}>{item.assignment_title}</Tag>
                         <span>得分</span>
                         <Tag color={item.total_score >= 80 ? 'green' : item.total_score >= 60 ? 'orange' : 'red'} style={{ fontSize: isMobile ? 11 : undefined }}>
                           {item.total_score}分
@@ -426,7 +427,7 @@ const ClassDashboard: React.FC = () => {
                   <li>
                     班级最薄弱知识点：
                     {overview.top_weak.slice(0, 3).map((k: any) => (
-                      <Tag key={k.knowledge_point} color="volcano" style={{ marginLeft: 4, fontSize: isMobile ? 11 : undefined }}>
+                      <Tag key={k.knowledge_point} color="volcano" style={{ marginLeft: 4, fontSize: isMobile ? 11 : undefined, ...LONG_TEXT_TAG_STYLE }}>
                         {k.knowledge_point} ({k.accuracy}%)
                       </Tag>
                     ))}
@@ -544,7 +545,7 @@ const ClassDashboard: React.FC = () => {
                       <List.Item>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           {item.subject && <Tag color="blue" style={{ fontSize: isMobile ? 11 : undefined }}>{item.subject}</Tag>}
-                          {item.knowledge_point && <Tag color="orange" style={{ fontSize: isMobile ? 11 : undefined }}>🏷️ {item.knowledge_point}</Tag>}
+                          {item.knowledge_point && <Tag color="orange" style={{ fontSize: isMobile ? 11 : undefined, ...LONG_TEXT_TAG_STYLE }}>🏷️ {item.knowledge_point}</Tag>}
                           <span style={{ marginLeft: 8, fontSize: isMobile ? 12 : undefined }}>
                             {(item.content || '').substring(0, isMobile ? 30 : 60)}
                             {(item.content || '').length > (isMobile ? 30 : 60) ? '...' : ''}

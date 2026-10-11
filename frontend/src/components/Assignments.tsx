@@ -8,7 +8,8 @@ import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
 import { isSubjectiveType, questionTypeFullName, normalizeQuestionType, isFillBlankType, isObjectiveType } from '../utils/questionTypes';
 import { isQuestionAnswerable, isQuestionAnswered } from '../utils/answerState';
-import { splitContentByBlanks, toBlankValueArray, joinFillBlankAnswers, splitFillBlankAnswer } from '../utils/fillBlank';
+import { splitContentByBlanks, toBlankValueArray, joinFillBlankAnswers } from '../utils/fillBlank';
+import { LONG_TEXT_TAG_STYLE, answerDisplayText, answerLabel } from '../utils/answerDisplay';
 import { compressImageWithThumb, formatSize } from '../utils/imageCompress';
 import dayjs from 'dayjs';
 import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined, ClockCircleOutlined, ExclamationCircleOutlined, SearchOutlined, DatabaseOutlined } from '@ant-design/icons';
@@ -112,21 +113,19 @@ const difficultyOptions = [
 const questionTypeLabel = (type: string) => questionTypeFullName(type);
 
 /**
- * 统计弹窗里「正确答案」显示什么。
+ * 毫秒 → 人话。
  *
- * - judgment 库里存的是布尔串 true/false，直接吐出来老师还得自己翻译，转成「正确/错误」；
- * - 填空题一题多空时答案在库里是逗号分隔的整串，原样显示成一坨，既看不出有几个空，
- *   也正好踩中最容易被忽略的那条：答案是长文本时不换行（见统计弹窗的 Tag 样式说明）。
- *   按 utils/fillBlank 的同一口径拆格后用「、」连起来，读起来才和题干的空位对得上。
+ * 只给到「分 / 秒」：作业用时在这个量级，昨天开的这种跨天场景交给「提交时间」去表达，
+ * 混进小时反而让人以为系统把时长记错了。
  */
-const statsAnswerText = (qs: any): string => {
-  if (qs.type === 'judgment') return qs.answer === 'true' ? '正确' : '错误';
-  if (isFillBlankType(qs.type)) return splitFillBlankAnswer(qs.answer).join('、') || String(qs.answer ?? '');
-  return String(qs.answer ?? '');
+const formatDuration = (ms?: number | null): string => {
+  const total = Math.round((Number(ms) || 0) / 1000);
+  if (total <= 0) return '-';
+  if (total < 60) return `${total} 秒`;
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分钟`;
 };
-
-// 主观题没有唯一标准答案，措辞跟着学生端「你的答案 / 参考答案」那一栏走，避免老师以为这是机器判卷的标准答案。
-const statsAnswerLabel = (type: string): string => (isFillBlankType(type) ? '参考答案' : '答案');
 
 const defaultTypeSpec = () => ({ question_type: 'choice_single', count: 5, difficulty: 'medium' });
 
@@ -165,6 +164,17 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const [showVariantQuestions, setShowVariantQuestions] = useState<Record<number, boolean>>({});
   const [filterSubject, setFilterSubject] = useState<string | undefined>(undefined);
   const [filterAssignmentType, setFilterAssignmentType] = useState<string | undefined>(undefined);
+  const [filterTeacher, setFilterTeacher] = useState<number | undefined>(undefined);
+  /**
+   * 出题人下拉的选项。
+   *
+   * 后端没有「列出本班授课教师」的现成接口（adminAPI.getTeachers 是管理员专属），
+   * 而选项表必须比当前列表稳定：选中「李老师」后再切个班级或科目，
+   * 列表里可能一条李老师的作业都没有了，选项随之消失，
+   * Select 就会退化成一个孤零零的教师 id，看着像坏了。
+   * 所以每次加载后把见过的老师并进这张表，只增不删。
+   */
+  const [teacherOptions, setTeacherOptions] = useState<{ id: number; name: string }[]>([]);
   const [filterDateRange, setFilterDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
   const [paperRegister, setPaperRegister] = useState<{ id: number; title: string } | null>(null);
   const [paperBatchRegister, setPaperBatchRegister] = useState<{ id: number; title: string } | null>(null);
@@ -394,7 +404,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
 
   useEffect(() => {
     if (user) loadAssignments();
-  }, [selectedClass, filterSubject, filterDateRange, filterAssignmentType]);
+  }, [selectedClass, filterSubject, filterDateRange, filterAssignmentType, filterTeacher]);
 
   // 切到「3. 发布设置」时表单才挂载，此时再把生成时算好的默认值写进去
   useEffect(() => {
@@ -453,8 +463,23 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       if (filterAssignmentType) params.assignment_type = filterAssignmentType;
       if (filterDateRange && filterDateRange[0]) params.date_from = filterDateRange[0].format('YYYY-MM-DD');
       if (filterDateRange && filterDateRange[1]) params.date_to = filterDateRange[1].format('YYYY-MM-DD');
+      if (filterTeacher) params.teacher_id = filterTeacher;
       const res = await assignmentAPI.getAssignments(params);
-      setAssignments(res.data.assignments || []);
+      const list = res.data.assignments || [];
+      setAssignments(list);
+
+      // 出题人选项：把本次见到的老师并入已知表（见 teacherOptions 的注释）
+      setTeacherOptions(prev => {
+        const map = new Map(prev.map(t => [t.id, t]));
+        let changed = false;
+        for (const a of list) {
+          if (a.teacher_id != null && a.teacher_name && !map.has(a.teacher_id)) {
+            map.set(a.teacher_id, { id: a.teacher_id, name: a.teacher_name });
+            changed = true;
+          }
+        }
+        return changed ? [...map.values()] : prev;
+      });
 
       // 教师端额外拉取「预习/作业/复习」分组学情
       if (user.role === 'teacher' || user.role === 'admin') {
@@ -462,6 +487,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           const sum = await assignmentAPI.getAssignmentTypeSummary({
             class_id: selectedClass ?? undefined,
             subject: filterSubject,
+            teacher_id: filterTeacher,
             date_from: filterDateRange?.[0]?.format('YYYY-MM-DD'),
             date_to: filterDateRange?.[1]?.format('YYYY-MM-DD'),
           });
@@ -1703,7 +1729,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         key={q.id || q.tempId} 
         size="small" 
         style={{ marginBottom: 16, borderLeft: '4px solid #1890ff' }}
-        title={<span>第 {index + 1} 题 <Tag color="blue">{questionTypeFullName(q.type)}</Tag>{q.knowledge_point && <Tag color="geekblue" style={{ marginLeft: 4 }}>🏷️ {q.knowledge_point}</Tag>}</span>}
+        title={<span>第 {index + 1} 题 <Tag color="blue">{questionTypeFullName(q.type)}</Tag>{q.knowledge_point && <Tag color="geekblue" style={{ marginLeft: 4, ...LONG_TEXT_TAG_STYLE }}>🏷️ {q.knowledge_point}</Tag>}</span>}
       >
         {/*
           题干。填空题把每个 ______ 就地替换成输入框，
@@ -1907,9 +1933,11 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           </div>
         )}
 
+        {/* 这里只渲染客观题答案，但同样给上换行样式 + 容器允许换行：
+            一旦以后往这里放宽题型（比如填空题也显示），不会立刻退化成超宽单行把编辑按钮挤出屏。 */}
         {isTeacher && q.answer && !isSubjectiveForAnswer && (
-          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Tag color="green">正确答案：{q.answer}{isJudgment && (q.answer === 'true' ? '（正确）' : '（错误）')}</Tag>
+          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Tag color="green" style={LONG_TEXT_TAG_STYLE}>正确答案：{q.answer}{isJudgment && (q.answer === 'true' ? '（正确）' : '（错误）')}</Tag>
             <Button size="small" icon={<EditOutlined />} onClick={() => {
               setEditingQuestion(q);
               setEditingQuestionIndex(-1);
@@ -2000,7 +2028,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     })}
                   </div>
                 )}
-                {v.answer && <Tag color="green" style={{ marginTop: 4 }}>答案：{v.answer}</Tag>}
+                {v.answer && <Tag color="green" style={{ marginTop: 4, ...LONG_TEXT_TAG_STYLE }}>答案：{v.answer}</Tag>}
                 {v.explanation && (
                   <div style={{ marginTop: 2, color: '#8c8c8c', fontSize: 11, fontStyle: 'italic' }}>
                     解析：{v.explanation}
@@ -2178,6 +2206,14 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
       </div>
     )},
     { title: '班级', dataIndex: 'class_name', key: 'class_name', responsive: ['md'] as any, render: (name: string) => name ? <Tag color="green">{name}</Tag> : <Tag>未分班</Tag> },
+    // 出题人：开启「跨教师作业可见」后列表里会混着别人的作业，
+    // 光靠标题下方的角标不好扫，单列一列老师名字，按人找作业才方便。
+    { title: '出题人', dataIndex: 'teacher_name', key: 'teacher_name', width: 140, responsive: ['md'] as any, render: (n: string, r: any) => (
+      <Tag color={r.teacher_id === user?.id ? 'cyan' : 'gold'} style={LONG_TEXT_TAG_STYLE}>
+        {n || '未知'}
+        {r.teacher_id === user?.id && <span style={{ marginLeft: 4, fontSize: 11 }}>（我）</span>}
+      </Tag>
+    ) },
     { title: '科目', dataIndex: 'subject', key: 'subject', render: (subject: string) => <Tag color="blue">{subject}</Tag> },
     { title: '题型', dataIndex: 'question_type', key: 'question_type', responsive: ['md'] as any, render: (type: string) => <Tag color="purple">{questionTypeLabel(type)}</Tag> },
     { title: '题目数', dataIndex: 'question_count', key: 'question_count', responsive: ['md'] as any, render: (count: number) => count ?? '-' },
@@ -2201,12 +2237,41 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         );
       }},
     ] : []),
-    // 作答时间：首次作答 ~ 最后作答 + 总耗时（来自逐题答题时间）
-    { title: '作答时间', key: 'my_answer_time', responsive: ['md'] as any, render: (_: any, r: any) => {
-        if (isTeacher || !r.my_submission_id) return <span style={{ color: '#bbb' }}>-</span>;
+    /**
+     * 作答耗时。
+     *
+     * 学生看自己的：首次作答 ~ 最后作答的时间段，外加自己的累计用时；
+     * 教师 / 管理员看全班的：平均用时与最长用时（avg_duration_ms / max_duration_ms，
+     * 由后端先按学生汇总每题 duration_ms 再聚合）。
+     *
+     * 以前教师这一列恒为 '-'：那段 SQL 的 my_* 字段只存在于学生分支的查询里，
+     * 老师拿到的行根本没有这些键，前端又正好遇到 isTeacher 就返回 '-'，于是整列空白。
+     */
+    // 给一个显式宽度：整表 scroll x 是 auto-fit，内容有三行（平均 / 最长 / 有计时人数），
+    // 不写 width 就会被相邻列挤成两截换行。按两行文案的实际长度留到 160。
+    { title: '作答耗时', key: 'answer_duration', width: 160, responsive: ['md'] as any, render: (_: any, r: any) => {
+        if (isTeacher) {
+          const avg = Number(r.avg_duration_ms) || 0;
+          const max = Number(r.max_duration_ms) || 0;
+          // 老作业的答题记录里没有逐题计时，只有一部分人名副其实。
+          // 不标明的话「平均 20 秒」会被当成全班都快，实际可能只有 3 个人有计时数据。
+          const sampled = Number(r.duration_sample_count) || 0;
+          if (!avg && !max) return <span style={{ color: '#bbb' }}>-</span>;
+          return (
+            <div style={{ fontSize: 12, color: '#666' }}>
+              <div>平均 {formatDuration(avg)}</div>
+              <div style={{ color: '#999' }}>最长 {formatDuration(max)}</div>
+              {sampled > 0 && sampled < (r.submitted_count || 0) && (
+                <div style={{ color: '#bbb', fontSize: 11 }}>{sampled}/{r.submitted_count} 人有计时</div>
+              )}
+            </div>
+          );
+        }
+        if (!r.my_submission_id) return <span style={{ color: '#bbb' }}>-</span>;
         const first = r.my_first_answered_at;
         const last = r.my_last_answered_at || first;
-        if (!first) return <span style={{ color: '#bbb' }}>-</span>;
+        const myself = formatDuration(r.my_duration_ms);
+        if (!first) return <span style={{ color: myself === '-' ? '#bbb' : '#666' }}>{myself === '-' ? '-' : `用时 ${myself}`}</span>;
         const start = new Date(first);
         const end = last ? new Date(last) : start;
         const sameDay = start.toDateString() === end.toDateString();
@@ -2214,16 +2279,15 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         const timeText = sameDay
           ? `${pad(start.getHours())}:${pad(start.getMinutes())} ~ ${pad(end.getHours())}:${pad(end.getMinutes())}`
           : `${start.toLocaleDateString()} ${pad(start.getHours())}:${pad(start.getMinutes())} ~ ${end.toLocaleDateString()} ${pad(end.getHours())}:${pad(end.getMinutes())}`;
-        const minutes = Math.max(1, Math.round((r.my_duration_ms || 0) / 60000));
         return (
           <div style={{ fontSize: 12, color: '#666' }}>
             <div>{timeText}</div>
-            <div style={{ color: '#999' }}>用时约 {minutes} 分钟</div>
+            <div style={{ color: '#999' }}>用时 {myself}</div>
           </div>
         );
       }
     },
-    { title: '金币奖励', dataIndex: 'max_exp', key: 'max_exp', responsive: ['md'] as any, render: (exp: number) => <span style={{ color: '#faad14', fontWeight: 'bold' }}>+{exp} 金币</span> },
+    { title: '金币奖励', dataIndex: 'max_exp', key: 'max_exp', width: 110, responsive: ['md'] as any, render: (exp: number) => <span style={{ color: '#faad14', fontWeight: 'bold' }}>+{exp} 金币</span> },
     { 
       title: '截止日期', dataIndex: 'due_date', key: 'due_date', responsive: ['sm'] as any,
       render: (date: string) => {
@@ -2238,7 +2302,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     {
       title: '操作',
       key: 'action',
-      width: 260,
+      // 与「状态」列同宽。注意这列在教师视角最多有 6 个按钮（编辑 / 打印 / 纸质登记 /
+      // 批量扫描 / 统计 / 取消），width 收窄后 Space wrap 会把它们堆成一列，行会变高。
+      width: 100,
       render: (_: any, record: any) => (
         <Space size="small" wrap>
           {!isTeacher && !record.my_submission_id && !isOverdue(record.due_date) && (
@@ -2313,6 +2379,13 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           {isTeacher && (
             <Select placeholder="筛选科目" allowClear style={{ width: isMobile ? '100%' : 120 }} onChange={(v) => setFilterSubject(v)} value={filterSubject}>
               {subjectOptions.map(s => <Option key={s} value={s}>{s}</Option>)}
+            </Select>
+          )}
+          {/* 只对教师 / 管理员开放：后端学生分支不支持 teacher_id，
+              摆一个点了没反应的下拉比没有更糟。 */}
+          {isTeacher && teacherOptions.length > 0 && (
+            <Select placeholder="筛选出题人" allowClear style={{ width: isMobile ? '100%' : 140 }} onChange={(v) => setFilterTeacher(v)} value={filterTeacher}>
+              {teacherOptions.map(t => <Option key={t.id} value={t.id}>{t.name}</Option>)}
             </Select>
           )}
           <Select placeholder="作业类型" allowClear style={{ width: isMobile ? '100%' : 120 }} onChange={(v) => setFilterAssignmentType(v)} value={filterAssignmentType}>
@@ -2435,6 +2508,9 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     <Tag color="blue">{record.subject}</Tag>
                     {record.class_name && <Tag color="green">{record.class_name}</Tag>}
                     {getStatusTag(record)}
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: '#999' }}>
+                    出题人：{record.teacher_name || '未知'}{record.teacher_id === user?.id && '（我）'}
                   </div>
                 </div>
                 <span style={{ color: '#faad14', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}>+{record.max_exp}💰</span>
@@ -3056,7 +3132,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                 {generatedData.spec_summary && generatedData.spec_summary.length > 1 && (
                   <div style={{ marginBottom: 12 }}>
                     {generatedData.spec_summary.map((s, i) => (
-                      <Tag key={i} color="purple" style={{ marginBottom: 4 }}>
+                      <Tag key={i} color="purple" style={{ marginBottom: 4, ...LONG_TEXT_TAG_STYLE }}>
                         {s.type_label} · {difficultyOptions.find(d => d.value === s.difficulty)?.label || s.difficulty} · 目标 {s.requested} 道 / 实得 {s.generated} 道
                       </Tag>
                     ))}
@@ -3069,7 +3145,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                         <div style={{ flex: 1 }}>
                           <strong>Q{i + 1}.</strong> <Tag color="purple">{questionTypeFullName(q.type)}</Tag>
                           <span style={{ marginLeft: 4 }}>{q.content}</span>
-                          {q.knowledge_point && <Tag color="blue" style={{ marginLeft: 8 }}>🏷️ {q.knowledge_point}</Tag>}
+                          {q.knowledge_point && <Tag color="blue" style={{ marginLeft: 8, ...LONG_TEXT_TAG_STYLE }}>🏷️ {q.knowledge_point}</Tag>}
                           {q.hasVariants && (
                             <Tag
                               color="orange"
@@ -3112,7 +3188,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                       )}
                       {q.answer && (
                         <div style={{ marginTop: 4, paddingLeft: 24 }}>
-                          <Tag color="green">答案：{q.answer}</Tag>
+                          {/* 填空/简答的答案可以是整句话，Tag 自带的 nowrap 会把它拉成超宽单行 */}
+                          <Tag color="green" style={LONG_TEXT_TAG_STYLE}>{answerLabel(q.type)}：{answerDisplayText(q.answer, q.type)}</Tag>
                           {q.type === 'judgment' && (q.answer === 'true' ? '（正确）' : '（错误）')}
                         </div>
                       )}
@@ -3146,7 +3223,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                                   })}
                                 </div>
                               )}
-                              {v.answer && <Tag color="green" style={{ marginTop: 4 }}>答案：{v.answer}</Tag>}
+                              {v.answer && <Tag color="green" style={{ marginTop: 4, ...LONG_TEXT_TAG_STYLE }}>答案：{v.answer}</Tag>}
                               {v.explanation && (
                                 <div style={{ marginTop: 2, color: '#8c8c8c', fontSize: 11, fontStyle: 'italic' }}>
                                   解析：{v.explanation}
@@ -3482,8 +3559,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                             <span><strong>第{i + 1}题</strong></span>
                             <Tag style={{ marginInlineEnd: 0 }}>{questionTypeFullName(qs.type)}</Tag>
                             {qs.answer && (
-                              <Tag color="green" style={{ marginInlineEnd: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
-                                {statsAnswerLabel(qs.type)}：{statsAnswerText(qs)}
+                              <Tag color="green" style={{ marginInlineEnd: 0, ...LONG_TEXT_TAG_STYLE }}>
+                                {answerLabel(qs.type)}：{answerDisplayText(qs.answer, qs.type)}
                               </Tag>
                             )}
                           </span>
@@ -3509,13 +3586,42 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                     size="small"
                     pagination={false}
                     scroll={{ x: true, y: 300 }}
+                    /**
+                     * 默认按得分排（后端给的顺序），其余列都能点表头切换：
+                     * 老师常问的「谁先交的」「谁磨蹭最久」都在这张表里能直接点出来。
+                     *
+                     * 排名一列不设 sorter：它是当前行序的序号，排序后跟着重排才对得上，
+                     * 若再让它自己排序就变成「排名的排名」了。
+                     */
                     columns={[
-                      { title: '排名', key: 'rank', render: (_: any, __: any, i: number) => i + 1 },
-                      { title: '姓名', dataIndex: 'real_name', render: (v: string, r: any) => v || r.username },
-                      { title: '得分', dataIndex: 'total_score', render: (s: number) => s !== null ? s : '未批改' },
-                      { title: '金币', dataIndex: 'gold_reward', render: (g: number) => g ? `+${g}` : 0 },
-                      { title: '状态', dataIndex: 'review_status', render: (s: string) => s === 'completed' ? <Badge status="success" text="已完成" /> : s === 'reviewing' ? <Badge status="processing" text="评阅中" /> : <Badge status="default" text="待处理" /> },
-                      { title: '提交时间', dataIndex: 'submitted_at', render: (t: string) => dayjs(t).format('MM-DD HH:mm') }
+                      { title: '排名', key: 'rank', width: 60, render: (_: any, __: any, i: number) => i + 1 },
+                      {
+                        title: '姓名', dataIndex: 'real_name', width: 100,
+                        sorter: (a: any, b: any) => String(a.real_name || a.username).localeCompare(String(b.real_name || b.username), 'zh'),
+                        render: (v: string, r: any) => v || r.username,
+                      },
+                      {
+                        title: '得分', dataIndex: 'total_score', width: 90, defaultSortOrder: 'descend' as const,
+                        sorter: (a: any, b: any) => (a.total_score ?? -1) - (b.total_score ?? -1),
+                        render: (s: number) => s !== null && s !== undefined ? s : '未批改',
+                      },
+                      {
+                        title: '金币', dataIndex: 'gold_reward', width: 80,
+                        sorter: (a: any, b: any) => (a.gold_reward || 0) - (b.gold_reward || 0),
+                        render: (g: number) => g ? `+${g}` : 0,
+                      },
+                      {
+                        // 该生展示的那次提交里，逐题计时之和（与得分取自同一次提交）
+                        title: '作答时长', dataIndex: 'duration_ms', width: 110,
+                        sorter: (a: any, b: any) => (a.duration_ms || 0) - (b.duration_ms || 0),
+                        render: (ms: number) => formatDuration(ms),
+                      },
+                      { title: '状态', dataIndex: 'review_status', width: 100, render: (s: string) => s === 'completed' ? <Badge status="success" text="已完成" /> : s === 'reviewing' ? <Badge status="processing" text="评阅中" /> : <Badge status="default" text="待处理" /> },
+                      {
+                        title: '提交时间', dataIndex: 'submitted_at', width: 120,
+                        sorter: (a: any, b: any) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime(),
+                        render: (t: string) => dayjs(t).format('MM-DD HH:mm'),
+                      },
                     ]}
                   />
                 )

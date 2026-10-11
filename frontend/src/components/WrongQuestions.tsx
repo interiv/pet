@@ -3,6 +3,7 @@ import { Table, Tag, Button, Card, Empty, Space, message, Modal, Alert, Badge, S
 import { assignmentAPI, knowledgePointAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import { needsSelfMarkRetry, isFillBlankType, questionTypeColor, questionTypeLabel } from '../utils/questionTypes';
+import { LONG_TEXT_TAG_STYLE } from '../utils/answerDisplay';
 import dayjs from 'dayjs';
 import { BookOutlined, CheckCircleOutlined, EyeOutlined, AimOutlined, ThunderboltOutlined, RedoOutlined } from '@ant-design/icons';
 
@@ -285,9 +286,10 @@ const WrongQuestions: React.FC = () => {
         <Tag color="blue">{record.subject}</Tag>
         <Tag color={questionTypeColor(record.question_type)}>{questionTypeLabel(record.question_type)}</Tag>
       </div>
-      <div style={{ display: 'flex', gap: 16, fontSize: 13, marginBottom: 8 }}>
-        <span>你的答案：<span style={{ color: '#ff4d4f', fontWeight: 500 }}>{String(record.wrong_answer)}</span></span>
-        <span>正确答案：<span style={{ color: '#52c41a', fontWeight: 500 }}>{String(record.correct_answer)}</span></span>
+      {/* 填空题答案可以是整句：允许换行，否则左右两栏会各自被撑到很宽再一起溢出卡片 */}
+      <div style={{ display: 'flex', gap: 16, fontSize: 13, marginBottom: 8, flexWrap: 'wrap' }}>
+        <span style={{ minWidth: 0, wordBreak: 'break-word' }}>你的答案：<span style={{ color: '#ff4d4f', fontWeight: 500 }}>{String(record.wrong_answer)}</span></span>
+        <span style={{ minWidth: 0, wordBreak: 'break-word' }}>正确答案：<span style={{ color: '#52c41a', fontWeight: 500 }}>{String(record.correct_answer)}</span></span>
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ color: '#999', fontSize: 12 }}>{dayjs(record.created_at).format('MM-DD HH:mm')}</span>
@@ -457,7 +459,7 @@ const WrongQuestions: React.FC = () => {
 
             <div style={{ marginTop: 12, color: '#999', fontSize: 13 }}>
               来源作业：{currentDetail.assignment_title} | 错误时间：{dayjs(currentDetail.created_at).format('YYYY-MM-DD HH:mm')}
-              {currentDetail.knowledge_point && <Tag color="blue" style={{ marginLeft: 8 }}>🏷️ {currentDetail.knowledge_point}</Tag>}
+              {currentDetail.knowledge_point && <Tag color="blue" style={{ marginLeft: 8, ...LONG_TEXT_TAG_STYLE }}>🏷️ {currentDetail.knowledge_point}</Tag>}
               {currentDetail.wrong_count > 1 && <Tag color="red" style={{ marginLeft: 8 }}>连续错误{currentDetail.wrong_count}次</Tag>}
             </div>
           </div>
@@ -486,7 +488,7 @@ const WrongQuestions: React.FC = () => {
                 key={q.id}
                 size="small"
                 style={{ marginBottom: 12, borderLeft: '4px solid #1677ff' }}
-                title={<span>题{idx + 1} <Tag color="blue">{q.subject}</Tag>{q.difficulty && <Tag>{q.difficulty}</Tag>}{q.knowledge_point && <Tag color="cyan">{q.knowledge_point}</Tag>}</span>}
+                title={<span>题{idx + 1} <Tag color="blue">{q.subject}</Tag>{q.difficulty && <Tag>{q.difficulty}</Tag>}{q.knowledge_point && <Tag color="cyan" style={LONG_TEXT_TAG_STYLE}>{q.knowledge_point}</Tag>}</span>}
               >
                 <div style={{ fontSize: 14, lineHeight: 1.8, marginBottom: 8 }}>{q.content}</div>
                 {q.options && Array.isArray(q.options) && (
@@ -548,7 +550,7 @@ const WrongQuestions: React.FC = () => {
             <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
               <Tag color="blue">{currentRetry.subject}</Tag>
               <Tag>{questionTypeLabel(currentRetry.question_type)}</Tag>
-              {currentRetry.knowledge_point && <Tag color="cyan">{currentRetry.knowledge_point}</Tag>}
+              {currentRetry.knowledge_point && <Tag color="cyan" style={LONG_TEXT_TAG_STYLE}>{currentRetry.knowledge_point}</Tag>}
               {retryStats[currentRetry.id]?.retry_total > 0 && (
                 <Tag color="orange">已重做 {retryStats[currentRetry.id].retry_total} 次</Tag>
               )}

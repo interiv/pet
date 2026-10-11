@@ -10,6 +10,7 @@ import { usePaperScan } from '../usePaperScan';
 import { useScanThumbnails } from '../utils/useScanThumbnails';
 import { isSubjectiveType, questionTypeLabel } from '../utils/questionTypes';
 import { gradeSourceTag } from '../utils/paperGradeSource';
+import { LONG_TEXT_TAG_STYLE } from '../utils/answerDisplay';
 
 interface Q {
   id: number;
@@ -770,7 +771,7 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                       标准答案：<span style={{ color: '#52c41a', fontWeight: 500 }}>{answerText(q)}</span>
                       {recognized[q.id] && (
                         <span style={{ marginLeft: 12 }}>
-                          <Tag color="purple" style={{ marginRight: 4 }}>AI识别:{recognized[q.id].answer}</Tag>
+                          <Tag color="purple" style={{ marginRight: 4, ...LONG_TEXT_TAG_STYLE }}>AI识别:{recognized[q.id].answer}</Tag>
                           {gradeSourceTag(recognized[q.id].source)}
                           <span style={{ color: '#999' }}>{recognized[q.id].comment}</span>
                         </span>

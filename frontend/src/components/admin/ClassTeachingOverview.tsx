@@ -4,6 +4,7 @@ import { UserOutlined, TeamOutlined } from '@ant-design/icons';
 import { adminAPI } from '../../utils/api';
 import { useAuthStore } from '../../store/authStore';
 import { useMobile } from './hooks';
+import { LONG_TEXT_TAG_STYLE } from '../../utils/answerDisplay';
 
 const ClassTeachingOverview: React.FC = () => {
   const { user } = useAuthStore();
@@ -191,10 +192,11 @@ const ClassTeachingOverview: React.FC = () => {
               dataSource={recentSubmissions}
               renderItem={(item: any) => (
                 <List.Item>
-                  <Space>
+                  {/* 要加 wrap：Space 默认不换行，作业标题一长整行就被顶宽 */}
+                  <Space wrap>
                     <span style={{ fontWeight: 500 }}>{item.student_name}</span>
                     <span style={{ color: '#888' }}>提交了</span>
-                    <Tag color="blue">{item.assignment_title}</Tag>
+                    <Tag color="blue" style={LONG_TEXT_TAG_STYLE}>{item.assignment_title}</Tag>
                     {item.subject && <Tag>{item.subject}</Tag>}
                     {item.total_score != null && (
                       <Tag color={item.total_score / (item.total_max_score || 1) >= 0.6 ? 'success' : 'error'}>

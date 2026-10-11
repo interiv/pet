@@ -5,6 +5,7 @@ import { adminAPI, assignmentAPI } from '../../utils/api';
 import { useAuthStore } from '../../store/authStore';
 import { useTablePagination } from './hooks';
 import { questionTypeLabel } from '../../utils/questionTypes';
+import { LONG_TEXT_TAG_STYLE } from '../../utils/answerDisplay';
 
 const DataView: React.FC = () => {
   const { user } = useAuthStore();
@@ -211,7 +212,8 @@ const DataView: React.FC = () => {
             { title: '题目内容', dataIndex: 'content', key: 'content', render: (c: string) => (
               <div style={{ maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c}</div>
             )},
-            { title: '知识点', dataIndex: 'knowledge_point', key: 'knowledge_point', width: 140, render: (kp: string) => kp ? <Tag color="blue">{kp}</Tag> : '-' },
+            // 列宽写死 140 又没加 ellipsis，知识点一长就把单元格撑开：交给 Tag 自己换行收住
+            { title: '知识点', dataIndex: 'knowledge_point', key: 'knowledge_point', width: 140, render: (kp: string) => kp ? <Tag color="blue" style={LONG_TEXT_TAG_STYLE}>{kp}</Tag> : '-' },
             ...(selectedAssignment?.status === 'cancelled' && isAdmin ? [{
               title: '操作',
               key: 'action',

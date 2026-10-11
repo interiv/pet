@@ -27,7 +27,13 @@ router.get('/', (req, res) => {
              WHERE c.school_id = s.id) AS teacher_count,
            (SELECT GROUP_CONCAT(DISTINCT c.grade)
               FROM classes c
-             WHERE c.school_id = s.id AND c.grade IS NOT NULL AND TRIM(c.grade) <> '') AS grades
+             WHERE c.school_id = s.id AND c.grade IS NOT NULL AND TRIM(c.grade) <> '') AS grades,
+           (SELECT COUNT(*) FROM pets p JOIN users u ON u.id = p.user_id
+              JOIN classes c ON c.id = u.class_id
+             WHERE c.school_id = s.id AND u.role = 'student') AS pet_count,
+           (SELECT COALESCE(ROUND(AVG(p.level), 1), 0) FROM pets p JOIN users u ON u.id = p.user_id
+              JOIN classes c ON c.id = u.class_id
+             WHERE c.school_id = s.id AND u.role = 'student') AS avg_level
          FROM schools s
          ORDER BY student_count DESC, s.name ASC`
       )

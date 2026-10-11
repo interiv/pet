@@ -186,7 +186,7 @@ export const assignmentAPI = {
   removeFromPersonalBank: (id: number) =>
     api.delete(`/assignments/personal-bank/${id}`),
 
-  getAssignmentTypeSummary: (params?: { class_id?: number; subject?: string; date_from?: string; date_to?: string }) =>
+  getAssignmentTypeSummary: (params?: { class_id?: number; subject?: string; date_from?: string; date_to?: string; teacher_id?: number }) =>
     api.get('/assignments/stats/type-summary', { params }),
 
   getMyWrongQuestions: (params?: { subject?: string }) => 
@@ -796,6 +796,9 @@ export const classAPI = {
   // 通过 slug 获取班级公开主页（无需登录）
   getBySlug: (slug: string) => api.get(`/classes/by-slug/${encodeURIComponent(slug)}`),
 
+  // 班级宠物列表（无需登录；本班成员/教师/管理员可见主人真名，访客脱敏）
+  getPetsBySlug: (slug: string) => api.get(`/classes/by-slug/${encodeURIComponent(slug)}/pets`),
+
   // 班级主页聚合数据（需登录）
   getHomeSummary: (classId: number) => api.get(`/classes/${classId}/home-summary`),
 
@@ -819,6 +822,12 @@ export const publicAPI = {
     api.get('/public/announcements', { params }),
   /** 年级概览：各年级的班级数/学生数/教师数/涉及学校数 */
   getByGrade: () => api.get('/public/by-grade'),
+  /** 班级广场：公开班 + 宠物统计（首页「班级数量」详情页） */
+  getClasses: () => api.get('/public/classes'),
+  /** 教师团队：教师姓名 + 任教学校/带班情况（首页「在职教师」详情页） */
+  getTeachers: () => api.get('/public/teachers'),
+  /** 学生概览：只有聚合数字，不含任何学生姓名（首页「在校学生」详情页） */
+  getStudentsOverview: () => api.get('/public/students-overview'),
 };
 
 export const schoolAPI = {

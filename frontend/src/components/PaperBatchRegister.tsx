@@ -13,6 +13,7 @@ import { useScanThumbnails } from '../utils/useScanThumbnails';
 import { formatSize } from '../utils/imageCompress';
 import { isSubjectiveType, questionTypeLabel } from '../utils/questionTypes';
 import { gradeSourceTag } from '../utils/paperGradeSource';
+import { LONG_TEXT_TAG_STYLE } from '../utils/answerDisplay';
 
 interface Q {
   id: number;
@@ -655,7 +656,7 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
                           标准答案：<span style={{ color: '#52c41a', fontWeight: 500 }}>{answerText(q)}</span>
                           {r && (
                             <span style={{ marginLeft: 12 }}>
-                              <Tag color="purple" style={{ marginRight: 4 }}>AI识别:{r.recognized_answer || '(空)'}</Tag>
+                              <Tag color="purple" style={{ marginRight: 4, ...LONG_TEXT_TAG_STYLE }}>AI识别:{r.recognized_answer || '(空)'}</Tag>
                               {gradeSourceTag(r.grade_source)}
                               <span style={{ color: '#999' }}>{r.comment}</span>
                             </span>

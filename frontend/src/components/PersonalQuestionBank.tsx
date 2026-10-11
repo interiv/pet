@@ -4,6 +4,7 @@ import {
 } from 'antd';
 import { DeleteOutlined, SearchOutlined } from '@ant-design/icons';
 import { assignmentAPI } from '../utils/api';
+import { LONG_TEXT_TAG_STYLE } from '../utils/answerDisplay';
 import { questionTypeLabel } from '../utils/questionTypes';
 
 // 题型标签统一取自 utils/questionTypes，本文件不再维护副本
@@ -214,7 +215,7 @@ const PersonalQuestionBank: React.FC = () => {
                       {it.subject && <Tag color="cyan">{it.subject}</Tag>}
                       <Tag color={it.is_correct ? 'green' : 'red'}>{it.is_correct ? '答对' : '答错'}</Tag>
                       {it.source === 'paper' && <Tag color="gold">纸质</Tag>}
-                      {it.knowledge_point && <Tag color="geekblue">{it.knowledge_point}</Tag>}
+                      {it.knowledge_point && <Tag color="geekblue" style={LONG_TEXT_TAG_STYLE}>{it.knowledge_point}</Tag>}
                     </div>
                   }
                   extra={

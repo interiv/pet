@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { db } = require('../config/database');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, optionalAuth } = require('../middleware/auth');
 const crypto = require('crypto');
 const { isValidSlug, generateClassSlug } = require('../utils/slug');
 const { getHeadTeachers, getHeadTeacherClasses } = require('../utils/headTeacher');
@@ -90,6 +90,161 @@ router.get('/by-slug/:slug', (req, res) => {
   } catch (error) {
     console.error('获取班级公开主页失败:', error);
     res.status(500).json({ error: '获取班级公开主页失败' });
+  }
+});
+
+/**
+ * 升级所需经验：与前端宠物面板（PetDisplay）用的是同一条公式，
+ * 保证「累计积分」在任何页面算出来都是同一个数。
+ */
+function expToNext(level) {
+  return Math.floor(100 * Math.pow(level, 1.5));
+}
+
+/**
+ * 累计积分 = 当前等级已攒的经验 + 前面每一级的满级经验之和。
+ *
+ * pets.total_exp_earned 列在建表后就没人维护过（库里全是 0），
+ * 直接展示会满屏 0 看着像坏了，所以按等级现场折算，不依赖那列。
+ */
+function totalExpOf(pet) {
+  let sum = Number(pet.exp) || 0;
+  for (let lv = 1; lv < (Number(pet.level) || 1); lv += 1) sum += expToNext(lv);
+  return sum;
+}
+
+/**
+ * 姓名脱敏：保留首字，其余打码。
+ * 访客看班级宠物时主人名必须脱敏——学生是未成年人，真名不能进公开接口；
+ * 但完全不显示又会让「谁的宠物」这件事失去意义，所以保留姓氏首字。
+ */
+function maskOwnerName(name) {
+  const chars = Array.from(String(name || '').trim());
+  if (chars.length === 0) return '神秘同学';
+  if (chars.length === 1) return `${chars[0]}*`;
+  return `${chars[0]}${'*'.repeat(Math.min(chars.length - 1, 3))}`;
+}
+
+/**
+ * 班级宠物列表（/c/:slug/pets 页面用，**未登录也可访问**）
+ *
+ * 为什么单独开一个接口而不是复用 /api/pets/all：
+ *   /all 强制登录且要求是本班成员，访客点开班级主页就只能看到空白区块；
+ *   而「班级养了多少宠物、养得怎么样」恰恰是最适合对外展示的东西。
+ *
+ * 分级可见（用 optionalAuth 判定身份，token 无效则按访客处理）：
+ *   本班学生 / 本班任课教师 / 管理员 → 主人真名 + 用户名
+ *   访客                              → 主人名脱敏成「张*」，不给用户名
+ * 金币按需求暂时对访客可见（后续要收口时改这里即可，前端不用动）。
+ */
+router.get('/by-slug/:slug/pets', optionalAuth, (req, res) => {
+  try {
+    if (!isFeatureEnabled('class_public_enabled')) {
+      return res.status(404).json({ error: '班级不存在' });
+    }
+    const { slug } = req.params;
+    const cls = db
+      .prepare(
+        `SELECT c.id, c.name, c.grade, c.slug, c.school_id,
+                COALESCE(c.is_public, 1) AS is_public,
+                s.name AS school_name, s.theme_color AS school_theme,
+                (SELECT COUNT(*) FROM users u WHERE u.class_id = c.id AND u.role = 'student') AS student_count,
+                (SELECT GROUP_CONCAT(COALESCE(u2.real_name, u2.username))
+                   FROM class_teachers ct2 JOIN users u2 ON u2.id = ct2.teacher_id
+                  WHERE ct2.class_id = c.id AND ct2.role = 'head_teacher') AS head_teacher_names
+         FROM classes c
+         LEFT JOIN schools s ON s.id = c.school_id
+         WHERE c.slug = ?`
+      )
+      .get(slug);
+    if (!cls) return res.status(404).json({ error: '班级不存在' });
+    if (!cls.is_public) return res.status(404).json({ error: '班级不存在或未公开' });
+
+    // 成员判定：本班学生 / 本班教师 / 管理员
+    let isMember = false;
+    if (req.user && req.user.userId) {
+      if (req.user.role === 'admin') {
+        isMember = true;
+      } else {
+        const asStudent = db
+          .prepare(`SELECT 1 FROM users WHERE id = ? AND class_id = ?`)
+          .get(req.user.userId, cls.id);
+        const asTeacher = db
+          .prepare(`SELECT 1 FROM class_teachers WHERE teacher_id = ? AND class_id = ?`)
+          .get(req.user.userId, cls.id);
+        isMember = Boolean(asStudent || asTeacher);
+      }
+    }
+
+    const pets = db
+      .prepare(
+        `SELECT p.id, p.name AS pet_name, p.level, p.exp, p.total_exp_earned,
+                p.hunger, p.mood, p.health, p.stamina,
+                p.attack, p.defense, p.speed, p.growth_stage, p.status,
+                p.win_count, p.total_battles, p.friendship_points, p.created_at,
+                ps.name AS species_name, ps.element_type, ps.image_urls,
+                u.id AS user_id,
+                COALESCE(u.real_name, u.username) AS owner_name,
+                u.username AS owner_username,
+                u.gold AS gold
+         FROM pets p
+         JOIN pet_species ps ON p.species_id = ps.id
+         JOIN users u ON p.user_id = u.id
+         WHERE u.class_id = ? AND u.role = 'student'
+         ORDER BY p.level DESC, p.exp DESC`
+      )
+      .all(cls.id)
+      .map((p) => ({
+        ...p,
+        total_exp: totalExpOf(p),
+        // 升级进度：前端拿到的就是百分比，省得每个页面各算一遍
+        exp_progress: Math.min(
+          100,
+          Math.round(((Number(p.exp) || 0) / expToNext(Number(p.level) || 1)) * 100)
+        ),
+        owner_name: isMember ? p.owner_name : maskOwnerName(p.owner_name),
+        owner_username: isMember ? p.owner_username : null,
+      }));
+
+    // 顶部汇总：老师最关心的是「全班养得怎么样 + 有几只需要照顾」
+    const stats = {
+      pet_count: pets.length,
+      student_count: cls.student_count || 0,
+      avg_level:
+        pets.length > 0
+          ? Math.round((pets.reduce((s, p) => s + (p.level || 0), 0) / pets.length) * 10) / 10
+          : 0,
+      max_level: pets.reduce((m, p) => Math.max(m, p.level || 0), 0),
+      total_exp: pets.reduce((s, p) => s + (p.total_exp || 0), 0),
+      total_gold: pets.reduce((s, p) => s + (p.gold || 0), 0),
+      unconscious_count: pets.filter((p) => p.status === 'unconscious').length,
+      // 体力/健康低于 30 视为「需要照顾」，与前端宠物面板的告警阈值保持一致
+      need_care_count: pets.filter(
+        (p) => (p.stamina ?? 100) < 30 || (p.health ?? 100) < 30 || (p.hunger ?? 100) < 30
+      ).length,
+    };
+
+    res.json({
+      class: {
+        id: cls.id,
+        name: cls.name,
+        grade: cls.grade,
+        slug: cls.slug,
+        school_id: cls.school_id,
+        school_name: cls.school_name,
+        school_theme: cls.school_theme,
+        student_count: cls.student_count || 0,
+        head_teacher_names: cls.head_teacher_names
+          ? String(cls.head_teacher_names).split(',').filter(Boolean)
+          : [],
+      },
+      is_member: isMember,
+      stats,
+      pets,
+    });
+  } catch (error) {
+    console.error('获取班级宠物列表失败:', error);
+    res.status(500).json({ error: '获取班级宠物列表失败' });
   }
 });
 

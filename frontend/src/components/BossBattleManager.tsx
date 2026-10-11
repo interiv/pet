@@ -12,6 +12,7 @@ import {
 import { bossBattleAPI, equipmentAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import { questionTypeLabel } from '../utils/questionTypes';
+import { LONG_TEXT_TAG_STYLE } from '../utils/answerDisplay';
 
 const useMobile = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -376,7 +377,7 @@ const BossBattleManager: React.FC = () => {
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
         <Tag color="red">Lv.{record.boss_level}</Tag>
-        {record.knowledge_point && <Tag color="blue">{record.knowledge_point}</Tag>}
+        {record.knowledge_point && <Tag color="blue" style={LONG_TEXT_TAG_STYLE}>{record.knowledge_point}</Tag>}
         {record.participant_count ? <Tag icon={<TeamOutlined />}>{record.participant_count}人</Tag> : null}
       </div>
       {record.boss_max_hp > 0 && (
@@ -427,7 +428,7 @@ const BossBattleManager: React.FC = () => {
               <div style={{ fontSize: isMobile ? 56 : 80 }}>{currentBoss.boss_icon || '👹'}</div>
               <h3 style={{ fontSize: isMobile ? 16 : undefined }}>{currentBoss.boss_name}</h3>
               <Tag color="red">Lv.{currentBoss.boss_level}</Tag>
-              {currentBoss.knowledge_point && <Tag color="blue">{currentBoss.knowledge_point}</Tag>}
+              {currentBoss.knowledge_point && <Tag color="blue" style={LONG_TEXT_TAG_STYLE}>{currentBoss.knowledge_point}</Tag>}
             </Col>
             <Col xs={24} md={16}>
               <div style={{ marginBottom: 16 }}>
@@ -509,7 +510,7 @@ const BossBattleManager: React.FC = () => {
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
           <Tag color="red">Lv.{record.boss_level}</Tag>
-          {record.knowledge_point && <Tag color="blue">{record.knowledge_point}</Tag>}
+          {record.knowledge_point && <Tag color="blue" style={LONG_TEXT_TAG_STYLE}>{record.knowledge_point}</Tag>}
           {record.participant_count ? <Tag icon={<TeamOutlined />}>{record.participant_count}人参与</Tag> : <Tag>0人参与</Tag>}
         </div>
         <div style={{ marginBottom: 8 }}>
@@ -942,7 +943,7 @@ const BossBattleManager: React.FC = () => {
                                       }}
                                     >
                                       <Checkbox value={wq.question_id} style={isMobile ? { width: '100%', padding: '4px 0' } : undefined}>
-                                        <Tag color="blue" style={{ marginRight: 4, fontSize: isMobile ? 10 : 12 }}>{wq.topic || wq.knowledge_point || wq.subject}</Tag>
+                                        <Tag color="blue" style={{ marginRight: 4, fontSize: isMobile ? 10 : 12, ...LONG_TEXT_TAG_STYLE }}>{wq.topic || wq.knowledge_point || wq.subject}</Tag>
                                         <Tag color={wq.difficulty === 'easy' ? 'green' : wq.difficulty === 'hard' ? 'red' : 'orange'} style={{ fontSize: isMobile ? 10 : 12 }}>{wq.difficulty}</Tag>
                                         {!isMobile && <span style={{ fontSize: 12, color: '#999' }}>{wq.error_student_count}人错</span>}
                                         <div style={{
@@ -1157,7 +1158,7 @@ const BossBattleManager: React.FC = () => {
                                       }}
                                     >
                                       <Checkbox value={q.id} style={isMobile ? { width: '100%', padding: '4px 0' } : undefined}>
-                                        <Tag color="blue" style={{ marginRight: 4, fontSize: isMobile ? 10 : 12 }}>{q.topic || q.knowledge_point || q.subject}</Tag>
+                                        <Tag color="blue" style={{ marginRight: 4, fontSize: isMobile ? 10 : 12, ...LONG_TEXT_TAG_STYLE }}>{q.topic || q.knowledge_point || q.subject}</Tag>
                                         <Tag color={q.difficulty === 'easy' ? 'green' : q.difficulty === 'hard' ? 'red' : 'orange'} style={{ fontSize: isMobile ? 10 : 12 }}>{q.difficulty}</Tag>
                                         <Tag style={{ fontSize: isMobile ? 10 : 12 }}>{questionTypeLabel(q.type)}</Tag>
                                         <div style={{

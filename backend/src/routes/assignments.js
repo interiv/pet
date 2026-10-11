@@ -30,6 +30,31 @@ const aiOff = requireFeature('ai_enabled', { message: 'AI 功能当前已关闭�
 const aiJudgeOff = requireFeature('ai_paper_judge_enabled', { message: 'AI 批改当前已关闭，可改用手动登记' });
 const paperUpOff = requireFeature('paper_upload_enabled', { message: '拍照上传当前已关闭，可改用手动登记' });
 
+/**
+ * 全班作答耗时的聚合片段（教师 / 管理员列表通用）。
+ *
+ * 先按学生把每题 duration_ms 汇总，再在外面求 AVG / MAX —— 不能直接 AVG(duration_ms)，
+ * 那样算出来的是「全班每题的平均耗时」，题目多的作业天然偏大，跨作业没法比。
+ *
+ * 抽成常量是因为教师分支和管理员分支各要用一次，两处 SQL 必须始终一致，
+ * 否则管理员看到的时长和老师看到的不一样，又得回头查是哪条 SQL 抄漏了。
+ */
+const PER_STUDENT_DURATION_SQL = `
+            SELECT SUM(COALESCE(qa.duration_ms, 0)) AS total_ms
+              FROM submissions s
+              JOIN question_answers qa ON qa.submission_id = s.id
+             WHERE s.assignment_id = a.id
+             GROUP BY s.user_id
+            -- 排除整份没计时的学生：老作业的答案里 duration_ms 全是 NULL，
+            -- SUM 出来是 0，把他们算进分母会把平均值拉到一个完全不反映现实的数，
+            -- 老师看到「平均 1 分钟」会以为全班飞快，实际是这条记录压根没采集到时长。
+            HAVING SUM(COALESCE(qa.duration_ms, 0)) > 0`;
+
+const DURATION_AGG_SQL = `
+          (SELECT AVG(t.total_ms) FROM (${PER_STUDENT_DURATION_SQL.trim()}) t) as avg_duration_ms,
+          (SELECT MAX(t.total_ms) FROM (${PER_STUDENT_DURATION_SQL.trim()}) t) as max_duration_ms,
+          (SELECT COUNT(*) FROM (${PER_STUDENT_DURATION_SQL.trim()}) t) as duration_sample_count`;
+
 const path = require('path');
 const fs = require('fs');
 
@@ -1159,7 +1184,7 @@ router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), (req, res
 router.get('/', authenticateToken, (req, res) => {
   try {
     let assignments;
-    const { class_id, subject, date_from, date_to, assignment_type } = req.query;
+    const { class_id, subject, date_from, date_to, assignment_type, teacher_id } = req.query;
     const typeFilter = ['preview', 'homework', 'review'].includes(assignment_type) ? assignment_type : null;
 
     if (req.user.role === 'admin') {
@@ -1167,7 +1192,13 @@ router.get('/', authenticateToken, (req, res) => {
         SELECT a.*, COALESCE(u.real_name, u.username) as teacher_name, c.name as class_name,
           (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count,
           (SELECT COUNT(*) FROM users WHERE class_id = a.class_id AND role = 'student' AND status = 'active') as class_student_count,
-          (SELECT COUNT(DISTINCT user_id) FROM submissions WHERE assignment_id = a.id) as submitted_count
+          (SELECT COUNT(DISTINCT user_id) FROM submissions WHERE assignment_id = a.id) as submitted_count,
+          -- 全班作答耗时（毫秒）：先按学生把每题的 duration_ms 汇总，再求平均 / 最大。
+          -- 时长由前端逐题计时后随答案提交（见 POST /:id/submit 的 durationOf，
+          -- 只收 0.5 秒 ~ 30 分钟），所以 SUM 得到的是「该生实际落在题目上的时间」，
+          -- 不是「打开作业到交卷」的墙上时钟——后者没有采集点，算不出来。
+          -- 存量数据可能整份没有 duration_ms，SUM 按 0 计会让平均值偏小，属已知口径。
+          ${DURATION_AGG_SQL}
         FROM assignments a
         JOIN users u ON a.teacher_id = u.id
         LEFT JOIN classes c ON a.class_id = c.id
@@ -1179,6 +1210,8 @@ router.get('/', authenticateToken, (req, res) => {
       if (typeFilter) { sql += ` AND a.assignment_type = ?`; params.push(typeFilter); }
       if (date_from) { sql += ` AND a.created_at >= ?`; params.push(date_from); }
       if (date_to) { sql += ` AND a.created_at <= ?`; params.push(date_to + ' 23:59:59'); }
+      // 按出题人筛：跨教师可见时同班的作业来自多位老师，只看某一位布置的
+      if (teacher_id) { sql += ` AND a.teacher_id = ?`; params.push(teacher_id); }
       sql += ` ORDER BY a.created_at DESC`;
       assignments = db.prepare(sql).all(...params);
     } else if (req.user.role === 'teacher') {
@@ -1193,7 +1226,9 @@ router.get('/', authenticateToken, (req, res) => {
         SELECT a.*, COALESCE(u.real_name, u.username) as teacher_name, c.name as class_name,
           (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = a.id) as question_count,
           (SELECT COUNT(*) FROM users WHERE class_id = a.class_id AND role = 'student' AND status = 'active') as class_student_count,
-          (SELECT COUNT(DISTINCT user_id) FROM submissions WHERE assignment_id = a.id) as submitted_count
+          (SELECT COUNT(DISTINCT user_id) FROM submissions WHERE assignment_id = a.id) as submitted_count,
+          -- 同上：全班作答耗时的平均值与最大值，供教师 / 管理员在列表一眼看出节奏。
+          ${DURATION_AGG_SQL}
         FROM assignments a
         JOIN users u ON a.teacher_id = u.id
         LEFT JOIN classes c ON a.class_id = c.id
@@ -1225,6 +1260,8 @@ router.get('/', authenticateToken, (req, res) => {
       if (typeFilter) { sql += ` AND a.assignment_type = ?`; params.push(typeFilter); }
       if (date_from) { sql += ` AND a.created_at >= ?`; params.push(date_from); }
       if (date_to) { sql += ` AND a.created_at <= ?`; params.push(date_to + ' 23:59:59'); }
+      // 同上：按出题人筛选，与学生分支不同——本分支的行本来就没有 my_* 那些字段
+      if (teacher_id) { sql += ` AND a.teacher_id = ?`; params.push(teacher_id); }
       sql += ` ORDER BY a.created_at DESC`;
       assignments = db.prepare(sql).all(...params);
     } else {
@@ -2310,7 +2347,27 @@ router.get('/:id/statistics', authenticateToken, authorizeRole('teacher', 'admin
     `).all(req.params.id);
     const latestByUser = new Map();
     for (const row of allSubmissions) latestByUser.set(row.user_id, row);
+
+    /**
+     * 每位学生的作答时长 = 其展示的那次提交里，全部题目计时的累加。
+     *
+     * 刻意只按 submission_id 取，不按 user_id 跨提交累加：
+     * 表格里的得分取的就是最新那次提交（见 latestByUser），重做还会留下多轮
+     * question_answers。若把多轮都加起来，会出现「得分是第二次的、时长是两次之和」，
+     * 老师看到某个学生 40 分钟就会以为全班都磨蹭，实际是同一份作业做了两遍。
+     */
+    const durationRows = db.prepare(`
+      SELECT submission_id, SUM(COALESCE(duration_ms, 0)) AS total_ms
+        FROM question_answers
+       WHERE submission_id IN (SELECT id FROM submissions WHERE assignment_id = ?)
+       GROUP BY submission_id
+    `).all(req.params.id);
+    const durationBySubmission = new Map(
+      durationRows.map(r => [r.submission_id, Number(r.total_ms) || 0])
+    );
+
     const studentResults = [...latestByUser.values()]
+      .map(r => ({ ...r, duration_ms: durationBySubmission.get(r.submission_id) || 0 }))
       .sort((a, b) => (b.total_score || 0) - (a.total_score || 0));
 
     res.json({
@@ -2966,7 +3023,7 @@ router.delete('/personal-bank/:id', authenticateToken, (req, res) => {
 
 router.get('/stats/type-summary', authenticateToken, authorizeRole('teacher', 'admin'), (req, res) => {
   try {
-    const { class_id, subject, date_from, date_to } = req.query;
+    const { class_id, subject, date_from, date_to, teacher_id } = req.query;
 
     let classFilter = '';
     const params = [];
@@ -2991,6 +3048,9 @@ router.get('/stats/type-summary', authenticateToken, authorizeRole('teacher', 'a
     if (subject) { classFilter += ` AND a.subject = ?`; params.push(subject); }
     if (date_from) { classFilter += ` AND DATE(a.created_at, '+8 hours') >= ?`; params.push(date_from); }
     if (date_to) { classFilter += ` AND DATE(a.created_at, '+8 hours') <= ?`; params.push(date_to); }
+    // 与列表保持同一套口径：列表按出题人筛了，这几张完成率卡片也得跟着筛，
+    // 否则会出现「列表只剩李老师的 3 份作业，卡片却显示全班 30 份」的对不上账。
+    if (teacher_id) { classFilter += ` AND a.teacher_id = ?`; params.push(teacher_id); }
 
     const rows = db.prepare(`
       SELECT a.id, a.assignment_type, a.subject, a.class_id, a.max_exp,
