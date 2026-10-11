@@ -16,6 +16,8 @@ const { authenticateToken, authorizeRole } = require('../middleware/auth');
 const { requireFeature } = require('../middleware/featureFlags');
 const { chatCompletion } = require('../services/aiClient');
 const scanSvc = require('../services/paperScanService');
+const { reviewOneQuestion } = require('../services/subjectiveReview');
+const { OBJECTIVE_TYPES, isAnswerCorrect, countFillBlankSlots } = require('../utils/answerCheck');
 
 const router = express.Router();
 
@@ -384,7 +386,7 @@ async function runScanBatch(batchId, userId) {
   if (!assignment) throw new Error('作业不存在');
 
   const questions = db.prepare(`
-    SELECT qb.id, qb.type, qb.content, qb.answer
+    SELECT qb.id, qb.type, qb.content, qb.answer, qb.options
     FROM assignment_questions aq
     JOIN question_bank qb ON aq.question_bank_id = qb.id
     WHERE aq.assignment_id = ?
@@ -411,10 +413,52 @@ async function runScanBatch(batchId, userId) {
   }
   const groups = [...groupMap.entries()].sort((a, b) => a[0] - b[0]);
 
-  const tLabel = (t) => ({ choice_single: '单选题', choice_multi: '多选题', judgment: '判断题', fill_blank: '填空题', essay: '简答/主观题' }[t] || t);
-  const questionList = questions.map((q, i) =>
-    `ID:${q.id} 第${i + 1}题[${tLabel(q.type)}] 题目：${String(q.content).slice(0, 80)} 参考答案：${q.answer}`
-  ).join('\n');
+  const tLabel = (t) => ({ choice_single: '单选题', choice_multi: '多选题', judgment: '判断题', fill_blank: '填空题', essay: '简答/主观题', composition: '作文题' }[t] || t);
+
+  /**
+   * 题目清单进 AI prompt，**这里一个参考答案都不下发**——判分已经拆到后面单独做
+   * （见下方 gradeRecognized）。
+   *
+   * 拆分之后，每种题型要的东西正好互补，都是「卷面上读不到、只有电子版才有」的那部分：
+   *   - 客观题：卷面自带题干和选项，识别只需要把「圈了北京」换算成「B」，
+   *     所以**只给选项**做对照。题干和标准答案都不给——判分由后端用标准答案比对，
+   *     给了纯属让模型多看多猜；题干还会诱导它自己把题答一遍再判，判得更飘。
+   *   - 填空/简答/作文：卷面上只有作答、没有题干，识别读不出「这题在问什么」，
+   *     所以**必须给题干**。标准答案同样不给，留给后面的主观题评阅去发，
+   *     那一步是纯文本调用，比在这塞一堆答案更省也更专注。
+   *
+   * 空位数复用 answerCheck.countFillBlankSlots，与主观题评阅（services/subjectiveReview.js）
+   * 保持同一口径，否则模型会按自己数出来的空数去分段。
+   */
+  const clipContent = (q) => {
+    const text = String(q.content == null ? '' : q.content);
+    // 只对主观题做兜底截断：极端长的题目要求会挤爆 prompt，但不能截得太狠，
+    // 填空题截到一半会连空位一起丢，那样连「有几空」都读不出来。
+    return text.length > 400 ? text.slice(0, 400) + '…' : text;
+  };
+
+  const buildQuestionLine = (q, i) => {
+    const head = `ID:${q.id} 第${i + 1}题[${tLabel(q.type)}]`;
+
+    if (OBJECTIVE_TYPES.has(q.type)) {
+      // 只给选项：学生圈的是内容，要靠它换算成字母
+      let opts = [];
+      try { opts = JSON.parse(q.options || '[]'); } catch (e) { opts = []; }
+      const letters = 'ABCDEFGH';
+      const optText = (Array.isArray(opts) && opts.length)
+        ? opts.map((o, k) => `${letters[k]}.${String(o).slice(0, 40)}`).join('  ')
+        : '（本题选项请从卷面上直接读取）';
+      return `${head} 选项：${optText}`;
+    }
+
+    // 主观题：题干是刚需（纸质卷上没有），答案不在这里给
+    const slots = q.type === 'fill_blank' ? countFillBlankSlots(q.content) : 0;
+    const slotHint = q.type === 'fill_blank'
+      ? (slots > 0 ? `（本题共 ${slots} 个空）` : '')
+      : '';
+    return `${head} 题目：${clipContent(q)}${slotHint}`;
+  };
+  const questionList = questions.map(buildQuestionLine).join('\n');
   const nameList = students.map((s) => s.real_name || s.username).join('、') || '（未获取到名单）';
 
   const timeoutMs = (parseInt(config.ai_timeout) || 300) * 1000;
@@ -481,13 +525,22 @@ async function runScanBatch(batchId, userId) {
       const one = parsePapers(reply.content || '')[0];
       if (one) {
         const qIds = new Set(questions.map((q) => q.id));
-        const results = (one.results || []).filter((r) => qIds.has(parseInt(r.question_id, 10))).map((r) => ({
-          question_id: parseInt(r.question_id, 10),
-          recognized_answer: String(r.recognized_answer == null ? '' : r.recognized_answer),
-          is_correct: !!r.is_correct,
-          score: Math.max(0, Math.min(100, parseInt(r.score, 10) || 0)),
-          comment: String(r.comment || ''),
-        }));
+        /**
+         * AI 这一步**只负责读出学生写了什么**，不判分：
+         * 识别结果里连 is_correct 都不解析，判分统一交给后面的 gradeRecognized。
+         */
+        const recognized = (one.results || [])
+          .filter((r) => qIds.has(parseInt(r.question_id, 10)))
+          .map((r) => ({
+            question_id: parseInt(r.question_id, 10),
+            recognized_answer: String(r.recognized_answer == null ? '' : r.recognized_answer),
+          }));
+        const results = await gradeRecognized(recognized, questions, {
+          config,
+          timeoutMs,
+          usageSum,
+          subject: assignment.subject || '',
+        });
         if (results.length > 0) {
           const rawName = String(one.student_name || '').trim();
           const matched = matchStudent(rawName, students);
@@ -534,6 +587,138 @@ async function runScanBatch(batchId, userId) {
 
   scanSvc.markScanDone(batchId, { papers, model: visionModel }, visionModel);
   return { status: 'done', papers: papers.length, total_groups: groups.length };
+}
+
+/**
+ * AI 主观题评分的及格线。
+ * 与 services/subjectiveReview.js 写入 question_answers.is_correct 的口径一致（60 分算对），
+ * 两边共用一个阈值，免得纸质卷和在线提交对同一份答案给出不同的对错。
+ */
+const AI_PASS_SCORE = 60;
+
+/** 选项字母表，与题库 options 数组的下标一一对应 */
+const OPTION_LETTERS = 'ABCDEFGH';
+
+/**
+ * 把学生作答归一化成选项字母，再去和标准答案比对。
+ *
+ * 【为什么需要这层兜底】判分已经交给后端规则比对了，所以识别结果的格式就成了硬要求：
+ * AI 必须在「学生圈了北京」和「答案是 B」之间做一次换算。prompt 里已经要求它换算，
+ * 但这一步一旦没做（直接把选项内容当答案回传，或学生写的是「北京、上海」这类形式），
+ * 规则比对会把它当成错答案——**一道做对的题被判错，且没有任何提示**。
+ * 所以这里用选项表反向再归一化一次。
+ *
+ * 只对选择题生效：判断题由 answerCheck.normalizeJudgment 处理「√/对/A/1」，
+ * 多选/单选用 isAnswerCorrect 的 normalizeMulti 处理分隔符，都不需要这一步。
+ */
+function normalizeChoiceAnswer(q, raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s) return s;
+  // 已经是字母形式（"B"、"AC"）就不用查表
+  if (/^[A-Z]([\s,、]*[A-Z])*$/i.test(s)) return s.toUpperCase();
+
+  let opts = [];
+  try { opts = JSON.parse(q.options || '[]'); } catch (e) { return s; }
+  if (!Array.isArray(opts) || opts.length === 0) return s;
+
+  // 学生答的是选项内容（整段包含该选项），反查是第几个选项。
+  // 只做「包含」单向匹配：反向包含会在学生只写了个字时误命中多个选项。
+  const hit = [];
+  opts.forEach((o, k) => {
+    const text = String(o == null ? '' : o).trim();
+    if (text && s.includes(text) && !hit.includes(OPTION_LETTERS[k])) hit.push(OPTION_LETTERS[k]);
+  });
+  return hit.length ? hit.join('') : s;
+}
+
+/**
+ * 把「识别结果」变成「判分结果」——识别与判分在这里彻底分开。
+ *
+ * 【为什么客观题不交给 AI 判】
+ * 单选/多选/判断有唯一答案，后端拿标准答案一比对就行，是纯字符串运算：100% 准、零成本、
+ * 老师可复现。而且用的就是 answerCheck.isAnswerCorrect——与学生在线提交、老师改答案重算
+ * 完全同一套口径，不会出现「同一道题在线做对、拍照做错」。
+ * 早先这里是把视觉模型返回的 is_correct 直接落库，它会把 C 看成 G、把 AB 看成 A8，
+ * 判错了没有任何提示地写进成绩单。
+ *
+ * 【主观题怎么判】
+ * 填空/简答/作文需要按语义判，复用 services/subjectiveReview.js 的 reviewOneQuestion：
+ * 与在线提交同一份代码、同一套填空题判分规则（按意思判、不做字符串比对）、同一套评分口径。
+ * 传 image_url = null：识别阶段已经把作答转写成文本，不必再背一遍图片，
+ * 顺带走便宜的文本模型而不是视觉模型——这是拆分识别与判分省下来的成本。
+ *
+ * 【grade_source】每题都带上判分来源（rule / ai / fallback / failed），
+ * 老师复核时据此判断可信度：规则判的可以直接信，AI 评的建议扫一眼。
+ */
+async function gradeRecognized(recognized, questions, ctx) {
+  const byId = new Map(questions.map((q) => [q.id, q]));
+  const out = [];
+
+  for (const r of recognized) {
+    const q = byId.get(r.question_id);
+    if (!q) continue;
+    const studentAnswer = String(r.recognized_answer == null ? '' : r.recognized_answer);
+
+    if (OBJECTIVE_TYPES.has(q.type)) {
+      // AI 用约定的占位符表示「卷面没写」和「写了看不清」，这两种都不能算学生做对
+      const blank = /^\((未作答|未识别)\)$/.test(studentAnswer.trim());
+      const ok = !blank && isAnswerCorrect(q.type, normalizeChoiceAnswer(q, studentAnswer), q.answer);
+      out.push({
+        question_id: q.id,
+        recognized_answer: studentAnswer,
+        is_correct: ok,
+        score: ok ? 100 : 0,
+        comment: blank ? '未作答' : (ok ? '正确' : '错误'),
+        grade_source: 'rule',
+      });
+      continue;
+    }
+
+    try {
+      const ai = await reviewOneQuestion({
+        question_bank_id: q.id,
+        question_type: q.type,
+        question_content: q.content,
+        reference_answer: q.answer,
+        student_answer: studentAnswer,
+        image_url: null,
+      }, ctx.config, ctx.timeoutMs, ctx.subject, (u) => {
+        // aiClient 只归一化 usage、不写 token_usage 表，记账在调用方，这里补上
+        ctx.usageSum.prompt_tokens += u.prompt_tokens || 0;
+        ctx.usageSum.completion_tokens += u.completion_tokens || 0;
+        ctx.usageSum.total_tokens += u.total_tokens || 0;
+      });
+      const score = Math.max(0, Math.min(100, parseInt(ai.score, 10) || 0));
+      out.push({
+        question_id: q.id,
+        recognized_answer: studentAnswer,
+        is_correct: score >= AI_PASS_SCORE,
+        score,
+        comment: String(ai.feedback || '').slice(0, 200),
+        grade_source: 'ai',
+      });
+    } catch (e) {
+      console.error('[paper-scan] 第' + q.id + '题 AI 评阅失败:', e.message);
+      /**
+       * 一次调用失败就把学生做过的题记 0 分是最伤人的，所以填空题退回规则比对，
+       * 与在线提交时 ruleFallbackGrade 是同一个退路。
+       * 简答/作文没有唯一答案，兜不出确定结果，只能标出来交老师人工批——也不写兜底分。
+       */
+      const fb = q.type === 'fill_blank' ? isAnswerCorrect('fill_blank', studentAnswer, q.answer) : null;
+      out.push({
+        question_id: q.id,
+        recognized_answer: studentAnswer,
+        is_correct: !!fb,
+        score: fb ? 100 : 0,
+        comment: fb === null
+          ? 'AI 评阅失败，请老师人工批改'
+          : 'AI 评阅失败，已改为按参考答案自动比对，请老师确认',
+        grade_source: fb === null ? 'failed' : 'fallback',
+      });
+    }
+  }
+
+  return out;
 }
 
 /** 从模型返回里取出 papers 数组（容忍 markdown 包裹与前后废话） */

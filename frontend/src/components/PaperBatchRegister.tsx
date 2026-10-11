@@ -12,6 +12,7 @@ import { usePaperScan } from '../usePaperScan';
 import { useScanThumbnails } from '../utils/useScanThumbnails';
 import { formatSize } from '../utils/imageCompress';
 import { isSubjectiveType, questionTypeLabel } from '../utils/questionTypes';
+import { gradeSourceTag } from '../utils/paperGradeSource';
 
 interface Q {
   id: number;
@@ -27,6 +28,8 @@ interface PaperResult {
   is_correct: boolean;
   score: number;
   comment?: string;
+  /** 判分来源：rule 规则判 / ai AI评阅 / fallback 规则兜底 / failed 待人工批 */
+  grade_source?: string;
 }
 
 interface Paper {
@@ -653,6 +656,7 @@ const PaperBatchRegister: React.FC<Props> = ({ assignmentId, title, open, onClos
                           {r && (
                             <span style={{ marginLeft: 12 }}>
                               <Tag color="purple" style={{ marginRight: 4 }}>AI识别:{r.recognized_answer || '(空)'}</Tag>
+                              {gradeSourceTag(r.grade_source)}
                               <span style={{ color: '#999' }}>{r.comment}</span>
                             </span>
                           )}

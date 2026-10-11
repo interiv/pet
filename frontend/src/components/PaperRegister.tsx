@@ -9,6 +9,7 @@ import { assignmentAPI, classroomQuizAPI } from '../utils/api';
 import { usePaperScan } from '../usePaperScan';
 import { useScanThumbnails } from '../utils/useScanThumbnails';
 import { isSubjectiveType, questionTypeLabel } from '../utils/questionTypes';
+import { gradeSourceTag } from '../utils/paperGradeSource';
 
 interface Q {
   id: number;
@@ -47,7 +48,15 @@ interface Paper {
   group_no: number;
   image_ids: number[];
   student_id: number | null;
-  results: Array<{ question_id: number; recognized_answer?: string; is_correct: boolean; score: number; comment?: string }>;
+  results: Array<{
+    question_id: number;
+    recognized_answer?: string;
+    is_correct: boolean;
+    score: number;
+    comment?: string;
+    /** 判分来源：rule 规则判 / ai AI评阅 / fallback 规则兜底 / failed 待人工批 */
+    grade_source?: string;
+  }>;
   error?: string;
 }
 
@@ -60,7 +69,7 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
   const [currentStudent, setCurrentStudent] = useState<any>(null);
   const [marks, setMarks] = useState<Record<number, { correct: boolean; score?: number }>>({});
   const [saving, setSaving] = useState(false);
-  const [recognized, setRecognized] = useState<Record<number, { answer: string; comment: string }>>({});
+  const [recognized, setRecognized] = useState<Record<number, { answer: string; comment: string; source?: string }>>({});
   const pyCache = useRef<Map<number, string>>(new Map());
   /**
    * 各学生的扫描进度：student_id -> { uploaded, total, scanned, registered }
@@ -232,10 +241,10 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
     if (appliedRef.current === myPaper.group_no) return;
     appliedRef.current = myPaper.group_no;
     const next: Record<number, { correct: boolean; score?: number }> = {};
-    const rec: Record<number, { answer: string; comment: string }> = {};
+    const rec: Record<number, { answer: string; comment: string; source?: string }> = {};
     for (const r of myPaper.results) {
       next[r.question_id] = { correct: r.is_correct, score: (!r.is_correct && r.score > 0) ? r.score : undefined };
-      rec[r.question_id] = { answer: r.recognized_answer || '', comment: r.comment || '' };
+      rec[r.question_id] = { answer: r.recognized_answer || '', comment: r.comment || '', source: r.grade_source };
     }
     setMarks(next);
     setRecognized(rec);
@@ -301,13 +310,13 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
     const p = (b.result?.papers || [])[0];
     if (p && Array.isArray(p.results) && p.results.length > 0) {
       const nextMarks: Record<number, { correct: boolean; score?: number }> = {};
-      const rec: Record<number, { answer: string; comment: string }> = {};
+      const rec: Record<number, { answer: string; comment: string; source?: string }> = {};
       p.results.forEach((r: any) => {
         nextMarks[r.question_id] = {
           correct: !!r.is_correct,
           score: (!r.is_correct && r.score > 0) ? r.score : undefined,
         };
-        rec[r.question_id] = { answer: r.recognized_answer || '', comment: r.comment || '' };
+        rec[r.question_id] = { answer: r.recognized_answer || '', comment: r.comment || '', source: r.grade_source };
       });
       setMarks(nextMarks);
       setRecognized(rec);
@@ -762,6 +771,7 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                       {recognized[q.id] && (
                         <span style={{ marginLeft: 12 }}>
                           <Tag color="purple" style={{ marginRight: 4 }}>AI识别:{recognized[q.id].answer}</Tag>
+                          {gradeSourceTag(recognized[q.id].source)}
                           <span style={{ color: '#999' }}>{recognized[q.id].comment}</span>
                         </span>
                       )}

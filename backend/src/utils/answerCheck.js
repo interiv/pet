@@ -124,7 +124,17 @@ function isAnswerCorrect(type, studentAnswer, correctAnswer) {
   return false;
 }
 
+/**
+ * 「有唯一答案、不需要 AI 评阅」的题型集合。
+ *
+ * 提交判分（routes/assignments.js）与纸质卷扫描判分（routes/paperScan.js）
+ * 都靠它把题分流：这一组走本文件的规则比对，其余交给 AI 评阅。
+ * 新增/调整题型时，这里要和 routes/assignments.js 的 isObjectiveType 一起改。
+ */
+const OBJECTIVE_TYPES = new Set(['choice_single', 'choice_multi', 'judgment']);
+
 module.exports = {
+  OBJECTIVE_TYPES,
   isAnswerCorrect,
   normalizeJudgment,
   normalizeMulti,

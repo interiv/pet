@@ -108,10 +108,16 @@ function parseAiJson(content) {
 
 /**
  * 评阅一道题。
+ *
+ * @param {object} qa 至少要有 question_bank_id / question_type / question_content /
+ *                    reference_answer / student_answer；image_url 可选。
+ *                    注意 image_url 为空时走纯文本模型——纸质卷扫描就是靠这点省下视觉模型开销。
+ * @param {(usage:object)=>void} [onUsage] token 用量回调。aiClient 只归一化 usage、
+ *                    不写 token_usage 表，记账由调用方负责；这里透出给需要统计的调用方。
  * @returns {Promise<{score:number, feedback:string, key_points:string[], improvements:string[]}>}
  * @throws 调用失败或返回无法解析时抛出，由调用方决定怎么处理
  */
-async function reviewOneQuestion(qa, config, timeoutMs, subject) {
+async function reviewOneQuestion(qa, config, timeoutMs, subject, onUsage) {
   const image = resolveAnswerImage(qa.image_url);
   const hasTextAnswer = String(qa.student_answer || '').trim().length > 0;
 
@@ -166,6 +172,10 @@ async function reviewOneQuestion(qa, config, timeoutMs, subject) {
     timeoutMs,
     label: '主观题评阅',
   });
+
+  if (typeof onUsage === 'function') {
+    try { onUsage(resp.usage || {}); } catch (e) { /* 记账失败不影响评阅结果 */ }
+  }
 
   const parsed = parseAiJson(resp.content);
   /**
