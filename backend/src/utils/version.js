@@ -5,8 +5,8 @@
  *   1) backend/VERSION 文件（发布时由 scripts/release.mjs 写入，最准）
  *   2) backend/package.json 的 version（老版本没有 VERSION 文件时回退）
  *
- * 另外提供运行环境探测（Docker / PM2 / systemd / 裸机），
- * 决定「升级完成后该怎么重启」，避免在容器里把自己重启掉。
+ * 另外提供运行环境探测（PM2 / systemd / 裸机），
+ * 决定「升级完成后该怎么重启」，没有进程托管时只给命令不自行重启。
  */
 const fs = require('fs');
 const path = require('path');
@@ -48,7 +48,7 @@ function ensureVersionFile() {
   return v;
 }
 
-/** 读一次 git 提交号（Docker 镜像里通常没有 .git，允许为 null） */
+/** 读一次 git 提交号（服务器直接跑源码时才有，允许为 null） */
 function getGitCommit() {
   if (process.env.GIT_COMMIT) return process.env.GIT_COMMIT;
   try {
@@ -61,22 +61,6 @@ function getGitCommit() {
   } catch (e) {
     return null;
   }
-}
-
-let inDockerCache = null;
-function isInDocker() {
-  if (inDockerCache !== null) return inDockerCache;
-  try {
-    if (fs.existsSync('/.dockerenv')) {
-      inDockerCache = true;
-      return true;
-    }
-    const cgroup = fs.readFileSync('/proc/1/cgroup', 'utf8');
-    inDockerCache = /docker|containerd|kubepods/.test(cgroup);
-  } catch (e) {
-    inDockerCache = false;
-  }
-  return inDockerCache;
 }
 
 let pm2NameCache = null;
@@ -108,6 +92,5 @@ module.exports = {
   getCurrentVersion,
   ensureVersionFile,
   getGitCommit,
-  isInDocker,
   getPm2Name,
 };

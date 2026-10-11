@@ -141,19 +141,7 @@
 
 ## 快速开始
 
-### 方式一：Docker 一键部署（推荐）
-
-```bash
-curl -L -O https://gitee.com/interim/pet/raw/main/deploy.sh
-chmod +x deploy.sh
-./deploy.sh
-```
-
-脚本会引导你输入域名、API Key，自动完成：安装 Docker → 拉取镜像 → 启动服务 → 配置 HTTPS。
-
-详见 [部署指南.md](./部署指南.md)。
-
-### 方式二：本地开发
+### 本地开发
 
 **环境要求**：Node.js >= 18、npm >= 9
 
@@ -171,7 +159,7 @@ npm install
 npm run dev                   # http://localhost:5173
 ```
 
-> ⚠️ `npm start` **只启动服务、不建表**。新服务器直接启动会出现「服务能开但所有接口报 `no such table`」。
+> ⚠️ 首次部署请先跑 `npm run migrate`。直接 `npm start` 会出现「服务能开但所有接口报 `no such table`」。
 
 **预置账号**（密码均为 `111111`）：
 
@@ -187,24 +175,30 @@ npm run dev                   # http://localhost:5173
 
 ## 部署
 
-生产环境跑 Docker，编排文件用 `image:` 而非 `build:`，从阿里云 ACR 拉取预构建镜像。
+生产环境直接跑 Node 进程，不用容器。前端 `npm run build` 后有两种托管方式：
 
-```bash
-# 开发机：构建并推送
-docker build -t registry.cn-hangzhou.aliyuncs.com/myfdocker/pet:latest .
-docker push registry.cn-hangzhou.aliyuncs.com/myfdocker/pet:latest
+| 方案 | 做法 | 访问 |
+|---|---|---|
+| **后端托管前端** | `dist/` 复制到 `backend/public/`，只跑后端一个进程 | `http://服务器:3000` |
+| **Nginx 托管前端** | Nginx root 指向 `dist/`，反代 `/api`、`/socket.io` 到后端 | `https://你的域名` |
 
-# 服务器：拉取并重启
-cd /opt/pet
-docker compose pull && docker compose up -d
+```powershell
+# 后端
+cd backend && npm install && node scripts/setup.js && npm start
+
+# 前端
+cd frontend && npm install && npm run build
 ```
 
 | 事项 | 说明 |
 |---|---|
-| 数据库 | 挂在宿主机 `./data:/app/data`，**重建容器不丢数据** |
-| 迁移 | 容器启动自动跑 `knex migrate:latest`，无需手动执行 |
-| 密钥 | 由 `docker-compose.yml` 的 `environment` 传入，不要打进镜像 |
+| 数据库 | 单文件 `backend/data/database.sqlite`，**复制这个文件就是全量备份** |
+| 迁移 | 服务启动自动跑 `knex migrate:latest`，无需手动执行 |
+| 密钥 | 写在 `backend/.env`，不要提交进仓库 |
 | CORS | `FRONTEND_URL` 必须与浏览器地址栏的**协议+域名+端口**完全一致，否则接口会被拒 |
+| 进程守护 | 建议用 pm2 / systemd / 宝塔 PM2 管理器，避免终端一关服务就停 |
+
+完整步骤（含宝塔 + Nginx 外网部署示例、HTTPS、故障对照表）见 [部署指南.md](./部署指南.md)。
 
 站点内置「管理后台 → 系统设置 → 软件升级」，填一次更新源地址后，管理员点「检查更新 → 立即升级」即可完成**程序 + 数据库结构**升级（自动备份、校验 sha256、失败可回滚）。流程见 [发布指南.md](./发布指南.md)。
 
@@ -259,8 +253,10 @@ pet/
 │       ├── pages/         # 页面
 │       ├── store/         # 状态管理
 │       └── utils/         # 工具（api 封装 / 权限判定 / 试卷生成）
-├── scripts/e2e/           # 端到端探针脚本
-├── deploy.sh              # 一键部署
+├── scripts/
+│   ├── e2e/               # 端到端探针脚本
+│   └── release.mjs        # 生成升级包与更新清单
+├── 部署指南.md             # 部署与运维
 └── docs/manual/            # 用户手册（教师 / 学生 / 管理员）配图
 ```
 
@@ -373,8 +369,7 @@ AI 配置均可在**管理后台 → AI 设置**中修改，存于数据库，**
 
 | 文档 | 内容 |
 |---|---|
-| [部署指南.md](./部署指南.md) | 部署方式选择、速查表、故障对照表、数据库迁移 |
-| [手动部署指南.md](./手动部署指南.md) | 不用 Docker 的部署方式（Windows + 宝塔） |
+| [部署指南.md](./部署指南.md) | 部署方式选择、Windows + 宝塔外网部署、速查表、故障对照表、数据库迁移 |
 | [发布指南.md](./发布指南.md) | 制作升级包与发布流程 |
 | [docs/冒烟清单.md](./docs/冒烟清单.md) | 上线前逐项验证清单 |
 

@@ -8,7 +8,7 @@ import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
 import { isSubjectiveType, questionTypeFullName, normalizeQuestionType, isFillBlankType, isObjectiveType } from '../utils/questionTypes';
 import { isQuestionAnswerable, isQuestionAnswered } from '../utils/answerState';
-import { splitContentByBlanks, toBlankValueArray, joinFillBlankAnswers } from '../utils/fillBlank';
+import { splitContentByBlanks, toBlankValueArray, joinFillBlankAnswers, splitFillBlankAnswer } from '../utils/fillBlank';
 import { compressImageWithThumb, formatSize } from '../utils/imageCompress';
 import dayjs from 'dayjs';
 import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined, ClockCircleOutlined, ExclamationCircleOutlined, SearchOutlined, DatabaseOutlined } from '@ant-design/icons';
@@ -110,6 +110,23 @@ const difficultyOptions = [
 // 显示一律走 utils/questionTypes.ts 的 questionTypeFullName，那里还兜着
 // composition（作文）与 mixed（混合题型），不会漏出英文代码。
 const questionTypeLabel = (type: string) => questionTypeFullName(type);
+
+/**
+ * 统计弹窗里「正确答案」显示什么。
+ *
+ * - judgment 库里存的是布尔串 true/false，直接吐出来老师还得自己翻译，转成「正确/错误」；
+ * - 填空题一题多空时答案在库里是逗号分隔的整串，原样显示成一坨，既看不出有几个空，
+ *   也正好踩中最容易被忽略的那条：答案是长文本时不换行（见统计弹窗的 Tag 样式说明）。
+ *   按 utils/fillBlank 的同一口径拆格后用「、」连起来，读起来才和题干的空位对得上。
+ */
+const statsAnswerText = (qs: any): string => {
+  if (qs.type === 'judgment') return qs.answer === 'true' ? '正确' : '错误';
+  if (isFillBlankType(qs.type)) return splitFillBlankAnswer(qs.answer).join('、') || String(qs.answer ?? '');
+  return String(qs.answer ?? '');
+};
+
+// 主观题没有唯一标准答案，措辞跟着学生端「你的答案 / 参考答案」那一栏走，避免老师以为这是机器判卷的标准答案。
+const statsAnswerLabel = (type: string): string => (isFillBlankType(type) ? '参考答案' : '答案');
 
 const defaultTypeSpec = () => ({ question_type: 'choice_single', count: 5, difficulty: 'medium' });
 
@@ -1593,6 +1610,28 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     }
   };
 
+  /**
+   * 点作业标题要跳到哪。
+   *
+   * 标题一直渲染成蓝色带下划线的 <a>，看着就是个链接，却从来没绑 onClick，
+   * 所以点了毫无反应——老师反馈「点标题没反应」很久了，有必要给它一个落点。
+   * 按角色选最顺手的出口，且刻意与「操作」列保持同一动作、同一口径，
+   * 免得同一个入口在桌面端和移动端、老师和学生身上各有一套 behavior：
+   *   老师/管理员 → 统计（与操作列一致，不看是不是自己布置的）；
+   *   学生        → 交过就看结果，没交就去作答（补交也走这条）。
+   */
+  const handleOpenFromTitle = (record: any) => {
+    if (isTeacher) {
+      handleViewStatistics(record);
+      return;
+    }
+    if (record.my_submission_id) {
+      handleViewResult(record);
+      return;
+    }
+    handleStartDoing(record);
+  };
+
   const renderQuestionForStudent = (q: Question, index: number) => {
     // 记录该题首次进入视野的时刻，用于统计作答耗时。
     // 只写 ref、不触发渲染，因此可在渲染期直接调用（不能在此用 useEffect，那会违反 Hooks 规则）。
@@ -2124,7 +2163,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
   const columns = [
     { title: '作业标题', dataIndex: 'title', key: 'title', render: (text: string, r: any) => (
       <div>
-        <a style={{ fontWeight: 500 }}>{text}</a>
+        <a style={{ fontWeight: 500 }} onClick={() => handleOpenFromTitle(r)}>{text}</a>
         {getTypeTag(r.assignment_type) && <span style={{ marginLeft: 6 }}>{getTypeTag(r.assignment_type)}</span>}
         {/* 跨教师作业可见开启时，标明这条是谁布置的，避免误以为是自己的作业 */}
         {isTeacher && r.teacher_id !== user?.id && r.teacher_name && (
@@ -2387,10 +2426,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         <div>
           {assignments.length === 0 && !loading && <Empty description="暂无作业" />}
           {assignments.map((record: any) => (
-            <Card key={record.id} size="small" style={{ marginBottom: 12, borderRadius: 8 }} onClick={() => {}}>
+            <Card key={record.id} size="small" style={{ marginBottom: 12, borderRadius: 8 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 500, fontSize: 15 }}>{record.title}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <a style={{ fontWeight: 500, fontSize: 15 }} onClick={() => handleOpenFromTitle(record)}>{record.title}</a>
                   <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     {getTypeTag(record.assignment_type)}
                     <Tag color="blue">{record.subject}</Tag>
@@ -3435,12 +3474,26 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                   <div>
                     {statsData.question_stats?.map((qs: any, i: number) => (
                       <div key={i} style={{ marginBottom: 12 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <span><strong>第{i + 1}题</strong> <Tag>{questionTypeFullName(qs.type)}</Tag>{qs.answer && <Tag color="green" style={{ marginLeft: 4 }}>答案：{qs.type === 'judgment' ? (qs.answer === 'true' ? '正确' : '错误') : qs.answer}</Tag>}</span>
-                          <span>{qs.correct_rate}% ({qs.correct_count}/{qs.total_answers})</span>
+                        {/* 原先这行是不换行的 flex：antd Tag 自带 white-space: nowrap，
+                            填空题和主观题的答案一长就顶出弹窗、看到右边被裁掉。
+                            改成 allow-wrap 的容器，并给答案 Tag 显式放开 nowrap + 断词。 */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
+                          <span style={{ flex: '1 1 280px', minWidth: 0, display: 'flex', alignItems: 'flex-start', flexWrap: 'wrap', gap: 4 }}>
+                            <span><strong>第{i + 1}题</strong></span>
+                            <Tag style={{ marginInlineEnd: 0 }}>{questionTypeFullName(qs.type)}</Tag>
+                            {qs.answer && (
+                              <Tag color="green" style={{ marginInlineEnd: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                                {statsAnswerLabel(qs.type)}：{statsAnswerText(qs)}
+                              </Tag>
+                            )}
+                          </span>
+                          <span style={{ whiteSpace: 'nowrap' }}>{qs.correct_rate}% ({qs.correct_count}/{qs.total_answers})</span>
                         </div>
                         <Progress percent={qs.correct_rate} status={qs.correct_rate >= 70 ? 'success' : qs.correct_rate >= 40 ? 'normal' : 'exception'} size="small" />
-                        <div style={{ color: '#999', fontSize: 12 }}>{qs.content}...</div>
+                        {/* 后端把题干截到 50 字，没截断时就不该挂省略号看着像被砍了 */}
+                        <div style={{ color: '#999', fontSize: 12, wordBreak: 'break-word' }}>
+                          {String(qs.content || '')}{String(qs.content || '').length >= 50 ? '...' : ''}
+                        </div>
                       </div>
                     )) || <Empty />}
                   </div>

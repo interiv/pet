@@ -74,10 +74,9 @@ try {
 const multer = require('multer');
 
 // 上传目录放在 data/ 下，而不是项目根的 uploads/。
-// 原因：Docker 部署只挂了 ./data:/app/data，而 uploads/ 既没进镜像也没挂卷——
-// 容器一重建，uploads 里已上传的文件会全部消失，但数据库里的记录还在，
-// 结果就是「记录说文件在，实际读不到」，纸质作业识别会集体失败。
-// data/ 目录本来就用于放数据库（已挂载卷），放这里天然跟着持久化。
+// 原因：data/ 是唯一会被备份、迁移时也会被保留的目录，用户上传的文件和数据库放在一起，
+// 避免出现「记录说文件在，实际读不到」——那会让纸质作业识别集体失败。
+// 而项目根的 uploads/ 不在备份范围内，重装或换机时最容易漏掉。
 const uploadsDir = path.join(__dirname, '../../data/uploads');
 try {
   if (!fs.existsSync(uploadsDir)) {

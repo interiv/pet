@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const { db } = require('../config/database');
 
-// 与 routes/assignments.js 保持一致：放在已挂载卷的 data/ 下，容器重建不丢文件
+// 与 routes/assignments.js 保持一致：放在 data/ 下，随数据库一起备份，不会丢文件
 const uploadsDir = path.join(__dirname, '../../data/uploads');
 let uploadsReady = true;
 try {

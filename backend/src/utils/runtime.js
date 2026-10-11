@@ -1,23 +1,13 @@
 /**
- * 探测部署方式，给出「升级完成后如何重启」的可靠指引。
+ * 探测运行方式，给出「升级完成后如何重启」的可靠指引。
  *
- * 原则：容器内绝不自杀式重启（容器重建会丢掉文件改动，且请求会中断），
+ * 原则：没有进程托管时绝不自杀式重启（重启会中断请求，且没人再把服务拉起来），
  * 只把命令告诉管理员，由他在服务器上执行；PM2 托管时允许一键重启。
  */
 const fs = require('fs');
-const { isInDocker, getPm2Name } = require('./version');
+const { getPm2Name } = require('./version');
 
 function detectRuntime() {
-  if (isInDocker()) {
-    return {
-      type: 'docker',
-      label: 'Docker 容器',
-      canSelfRestart: false,
-      restartCommand: 'docker compose pull && docker compose up -d',
-      note: '容器内改的文件会在容器重建后丢失。Docker 部署建议用上面的命令拉取新镜像；本功能可先做一次热更新，重建镜像后仍以镜像内容为准。',
-    };
-  }
-
   const pm2Name = getPm2Name();
   if (pm2Name) {
     return {

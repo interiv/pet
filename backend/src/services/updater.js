@@ -233,7 +233,6 @@ async function checkForUpdates() {
       needNpmInstall: manifest.needNpmInstall === true,
       npmInstallCommand: manifest.npmInstallCommand || 'cd backend && npm install --omit=dev',
       targets: manifest.targets || DEFAULT_TARGETS,
-      docker: manifest.docker || null,
     });
   } catch (error) {
     setPhase('idle', '', 0);

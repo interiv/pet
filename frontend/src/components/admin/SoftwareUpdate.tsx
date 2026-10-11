@@ -233,12 +233,6 @@ const SoftwareUpdate: React.FC = () => {
               {check.changelog}
             </div>
           )}
-          {check.docker && (
-            <div style={{ marginTop: 12, fontSize: 12, color: '#666' }}>
-              <WarningOutlined /> Docker 部署建议改用镜像升级：
-              <Text code copyable>{check.docker.image ? `docker pull ${check.docker.image} && docker compose up -d` : 'docker compose pull; docker compose up -d'}</Text>
-            </div>
-          )}
         </Card>
       )}
 

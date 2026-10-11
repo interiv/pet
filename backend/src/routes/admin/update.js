@@ -122,7 +122,7 @@ router.get('/log', authenticateToken, requireAdmin, (req, res) => {
   res.json({ logs: updater.readLog(30) });
 });
 
-// 重启服务：仅在检测到 PM2 托管时允许（容器/裸机不做自杀式重启，只返回命令）
+// 重启服务：仅在检测到 PM2 托管时允许（裸机/无托管时不做自杀式重启，只返回命令）
 router.post('/restart', authenticateToken, requireAdmin, (req, res) => {
   const runtime = detectRuntime();
   if (!runtime.canSelfRestart) {
