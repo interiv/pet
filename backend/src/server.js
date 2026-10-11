@@ -1,6 +1,13 @@
 // 最顶部加载：给所有 console 输出加上日期时间戳（必须在其他模块之前 require）
 require('./config/logger');
 
+// 进程守护：记录「服务端为什么会停」。
+// 必须在业务模块之前安装，否则启动阶段（连数据库、跑迁移、占端口）的异常兜不住。
+// 它会把未捕获异常 / 未处理的 Promise 拒绝 / 停止信号 / 退出码同时写到控制台和
+// data/logs/server-lifecycle.log（挂载卷里，重启不丢），用于事后定位。
+const processGuard = require('./config/processGuard');
+processGuard.install();
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -116,6 +123,11 @@ const io = new Server(server, {
 
 // 暴露 io 给各路由使用
 app.set('io', io);
+
+// 把 http server / socket.io 交给守护模块：
+// 端口被占用（EADDRINUSE）等 listen 失败会以 'error' 事件抛出，
+// 没人监听就是未捕获异常 → 进程静默退出。登记后会被完整记录到生命周期日志。
+processGuard.register({ server, io });
 
 // 中间件
 app.use(helmet()); // 安全头
@@ -282,26 +294,50 @@ io.on('connection', (socket) => {
     return isClassMember(socket.data.userId, parseInt(classId, 10));
   };
 
+  /**
+   * 包一层事件处理，任何单个客户端发来的畸形数据都只记一条日志，绝不冒泡成未捕获异常。
+   *
+   * 必须这么做的原因（真实的「服务端突然停掉」隐患）：
+   *   socket.io 的事件监听就是普通 EventEmitter 监听器。回调里抛错 →
+   *   冒到 process 层就是 uncaughtException → Node 进程**直接退出**。
+   *   而下面这些事件（battle-action / pet-interaction / typing-in-private）
+   *   任何人连上 socket 就能发，且原先直接解构 data 成员、没做空值保护：
+   *   客户端只要 `socket.emit('typing-in-private')`（不带任何参数），
+   *   `data.userId` 就抛 TypeError，整个后端进程随即退出——
+   *   表现正是「日志停在一条正常请求之后就没了」。
+   */
+  const safeOn = (event, handler) => {
+    socket.on(event, (payload) => {
+      try {
+        handler(payload);
+      } catch (error) {
+        console.error(`Socket 事件处理异常（事件 ${event}，用户 ${socket.data.userId || '未认证'}）:`, error);
+      }
+    });
+  };
+
   // 加入战斗房间
-  socket.on('join-battle', (battleId) => {
+  safeOn('join-battle', (battleId) => {
     socket.join(`battle:${battleId}`);
     console.log(`用户 ${socket.id} 加入战斗房间：${battleId}`);
   });
 
   // 战斗动作
-  socket.on('battle-action', (data) => {
-    socket.to(`battle:${data.battleId}`).emit('battle-action', data);
+  safeOn('battle-action', (data) => {
+    const d = data || {};
+    socket.to(`battle:${d.battleId}`).emit('battle-action', d);
   });
 
   // 宠物互动
-  socket.on('pet-interaction', (data) => {
-    socket.to(`user:${data.targetUserId}`).emit('pet-interaction', data);
+  safeOn('pet-interaction', (data) => {
+    const d = data || {};
+    socket.to(`user:${d.targetUserId}`).emit('pet-interaction', d);
   });
 
   // ==================== 聊天系统 ====================
 
   // 加入班级群聊房间（原先任何人可加入任意班群被动收消息）
-  socket.on('join-class-chat', (classId) => {
+  safeOn('join-class-chat', (classId) => {
     if (!canAccessClassRoom(classId)) {
       console.warn(`⛔ 用户 ${socket.data.userId || '未认证'} 无权加入班级群聊：${classId}`);
       return;
@@ -311,13 +347,13 @@ io.on('connection', (socket) => {
   });
 
   // 离开班级群聊
-  socket.on('leave-class-chat', (classId) => {
+  safeOn('leave-class-chat', (classId) => {
     socket.leave(`class:${classId}`);
     console.log(`用户 ${socket.id} 离开班级群聊：${classId}`);
   });
 
   // 班级群聊消息（实时广播）
-  socket.on('send-class-message', (data) => {
+  safeOn('send-class-message', (data) => {
     const { classId, message } = data || {};
     if (!canAccessClassRoom(classId)) {
       console.warn(`⛔ 用户 ${socket.data.userId || '未认证'} 无权向班级群 ${classId} 发消息`);
@@ -329,7 +365,7 @@ io.on('connection', (socket) => {
   // 加入私聊房间（用两个用户的ID排序组合作为房间名）
   // 前端历史上只传了 target_user_id，服务端却解构 userId1/userId2，导致房间名算成
   // private:undefined-undefined，双方都收不到实时私聊。这里兼容两种入参。
-  socket.on('join-private-chat', (payload) => {
+  safeOn('join-private-chat', (payload) => {
     if (!socket.data.userId) return;
     const userId1 = payload?.userId1 ?? socket.data.userId;
     const userId2 = payload?.userId2 ?? payload?.target_user_id;
@@ -340,24 +376,25 @@ io.on('connection', (socket) => {
   });
 
   // 私聊消息（实时推送）
-  socket.on('send-private-message', (data) => {
+  safeOn('send-private-message', (data) => {
     if (!socket.data.userId) return;
     const { targetUserId, message } = data || {};
     // 只能往自己参与的私聊里发
-    if (!targetUserId || Number(message?.user_id) !== Number(socket.data.userId)) return;
+    if (!targetUserId || !message || Number(message.user_id) !== Number(socket.data.userId)) return;
     const roomId = `private:${[message.user_id, targetUserId].sort((a, b) => a - b).join('-')}`;
     io.to(roomId).emit('new-private-message', message);
   });
 
   // 用户正在输入中
-  socket.on('typing-in-class', (data) => {
+  safeOn('typing-in-class', (data) => {
     if (!canAccessClassRoom(data?.classId)) return;
     socket.to(`class:${data.classId}`).emit('user-typing', { username: socket.data.username || '' });
   });
 
-  socket.on('typing-in-private', (data) => {
-    const roomId = `private:${[data.userId, data.targetUserId].sort((a, b) => a - b).join('-')}`;
-    socket.to(roomId).emit('user-typing', { username: data.username });
+  safeOn('typing-in-private', (data) => {
+    const d = data || {};
+    const roomId = `private:${[d.userId, d.targetUserId].sort((a, b) => a - b).join('-')}`;
+    socket.to(roomId).emit('user-typing', { username: d.username });
   });
 
   // 断开连接
@@ -371,7 +408,14 @@ const PORT = process.env.PORT || 3000;
 
 // 启动前自动执行数据库迁移：
 // 传文件 + 重启即可完成建表/补列/老数据回填；迁移失败只记日志，不阻断服务启动（管理后台会给出提示）
-runMigrations().finally(() => {
+//
+// 这里补 .catch：runMigrations 内部虽然自己 try/catch 了迁移错误，但它 finally 里还会
+// await knex.destroy()，一旦那一步拒绝（如数据库文件权限/句柄异常），整条链就变成一次
+// 未处理的 Promise 拒绝 —— Node ≥15 默认会把它当成致命错误直接结束进程。
+runMigrations().catch((error) => {
+  console.error('❌ 数据库迁移链路出现未处理错误（服务仍会尝试启动）:', error && error.message ? error.message : error);
+  processGuard.logEvent('ERROR', `数据库迁移链路未处理错误：${error && error.message ? error.message : error}`, error);
+}).finally(() => {
   // 基础数据兜底：启动只跑迁移、不跑 seed，会导致成就/宠物/道具等基础数据为空
   //（典型表现：后台一切正常，但学生的「成就」列表是空的、宠物选不了）
   // 这里只补空表，绝不覆盖已有数据，因此不会影响管理员自定义的内容。
@@ -395,6 +439,9 @@ runMigrations().finally(() => {
   server.listen(PORT, () => {
     console.log(`服务器运行在端口 ${PORT}`);
     console.log(`环境：${process.env.NODE_ENV}`);
+    // 每次重启都在生命周期日志里留一条「启动完成」标记：
+    // 之后对着日志看，就能一眼分辨「进程是重启过」还是「压根没起来」。
+    processGuard.logEvent('INFO', `✅ 服务启动完成，监听端口 ${PORT}（启动时间 ${new Date().toISOString()}）`);
   });
 });
 
