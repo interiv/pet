@@ -1,5 +1,5 @@
 import { isSubjectiveType, normalizeQuestionType } from './questionTypes';
-import { countBlanks, isFillBlankAnswered } from './fillBlank';
+import { hasAnyBlankFilled } from './fillBlank';
 
 /**
  * 「一道题有没有作答」的唯一判定口径。
@@ -67,11 +67,15 @@ export const isQuestionAnswered = (
   const ans = studentAnswers[q.id!];
   const type = normalizeQuestionType(q.type);
 
-  // 填空题单独走按空判定：数组里每个空都要非空，
-  // 逗号整串形态（历史数据）则交给 isFillBlankAnswered 按空数拆开看。
+  // 填空题单独走判定：只要有任意一空填了内容就算作答。
+  //
+  // 【为什么不再要求逐空填满】填空题已改为 AI 评阅（见 utils/questionTypes.ts），
+  // 漏填的空 AI 会按未作答扣分 —— 那是「这题得分低」，不是「这道题不让交」。
+  // 两件事混在一起，就会复现那个老问题：界面上还空着一格，提交却被拦在门外，
+  // 学生既不知道该填哪一格，也看不到任何反馈。
+  // 但一个字都没写仍然算未作答：这道题连评都没必要评。
   if (type === 'fill_blank') {
-    if (isFillBlankAnswered(ans, countBlanks(q.content))) return true;
-    return false;
+    return hasAnyBlankFilled(ans);
   }
 
   const hasText = !(ans === undefined || ans === null

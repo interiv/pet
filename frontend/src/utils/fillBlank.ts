@@ -97,6 +97,10 @@ export const joinFillBlankAnswers = (values: unknown[]): string =>
  *
  * 空数不一致（题干有 3 个空、只填了 2 个）同样算没做完，提交时点名提醒，
  * 而不是提交后被判错——「说没做完」和「说做错了」在学生眼里是两件事。
+ *
+ * 【注意】作业提交校验已经不再用这个严格口径（见 utils/answerState.ts）：
+ * 填空题改为 AI 评阅后，漏填的空由 AI 扣分，不该拦着不让人交。
+ * 这里保留给「按空逐个提示还差几格」的展示用。
  */
 export const isFillBlankAnswered = (values: unknown, blankCount: number): boolean => {
   const list = Array.isArray(values) ? values : splitFillBlankAnswer(values);
@@ -105,6 +109,19 @@ export const isFillBlankAnswered = (values: unknown, blankCount: number): boolea
     return list.slice(0, blankCount).every(v => normalizeBlankValue(v) !== '');
   }
   return list.some(v => normalizeBlankValue(v) !== '');
+};
+
+/**
+ * 至少有一格填了内容。
+ *
+ * 用来回答「这道题要不要评」而不是「这道题做对了吗」。
+ * 数组形态按格看；逗号整串形态（历史数据）必须按逗号拆段后再看 ——
+ * 直接对整串去空白的话，「  ,  」这种只有分隔符的情况会被当成「填过了」，
+ * 结果是一道完全空白的题被送去评测、还占掉一次 AI 调用。
+ */
+export const hasAnyBlankFilled = (values: unknown): boolean => {
+  if (Array.isArray(values)) return values.some(v => normalizeBlankValue(v) !== '');
+  return splitFillBlankAnswer(values).some(v => normalizeBlankValue(v) !== '');
 };
 
 /**

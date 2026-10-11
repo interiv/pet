@@ -6,12 +6,12 @@ import { readPendingGenTask, writePendingGenTask, clearPendingGenTask } from '..
 import { useAuthStore } from '../store/authStore';
 import { buildPaperHtml, openPaperPrintWindow } from '../utils/printPaper';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
-import { isSubjectiveType, questionTypeFullName, normalizeQuestionType } from '../utils/questionTypes';
+import { isSubjectiveType, questionTypeFullName, normalizeQuestionType, isFillBlankType, isObjectiveType } from '../utils/questionTypes';
 import { isQuestionAnswerable, isQuestionAnswered } from '../utils/answerState';
 import { splitContentByBlanks, toBlankValueArray, joinFillBlankAnswers } from '../utils/fillBlank';
 import { compressImageWithThumb, formatSize } from '../utils/imageCompress';
 import dayjs from 'dayjs';
-import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined, ClockCircleOutlined, SearchOutlined, DatabaseOutlined } from '@ant-design/icons';
+import { ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined, BookOutlined, EyeOutlined, BarChartOutlined, RobotOutlined, LoadingOutlined, CameraOutlined, StopOutlined, EditOutlined, PrinterOutlined, FileTextOutlined, PlusOutlined, DeleteOutlined, ClockCircleOutlined, ExclamationCircleOutlined, SearchOutlined, DatabaseOutlined } from '@ant-design/icons';
 import CelebrationAnimation from './CelebrationAnimation';
 import PaperRegister from './PaperRegister';
 import PaperBatchRegister from './PaperBatchRegister';
@@ -1093,15 +1093,18 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         unanswerable.push(`第 ${displayNo} 题（${questionTypeFullName(q.type)}）`);
       } else if (!isQuestionAnswered(q, studentAnswers, uploadedImages)) {
         allAnswered = false;
-        const blanks = normalizeQuestionType(q.type) === 'fill_blank'
+        // 填空题只有「一个字都没填」才会走到这里（改了 AI 评阅后不再要求逐空填满），
+        // 这时写清有几格空着，比干巴巴一句「没作答」有用。
+        const blanks = isFillBlankType(q.type)
           ? splitContentByBlanks(q.content).blankCount
           : 0;
-        missing.push(blanks > 1 ? `第 ${displayNo} 题（${blanks} 个空未填满）` : `第 ${displayNo} 题`);
+        missing.push(blanks > 0 ? `第 ${displayNo} 题（${blanks} 个空都没填）` : `第 ${displayNo} 题`);
       }
       answers.push({
         question_id: q.id,
         // 填空题/多选题在界面上按「格」存成数组，提交时统一拼回后端约定的整串。
-        // 后端 answerCheck.js 会按逗号重新拆段逐空比对，协议没变。
+        // 填空题这段整串现在是交给 AI 判语义的（后端 subjectiveReview），
+        // 多选题仍由 answerCheck.js 按字符比对，协议没变。
         answer: Array.isArray(ans) ? joinFillBlankAnswers(ans) : ans,
         // 交原图：AI 评阅要读手写笔迹，缩略图会读不清
         image_url: imageUrl,
@@ -1154,8 +1157,8 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
         setShowCelebration(true);
         setTimeout(() => { setShowCelebration(false); }, 5000);
       } else {
-        // 主观题：已提交，AI 在后台评阅。让学生该干嘛干嘛，别守着等。
-        message.info('已提交！主观题正在由 AI 评阅，完成后可在作业列表看到分数');
+        // 主观题 / 填空题：已提交，AI 在后台评阅。让学生该干嘛干嘛，别守着等。
+        message.info('已提交！AI 正在评阅你的填空题和主观题，完成后可在作业列表看到分数');
       }
     } catch (e: any) {
       message.error(e.response?.data?.error || '提交失败');
@@ -1318,7 +1321,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     if (!editingQuestion) return;
     
     const newOptions = values.options ? values.options.split('\n').filter((opt: string) => opt.trim()) : null;
-    const isObjective = ['choice_single', 'choice_multi', 'judgment', 'fill_blank'].includes(editingQuestion.type);
+    // 走 utils/questionTypes 的口径，不要再抄一份题型数组：
+    // 填空题改成 AI 评阅后已经是主观题了，这里漏改会让它的答案被当成必填的
+    // 「正确答案」处理，与 AI 判分对不上。
+    const isObjective = isObjectiveType(editingQuestion.type);
     const updatedQuestion: Question = {
       ...editingQuestion,
       content: values.content,
@@ -1597,11 +1603,17 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     // 原先一个都匹配不上 —— 既不渲染输入框，提交校验又报「题型无法作答，请联系老师」，
     // 学生和老师都查不出是哪的问题。归一化后与 utils/questionTypes 的兼容口径一致。
     const qType = normalizeQuestionType(q.type);
+    // 填空题现在也算「主观题」（由 AI 评阅，见 utils/questionTypes.ts），
+    // 但它的作答控件不是文本框，而是按空插在题干里的输入框 —— 见下面 blankInfo。
+    // 这里拆出「要出文本框的主观题」，避免同一个题上同时出现按空输入框 +
+    // 大文本框 + 拍照按钮：两个控件存的是同一个 studentAnswers[q.id]，
+    // 一个存数组一个存字符串，学生填了左边右边还是空的。
     const isSubjectiveForAnswer = isSubjectiveType(qType);
+    const needsTextAnswer = isSubjectiveForAnswer && !isFillBlankType(qType);
     const isChoiceSingle = qType === 'choice_single';
     const isChoiceMulti = qType === 'choice_multi';
     const isJudgment = qType === 'judgment' || qType === 'true_false';
-    const isFillBlank = qType === 'fill_blank';
+    const isFillBlank = isFillBlankType(qType);
     // 提交校验用的也是这个判定：渲染不出控件的题不再静默地只留一个题干，
     // 学生至少能立刻看出「这题没法作答」，而不是提交时才发现过不去。
     const isAnswerable = isQuestionAnswerable(q);
@@ -1762,7 +1774,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
           </div>
         )}
 
-        {isSubjectiveForAnswer && !isTeacher && (
+        {needsTextAnswer && !isTeacher && (
           <>
             <TextArea
               rows={4}
@@ -1963,37 +1975,82 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
     );
   };
 
-  const renderResultItem = (r: any, index: number) => (
-    <Card key={index} size="small" style={{ marginBottom: 12, borderLeft: `4px solid ${r.is_correct ? '#52c41a' : '#ff4d4f'}` }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ marginBottom: 4 }}>
-            <strong>第{index + 1}题</strong>
-            {r.is_correct ? (
-              <Tag icon={<CheckCircleOutlined />} color="success">正确 ✓</Tag>
-            ) : (
-              <Tag icon={<CloseCircleOutlined />} color="error">错误 ✗</Tag>
+  /**
+   * 一道题的判读结果卡片。
+   *
+   * 【为什么改成三态】填空题改由 AI 评阅后，这道题不再有「非对即错」：
+   * AI 会给 0~100 分，「全对」「答错」之间还有一大片部分正确。
+   * 沿用原来那个二值标签，AI 打了 68 分也会被标成红色「错误 ✗」，
+   * 学生看到的是「我明明差不多答对了，怎么全错」。
+   * 另一个必须处理的：还在等 AI 评的题，is_correct 是 NULL，
+   * 直接判成 false 会显示成「错误 ✗ / 你的答案：…」，比不给分更伤。
+   */
+  const renderResultItem = (r: any, index: number) => {
+    const pending = r.is_correct === null || r.is_correct === undefined;
+    const score = Number(r.score) || 0;
+    const maxScore = Number(r.max_score) || 0;
+    const ratio = maxScore > 0 ? score / maxScore : 0;
+    const level: 'pending' | 'correct' | 'partial' | 'wrong' = pending
+      ? 'pending'
+      : ratio >= 0.6 ? 'correct'
+        : ratio > 0 ? 'partial'
+          : 'wrong';
+    const accent = { pending: '#faad14', correct: '#52c41a', partial: '#fa8c16', wrong: '#ff4d4f' }[level];
+
+    // AI 评语：后端把 feedback 存成 { feedback, key_points, improvements }；
+    // 评阅失败时存成 { error }。两种都要能让学生看见。
+    const fb = (r.feedback && typeof r.feedback === 'object') ? r.feedback : null;
+    const aiComment = fb?.feedback || fb?.error || '';
+    const keyPoints: string[] = Array.isArray(fb?.key_points) ? fb.key_points : [];
+    const improvements: string[] = Array.isArray(fb?.improvements) ? fb.improvements : [];
+
+    return (
+      <Card key={index} size="small" style={{ marginBottom: 12, borderLeft: `4px solid ${accent}` }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ marginBottom: 4 }}>
+              <strong>第{index + 1}题</strong>
+              {level === 'correct' && <Tag icon={<CheckCircleOutlined />} color="success">正确 ✓</Tag>}
+              {level === 'partial' && <Tag icon={<ExclamationCircleOutlined />} color="orange">部分正确</Tag>}
+              {level === 'wrong' && <Tag icon={<CloseCircleOutlined />} color="error">错误 ✗</Tag>}
+              {level === 'pending' && <Tag icon={<ClockCircleOutlined />} color="processing">AI 评阅中</Tag>}
+            </div>
+            <div style={{ color: '#666', marginBottom: 6, lineHeight: 1.6 }}>{r.question_content}</div>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              <span>你的答案：<span style={{ color: level === 'wrong' ? '#ff4d4f' : level === 'pending' ? '#666' : '#52c41a', fontWeight: 600, fontSize: 14 }}>{String(r.user_answer ?? '(未作答)')}</span></span>
+              {r.correct_answer && level !== 'correct' && (
+                <span>{isFillBlankType(r.type) ? '参考答案' : '正确答案'}：<span style={{ color: '#52c41a', fontWeight: 600, fontSize: 14 }}>{String(r.correct_answer)}</span></span>
+              )}
+            </div>
+          </div>
+          <div style={{ textAlign: 'right', minWidth: 60 }}>
+            <Statistic
+              title="得分"
+              value={pending ? '—' : Math.round(score)}
+              suffix={maxScore > 0 ? `/ ${Math.round(maxScore)}` : ''}
+              valueStyle={{ fontSize: 18, color: accent }}
+            />
+          </div>
+        </div>
+        {aiComment && (
+          <div style={{ marginTop: 10, padding: '10px 14px', background: '#e6f4ff', borderRadius: 8, fontSize: 13, lineHeight: 1.7, border: '1px solid #91caff' }}>
+            <strong style={{ color: '#0958d9' }}>🤖 AI 评阅：</strong><span style={{ color: '#333' }}>{aiComment}</span>
+            {keyPoints.length > 0 && (
+              <div style={{ marginTop: 4, color: '#555' }}>得分点：{keyPoints.join('；')}</div>
+            )}
+            {improvements.length > 0 && (
+              <div style={{ marginTop: 2, color: '#555' }}>可以改进：{improvements.join('；')}</div>
             )}
           </div>
-          <div style={{ color: '#666', marginBottom: 6, lineHeight: 1.6 }}>{r.question_content}</div>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            <span>你的答案：<span style={{ color: r.is_correct ? '#52c41a' : '#ff4d4f', fontWeight: 600, fontSize: 14 }}>{String(r.user_answer ?? '(未作答)')}</span></span>
-            {!r.is_correct && r.correct_answer && (
-              <span>正确答案：<span style={{ color: '#52c41a', fontWeight: 600, fontSize: 14 }}>{String(r.correct_answer)}</span></span>
-            )}
+        )}
+        {(r.explanation || r.analysis) && (
+          <div style={{ marginTop: 10, padding: '10px 14px', background: '#f6ffed', borderRadius: 8, fontSize: 13, lineHeight: 1.7, border: '1px solid #b7eb8f' }}>
+            <strong style={{ color: '#389e0d' }}>💡 解析：</strong><span style={{ color: '#333' }}>{r.explanation || r.analysis}</span>
           </div>
-        </div>
-        <div style={{ textAlign: 'right', minWidth: 60 }}>
-          <Statistic title="得分" value={Math.round(r.score || 0)} suffix={`/ ${Math.round(r.max_score || 0)}`} valueStyle={{ fontSize: 18, color: r.is_correct ? '#52c41a' : '#ff4d4f' }} />
-        </div>
-      </div>
-      {(r.explanation || r.analysis) && (
-        <div style={{ marginTop: 10, padding: '10px 14px', background: '#f6ffed', borderRadius: 8, fontSize: 13, lineHeight: 1.7, border: '1px solid #b7eb8f' }}>
-          <strong style={{ color: '#389e0d' }}>💡 解析：</strong><span style={{ color: '#333' }}>{r.explanation || r.analysis}</span>
-        </div>
-      )}
-    </Card>
-  );
+        )}
+      </Card>
+    );
+  };
 
   const getEncouragement = (score: number) => {
     if (score >= 95) return { text: '太棒了！满分接近！继续保持！🎉', color: '#52c41a' };
@@ -3258,7 +3315,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             {submitResultAwaitingReview ? (
               <div style={{ marginBottom: 20, padding: '26px 16px', textAlign: 'center', background: '#fafafa', borderRadius: 8 }}>
                 <Spin />
-                <div style={{ marginTop: 12, color: '#666' }}>AI 正在评阅你的主观题，评完就能看到分数</div>
+                <div style={{ marginTop: 12, color: '#666' }}>AI 正在评阅你的填空题和主观题，评完就能看到分数</div>
               </div>
             ) : (
               <Row gutter={16} style={{ marginBottom: 20 }}>
@@ -3312,7 +3369,7 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                   type="info"
                   showIcon
                   style={{ marginTop: 12 }}
-                  message="已提交，AI 正在后台评阅你的主观题"
+                  message="已提交，AI 正在后台评阅你的填空题和主观题"
                   description={
                     <span>
                       通常一两分钟内完成，你可以直接关掉去做别的。
@@ -3494,22 +3551,25 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             </Form.Item>
           )}
 
-          {editingQuestion && editingQuestion.type === 'fill_blank' && (
-            <Form.Item
-              name="answer"
-              label="正确答案"
-              extra="多个空位时，答案之间用英文逗号分隔，顺序要与空位一致"
-              rules={[{ required: true, message: '请输入正确答案' }]}
-            >
-              <Input placeholder="例如：北京 或 牛顿,第一定律" />
-            </Form.Item>
-          )}
-
-          {/* 主观题都要能填评阅标准，作文（composition）原先漏了，改不了评分参考 */}
+          /**
+           * 主观题（含填空题）都要能填评阅标准。
+           *
+           * 填空题原先在这里有一份「正确答案 + 必填 + 逗号分隔」的独立表单，
+           * 改成 AI 评阅后必须删掉：它和下面这份主观题表单同时渲染，
+           * 会出现两个 name="answer" 的 Form.Item 互相覆盖取值，
+           * 而且「必须逐字写对」的提示与 AI 判分也不再相符。
+           * 现在统一走下面这一份，只是填空题的 extra 换一句说明。
+           */
           {editingQuestion && isSubjectiveType(editingQuestion.type) && (
             <>
-              <Form.Item name="answer" label="参考答案 / 评阅标准" extra="替换AI生成的默认评阅标准，用于主观题评分参考">
-                <TextArea rows={4} placeholder="请输入参考答案或评分标准..." />
+              <Form.Item
+                name="answer"
+                label={isFillBlankType(editingQuestion.type) ? '参考答案（AI 判分依据）' : '参考答案 / 评阅标准'}
+                extra={isFillBlankType(editingQuestion.type)
+                  ? '一题多空时用英文逗号分隔，顺序与空位一致。AI 会按意思判断，学生换个分隔符、加个空格都不会判错'
+                  : '替换AI生成的默认评阅标准，用于主观题评分参考'}
+              >
+                <TextArea rows={4} placeholder={isFillBlankType(editingQuestion.type) ? '例如：北京  或  牛顿,第一定律' : '请输入参考答案或评分标准...'} />
               </Form.Item>
               <Form.Item name="analysis" label="答题思路指导" extra="帮助学生理解答题方向">
                 <TextArea rows={3} placeholder="请输入答题思路..." />

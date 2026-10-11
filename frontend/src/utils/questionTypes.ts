@@ -43,12 +43,28 @@ const TYPE_FULL_NAME: Record<string, string> = {
 
 /**
  * 主观题：答案不唯一，由 AI 评阅或教师自评，不参与自动判对错。
- * 与后端 assignments.js、answerCheck.js 的判定保持一致。
+ * 与后端 assignments.js 的 isObjectiveType 保持镜像（它是本表的取反集）。
+ *
+ * 【填空题为什么在这里】它曾经是客观题：服务端按逗号拆段逐空精确比对，
+ * 于是「北京 上海」「北京、上海」「牛顿, 第一定律」全被判 0 分，
+ * 而这些写法在老师和学生眼里都是对的。现在改为 AI 按语义判分，
+ * 容忍分隔符、空格、顺序的差异；AI 不可用时后端会退回规则比对兜底。
+ * 与后端 backend/src/routes/assignments.js 的 isObjectiveType 必须同步。
  */
-const SUBJECTIVE_TYPES = new Set(['essay', 'composition']);
+const SUBJECTIVE_TYPES = new Set(['essay', 'composition', 'fill_blank']);
 
-/** 客观题：有标准答案，可自动判分 */
-const OBJECTIVE_TYPES = new Set(['choice_single', 'choice_multi', 'judgment', 'fill_blank']);
+/** 客观题：有唯一标准答案，提交时即可规则判分、立刻出分 */
+const OBJECTIVE_TYPES = new Set(['choice_single', 'choice_multi', 'judgment']);
+
+/**
+ * 错题本重做时需要「学生自评对错」的题型。
+ *
+ * 为什么不能直接用 isSubjectiveType：作文类自评是合理的（开放题没有唯一答案，
+ * 判分本来就该由老师或学生本人来）；但填空题有标准答案，错题本重做走的是
+ * 同步接口 POST /wrong/retry，直接与参考答案比对即可，让学生「自己给自己判对错」
+ * 纯属多一道坎，还会让人以为系统不管对错。
+ */
+const SELF_MARK_TYPES = new Set(['essay', 'composition']);
 
 /** 短中文标签；查不到就原样返回（不猜、不吞异常，调用方一眼能看出是脏数据） */
 export function questionTypeLabel(type?: string | null): string {
@@ -70,14 +86,30 @@ export function questionTypeColor(type?: string | null): string {
   return (t && TYPE_STYLE[t]?.color) || 'default';
 }
 
-/** 是否主观题（essay / composition） */
+/** 是否主观题（essay / composition / fill_blank） */
 export function isSubjectiveType(type?: string | null): boolean {
   return SUBJECTIVE_TYPES.has(normalizeQuestionType(type));
 }
 
-/** 是否客观题 */
+/** 是否客观题（提交即可判分：单选 / 多选 / 判断） */
 export function isObjectiveType(type?: string | null): boolean {
   return OBJECTIVE_TYPES.has(normalizeQuestionType(type));
+}
+
+/** 错题本重做时是否需要学生自评对错（作文类；填空题不需要，见 SELF_MARK_TYPES） */
+export function needsSelfMarkRetry(type?: string | null): boolean {
+  return SELF_MARK_TYPES.has(normalizeQuestionType(type));
+}
+
+/**
+ * 是否填空题。
+ *
+ * 单独给一个出口，是因为「填空题有按空渲染的输入框、答案要按空拼接」这类分支
+ * 散落在三四个组件里，各自写一遍 `type === 'fill_blank'` 又会漏掉归一化 ——
+ * 题库里存成 'Fill_Blank' 时，控件就不渲染了。
+ */
+export function isFillBlankType(type?: string | null): boolean {
+  return normalizeQuestionType(type) === 'fill_blank';
 }
 
 /**

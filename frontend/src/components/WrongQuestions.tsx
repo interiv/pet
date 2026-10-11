@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Table, Tag, Button, Card, Empty, Space, message, Modal, Alert, Badge, Select, Row, Col, Statistic, Progress, Radio, Input } from 'antd';
 import { assignmentAPI, knowledgePointAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
-import { isSubjectiveType, questionTypeColor, questionTypeLabel } from '../utils/questionTypes';
+import { needsSelfMarkRetry, isFillBlankType, questionTypeColor, questionTypeLabel } from '../utils/questionTypes';
 import dayjs from 'dayjs';
 import { BookOutlined, CheckCircleOutlined, EyeOutlined, AimOutlined, ThunderboltOutlined, RedoOutlined } from '@ant-design/icons';
 
@@ -111,7 +111,16 @@ const WrongQuestions: React.FC = () => {
   })();
 
   const currentRetry = retryList[retryIndex];
-  const isSubjectiveRetry = isSubjectiveType(currentRetry?.question_type);
+  /**
+   * 错题本重做只有「作文类」需要学生自评对错。
+   *
+   * 不能直接用 isSubjectiveType：填空题已经算主观题了（作业里由 AI 评阅），
+   * 但错题本重做走的是同步接口 POST /wrong/retry，直接与参考答案比对即可。
+   * 若在这里也要求自评，学生填完答案还要自己判一遍对错才能提交 ——
+   * 既多一道坎，又会让人以为「系统不管我填的对不对」。
+   * 口径见 utils/questionTypes.ts 的 needsSelfMarkRetry。
+   */
+  const isSubjectiveRetry = needsSelfMarkRetry(currentRetry?.question_type);
   const isChoiceRetry = currentRetry?.question_type === 'choice_single' || currentRetry?.question_type === 'choice_multi';
 
   const submitRetry = async () => {
@@ -603,9 +612,9 @@ const WrongQuestions: React.FC = () => {
                   </Radio.Group>
                 )}
 
-                {currentRetry.question_type === 'fill_blank' && (
+                {isFillBlankType(currentRetry.question_type) && (
                   <Input
-                    placeholder="请输入答案"
+                    placeholder="请输入答案（多个空的答案之间用英文逗号分隔）"
                     value={retryAnswers[currentRetry.id] || ''}
                     onChange={(e) => setRetryAnswers(prev => ({ ...prev, [currentRetry.id]: e.target.value }))}
                   />

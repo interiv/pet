@@ -81,28 +81,32 @@ describe('isQuestionAnswered', () => {
     expect(isQuestionAnswered(q({ type: 'fill_blank' }), { 1: ' x ' }, {})).toBe(true);
   });
 
-  it('一题多空的填空题必须逐空填满才算作答', () => {
+  it('一题多空的填空题：填了任意一格就算作答，不再要求逐空填满', () => {
+    // 填空题改由 AI 评阅后，漏填的空 AI 会按未作答扣分，
+    // 那是「得分低」，不该拦着不让人提交 —— 否则又回到
+    // 「界面还空着一格、提交却被拦在门外」的老憋屈。
     const fb = q({ type: 'fill_blank', options: null, content: '中国的首都是____，最大城市是____。' });
     expect(isQuestionAnswered(fb, {}, {})).toBe(false);
-    // 只填了第 1 空：界面上确实还有一格空着，报「没作答」是对的
-    expect(isQuestionAnswered(fb, { 1: ['北京'] }, {})).toBe(false);
-    expect(isQuestionAnswered(fb, { 1: ['北京', ''] }, {})).toBe(false);
-    expect(isQuestionAnswered(fb, { 1: ['北京', '   '] }, {})).toBe(false);
+    expect(isQuestionAnswered(fb, { 1: ['北京'] }, {})).toBe(true);
+    expect(isQuestionAnswered(fb, { 1: ['北京', ''] }, {})).toBe(true);
+    expect(isQuestionAnswered(fb, { 1: ['北京', '   '] }, {})).toBe(true);
     expect(isQuestionAnswered(fb, { 1: ['北京', '上海'] }, {})).toBe(true);
-    // 多了第三个空不算「没做完」，判分阶段处理即可
     expect(isQuestionAnswered(fb, { 1: ['北京', '上海', '广州'] }, {})).toBe(true);
+    // 整格全空（只有空串/空白）仍然算未作答：这道题连评都没必要评
+    expect(isQuestionAnswered(fb, { 1: ['', '  '] }, {})).toBe(false);
   });
 
-  it('识别不出空位的填空题退回整串判定（历史数据不能因此没法作答）', () => {
+  it('识别不出空位的填空题按整串判定（历史数据不能因此没法作答）', () => {
     const fb = q({ type: 'fill_blank', options: null, content: '光合作用的场所是？' });
     expect(isQuestionAnswered(fb, { 1: ['叶绿体'] }, {})).toBe(true);
     expect(isQuestionAnswered(fb, { 1: '' }, {})).toBe(false);
   });
 
-  it('填空题的逗号整串按空拆开判，每空都要非空', () => {
+  it('填空题的逗号整串形态：有内容即可作答', () => {
     const fb = q({ type: 'fill_blank', options: null, content: 'a____b____' });
-    expect(isQuestionAnswered(fb, { 1: '甲' }, {})).toBe(false);
+    expect(isQuestionAnswered(fb, { 1: '甲' }, {})).toBe(true);
     expect(isQuestionAnswered(fb, { 1: '甲,乙' }, {})).toBe(true);
+    expect(isQuestionAnswered(fb, { 1: ' , ' }, {})).toBe(false);
   });
 
   it('主观题只拍照不打字也算作答（后端本来就是收图片的）', () => {

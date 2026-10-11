@@ -29,6 +29,12 @@ function normalizeMulti(ans) {
 
 // 填空题答案归一化：按「空」拆段后逐段清理。
 //
+// 【角色变更】填空题已改由 AI 评阅（见 routes/assignments.js 的 isObjectiveType），
+// 本函数不再是学生作业的主要判分口径，保留是为了两处兜底：
+//   1. AI 未配置或单题评阅失败时，退回规则比对，给学生一个确定结果
+//      （见 services/subjectiveReview.js）；
+//   2. BOSS 战等不接 AI 的玩法仍走这里。
+//
 // 原实现是整串 trim + 小写 + 全等，于是「一题多空」几乎必错：
 // 学生写「北京，上海」「北京、上海」「牛顿, 第一定律」，标准答案是「北京,上海」
 // （教师端 placeholder 里就写着带空格的示例），整串不等一律判错——
@@ -50,6 +56,32 @@ function normalizeFillBlank(ans) {
 }
 
 /**
+ * 填空题空位占位符。
+ *
+ * 识别范围必须与 frontend/src/utils/fillBlank.ts 的 BLANK_PATTERN 完全一致：
+ * AI 出题约定用 6 个半角下划线，但历史题库里还有 2/3/4 个下划线、全角下划线，
+ * 以及纸质试卷常见的「全角括号内留空」。两边差一个字符，
+ * AI 就会把「题干里有 2 个空」当成「1 个空」来判。
+ *
+ * 同样**不匹配普通成对括号**：语文/英语题干里「（ ）」可能只是标点，
+ * 误判成空位会凭空多出一个空，AI 便会按错的数量去扣分。
+ */
+const BLANK_PATTERN = /_{2,}|＿+|【\s*】|（\s*）/g;
+
+/**
+ * 题干里能识别出几个空；识别不出（历史脏数据 / AI 没生成占位符）返回 0。
+ * 供 AI 评阅时告诉模型「本题有几个空」，避免它自己猜。
+ */
+function countFillBlankSlots(content) {
+  const text = String(content == null ? '' : content);
+  if (!text) return 0;
+  BLANK_PATTERN.lastIndex = 0;
+  let count = 0;
+  while (BLANK_PATTERN.exec(text) !== null) count++;
+  return count;
+}
+
+/**
  * 判断单题作答是否正确
  * @param {string} type  题目类型：choice_single / choice_multi / judgment / fill_blank
  * @param {*} studentAnswer 学生作答
@@ -61,6 +93,9 @@ function isAnswerCorrect(type, studentAnswer, correctAnswer) {
   const sa = studentAnswer == null ? '' : studentAnswer;
 
   if (type === 'fill_blank') {
+    // 作业里这条路径只在「AI 没配置 / 单题评阅失败」时被调用（兜底），
+    // 平时由 services/subjectiveReview.js 判分。规则判不出「北京 上海 = 北京」的等价写法，
+    // 所以它只适合当退路，不适合当主口径。
     const list = normalizeFillBlank(sa);
     const std = normalizeFillBlank(ca);
     // 标准答案为空一律判错：题库没录答案却让学生「做对」，会污染正确率统计
@@ -85,8 +120,14 @@ function isAnswerCorrect(type, studentAnswer, correctAnswer) {
     return normalizeJudgment(sa) === normalizeJudgment(ca);
   }
 
-  // 主观题（essay / composition）不在此判定
+  // 需要 AI/人工评阅的题（essay / composition / fill_blank）不在此判定
   return false;
 }
 
-module.exports = { isAnswerCorrect, normalizeJudgment, normalizeMulti, normalizeFillBlank };
+module.exports = {
+  isAnswerCorrect,
+  normalizeJudgment,
+  normalizeMulti,
+  normalizeFillBlank,
+  countFillBlankSlots,
+};

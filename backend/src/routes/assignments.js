@@ -16,6 +16,8 @@ const { collectQuestions, normalizeQuestion } = require('../services/aiQuestion'
 const { beginUsage, settleUsage, countBilledUsage, markFailed, countReferencedQuestions, deleteUnusedQuestions } = require('../services/aiUsage');
 const { genTaskManager } = require('../services/genTaskManager');
 const { requireFeature, isFeatureEnabled } = require('../middleware/featureFlags');
+// 个人题库 + 知识点掌握度：规则判分与 AI 评阅共用同一套落地逻辑
+const studyStats = require('../services/studyStats');
 
 /**
  * 功能开关守卫：
@@ -118,50 +120,6 @@ const uploadAnswerImages = upload.fields([
 ]);
 
 /**
- * 学生个人题库：每次作答（线上提交 / 纸质登记）逐题 upsert。
- * 与错题本的区别：错题本只留做错的题，个人库保留做过的全部题目。
- * 表不存在时（迁移未执行）静默跳过，不影响主流程。
- */
-let personalBankReady = null;
-function personalBankAvailable() {
-  // 不再永久缓存：迁移可能在本进程启动之后才执行完，
-  // 一旦缓存成 false，个人题库会一直"永远为空"。
-  if (personalBankReady === null) {
-    personalBankReady = !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='personal_question_bank'`).get();
-  }
-  return personalBankReady || !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='personal_question_bank'`).get();
-}
-
-function upsertPersonalBank({ userId, questionId, assignmentId, assignmentType, answer, isCorrect, source }) {
-  if (!personalBankAvailable() || !userId || !questionId) return;
-  try {
-    const q = db.prepare('SELECT subject, knowledge_point FROM question_bank WHERE id = ?').get(questionId);
-    const existing = db.prepare('SELECT id FROM personal_question_bank WHERE user_id = ? AND question_id = ?')
-      .get(userId, questionId);
-    if (existing) {
-      db.prepare(`
-        UPDATE personal_question_bank
-        SET last_answer = ?, is_correct = ?, attempt_count = attempt_count + 1,
-            correct_count = correct_count + ?, assignment_id = ?, assignment_type = ?,
-            source = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(String(answer || ''), isCorrect ? 1 : 0, isCorrect ? 1 : 0, assignmentId || null, assignmentType || null, source || 'online', existing.id);
-    } else {
-      db.prepare(`
-        INSERT INTO personal_question_bank
-          (user_id, question_id, assignment_id, assignment_type, subject, knowledge_point,
-           first_answer, last_answer, is_correct, attempt_count, correct_count, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-      `).run(userId, questionId, assignmentId || null, assignmentType || null,
-        q?.subject || null, q?.knowledge_point || null,
-        String(answer || ''), String(answer || ''), isCorrect ? 1 : 0, isCorrect ? 1 : 0, source || 'online');
-    }
-  } catch (e) {
-    console.error('个人题库写入失败:', e.message);
-  }
-}
-
-/**
  * 写入/更新错题本。所有错题来源（线上提交、错题重做、主观题评阅、纸质登记、教师改判）
  * 都必须走这里，保证 created_at 一定被写入——错题本 UI 的「错误时间」列依赖它，
  * 漏写会让整列显示 Invalid Date（009 迁移补的历史列）。
@@ -188,8 +146,19 @@ function writeWrongQuestion({ userId, assignmentId, questionId, wrongAnswer, cor
   return r.lastInsertRowid;
 }
 
+/**
+ * 「提交时就能秒判对错、不用等 AI」的题型。
+ *
+ * 【历史】填空题曾经在这个列表里：服务端把「北京，上海」「北京、上海」
+ * 按逗号拆段逐空比对，判完立刻入库出分。代价是学生换个分隔符、多写个空格、
+ * 顺序颠倒就直接被判 0 分，而这类题的答案写法本来就没有唯一形态。
+ * 现在填空题与 essay/composition 一样交给 AI 评阅（见 services/subjectiveReview.js），
+ * 因此移出本表。AI 不可用时它仍会退回 utils/answerCheck.js 的规则比对兜底。
+ *
+ * 前端的同一份口径在 frontend/src/utils/questionTypes.ts，改这里要同步改那里。
+ */
 function isObjectiveType(type) {
-  return ['choice_single', 'choice_multi', 'judgment', 'fill_blank'].includes(type);
+  return ['choice_single', 'choice_multi', 'judgment'].includes(type);
 }
 
 /** 取出重做题的完整字段，并解析 options（提交接口与 GET 接口都要用） */
@@ -986,8 +955,13 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
 
       for (const qa of affectedAnswers) {
         const ua = qa.student_answer;
-        // 主观题无法自动重判，跳过；客观题走统一判分口径
-        if (!['choice_single', 'choice_multi', 'judgment', 'fill_blank'].includes(updatedQuestion.type)) {
+        // 只有规则判的题（选择/判断）能自动重判。
+        //
+        // 填空题原来也在这个白名单里，但它已经改成 AI 评阅：
+        // 用规则去覆盖 AI 给的分数，会把「AI 认为答案意思对」直接改成 0 分，
+        // 老师明明只是改了参考答案（措辞、排版），学生成绩却凭空掉下去。
+        // 这里的正确做法是改完参考答案后通知学生，由学生重做时按新标准重新评。
+        if (!isObjectiveType(updatedQuestion.type)) {
           continue;
         }
         const newCorrect = isAnswerCorrect(updatedQuestion.type, ua, updatedQuestion.answer);
@@ -1010,8 +984,13 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
             .run(qa.user_id, qid);
         }
 
-        // 重新计算该提交的总分
-        // 同一题可能存在多轮重做记录，只取每题最近一次作答，避免重复计分
+        // 重新计算该提交的总分。
+        //
+        // 分母固定用「作业题目总数」，不用 Σmax_score：
+        //   - 每题满分虽然统一成 100/题数，但 AI 还没评完的题 max_score 是 NULL，
+        //     把它算进分母会让总分凭空变高（看起来像给了高分）；
+        //   - 分母用固定题数也更贴近 services/subjectiveReview.js 的 computeFinalScore
+        //     （每题等权、没评出来的算 0），否则老师改一次答案总分就跳一次。
         const attemptRows = db.prepare(
           'SELECT id, question_bank_id, attempt_number, score, max_score, is_correct FROM question_answers WHERE submission_id = ? ORDER BY attempt_number ASC'
         ).all(qa.submission_id);
@@ -1020,13 +999,12 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
         const allQA = [...latestByQ.values()];
 
         const rawScore = allQA.reduce((sum, a) => sum + (a.score || 0), 0);
-        const maxTotal = allQA.reduce((sum, a) => sum + (a.max_score || 0), 0);
-        // 用真实满分归一化到百分制；maxTotal 为 0（异常数据）时退回 0 分，避免除零得到 NaN
-        const totalScore = maxTotal > 0 ? Math.round((rawScore / maxTotal) * 100) : 0;
+        const assignmentQuestionCount = db.prepare('SELECT COUNT(*) as c FROM assignment_questions WHERE assignment_id = ?').get(qa.assignment_id)?.c || allQA.length;
+        const perQuestionMax = assignmentQuestionCount > 0 ? 100 / assignmentQuestionCount : 0;
+        const totalScore = perQuestionMax > 0 ? Math.round((rawScore / perQuestionMax) * 100) : 0;
 
         const assignmentInfo = db.prepare('SELECT max_exp FROM assignments WHERE id = ?').get(qa.assignment_id);
         const maxExp = assignmentInfo?.max_exp || 30;
-        const assignmentQuestionCount = db.prepare('SELECT COUNT(*) as c FROM assignment_questions WHERE assignment_id = ?').get(qa.assignment_id)?.c || allQA.length;
         // 与提交时共用同一套公式，保证 Combo / 满分奖励不会被算丢
         const newGoldReward = calcGoldReward(
           totalScore,
@@ -1059,6 +1037,32 @@ router.patch('/questions/:id', authenticateToken, authorizeRole('teacher', 'admi
             INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
             VALUES (?, 'answer_changed', '题目答案已更正', ?, 'assignment', ?)
           `).run(qa.user_id, `「${assignmentTitle}」中有一道题目的标准答案被老师修改，你的作答结果${direction}，请查看最新成绩`, qa.assignment_id);
+        }
+      }
+
+      /**
+       * AI 评阅题（填空 / 简答 / 作文）的参考答案被改了。
+       *
+       * 上面那个循环只处理规则判的题，这里必须单独补一次通知：
+       * 评分依据变了，学生却什么提示都收不到，下次重做分数一变化，
+       * 只会觉得「系统又乱判了」。这里只说明「标准改了、重新做会按新标准评」，
+       * 不动任何已产生的成绩 —— 改判历史成绩不该由一次改字操作顺带完成。
+       */
+      if (affectedAnswers.length > 0 && !isObjectiveType(updatedQuestion.type)) {
+        const byStudent = new Map();
+        for (const a of affectedAnswers) {
+          if (!byStudent.has(a.user_id)) byStudent.set(a.user_id, a.assignment_id);
+        }
+        for (const [userId, assignmentId] of byStudent) {
+          const assignmentTitle = db.prepare('SELECT title FROM assignments WHERE id = ?').get(assignmentId)?.title || '作业';
+          db.prepare(`
+            INSERT INTO notifications (user_id, type, title, content, source_type, source_id)
+            VALUES (?, 'answer_changed', '参考答案已更正', ?, 'assignment', ?)
+          `).run(
+            userId,
+            `「${assignmentTitle}」中有一道由 AI 评阅的题目，其参考答案被老师修改；本次成绩保持不变，重新作答时会按新标准评分。`,
+            assignmentId
+          );
         }
       }
     }
@@ -1807,8 +1811,8 @@ for (let i = 0; i < questions.length; i++) {
         `);
         for (const r of results) {
           insertQA.run(newSubId, r.question_id, r.user_answer, r.is_correct ? 1 : 0, r.score, 100 / totalQuestionCount, r.duration_ms ?? null);
-          upsertPersonalBank({
-            userId: req.user.userId, questionId: r.question_id, assignmentId: parseInt(req.params.id),
+          studyStats.recordQuestionResult({
+            userId: req.user.userId, questionBankId: r.question_id, assignmentId: parseInt(req.params.id),
             assignmentType: assignment.assignment_type, answer: r.user_answer, isCorrect: !!r.is_correct, source: 'online'
           });
         }
@@ -1843,8 +1847,8 @@ for (let i = 0; i < questions.length; i++) {
         `);
         for (const r of results) {
           insertQA.run(submissionId, r.question_id, (existingSubmission?.attempt_count || 0) + 1, r.user_answer, r.is_correct ? 1 : 0, r.score, 100 / totalQuestionCount, r.duration_ms ?? null);
-          upsertPersonalBank({
-            userId: req.user.userId, questionId: r.question_id, assignmentId: parseInt(req.params.id),
+          studyStats.recordQuestionResult({
+            userId: req.user.userId, questionBankId: r.question_id, assignmentId: parseInt(req.params.id),
             assignmentType: assignment.assignment_type, answer: r.user_answer, isCorrect: !!r.is_correct, source: 'online'
           });
         }
@@ -1872,40 +1876,7 @@ for (let i = 0; i < questions.length; i++) {
         console.error('更新每日任务进度失败:', error);
       }
 
-      // 更新知识点统计
-      try {
-        const today = getChinaDate();
-        const insertKnowledgePoint = db.prepare(`
-          INSERT OR IGNORE INTO knowledge_point_stats (user_id, knowledge_point, date, total_attempts, correct_attempts, accuracy)
-          VALUES (?, ?, ?, 1, ?, ?)
-        `);
-        const updateKnowledgePoint = db.prepare(`
-          UPDATE knowledge_point_stats 
-          SET total_attempts = total_attempts + 1,
-              correct_attempts = correct_attempts + ?,
-              accuracy = ROUND(CAST(correct_attempts + ? AS REAL) / (total_attempts + 1) * 100, 2),
-              updated_at = CURRENT_TIMESTAMP
-          WHERE user_id = ? AND knowledge_point = ? AND date = ?
-        `);
-        
-        // 从题目中提取知识点（如果有）
-        for (const r of results) {
-          const question = questions.find(q => q.id === r.question_id);
-          if (question && question.knowledge_point) {
-            const existing = db.prepare(
-              'SELECT id FROM knowledge_point_stats WHERE user_id = ? AND knowledge_point = ? AND date = ?'
-            ).get(req.user.userId, question.knowledge_point, today);
-            
-            if (existing) {
-              updateKnowledgePoint.run(r.is_correct ? 1 : 0, r.is_correct ? 1 : 0, req.user.userId, question.knowledge_point, today);
-            } else {
-              insertKnowledgePoint.run(req.user.userId, question.knowledge_point, today, r.is_correct ? 1 : 0, r.is_correct ? 100 : 0);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('更新知识点统计失败:', error);
-      }
+      // 知识点掌握度已随上面的 studyStats.recordQuestionResult 一起写入，不再单独维护一份
 
       res.json({
         success: true,
@@ -1970,8 +1941,61 @@ for (let i = 0; i < questions.length; i++) {
       }
 
     } else {
+      /**
+       * 需要 AI 评阅的作业（简答 / 作文 / 填空，或 mixed 混合）。
+       *
+       * 规则判好的题（选择、判断）提交时直接判分写库；其余只落作答内容，等 AI 评。
+       *
+       * 【为什么这里要支持重做】原先这里第一行就是「主观题只能提交一次」的 400，
+       * 加上前面的 1463 守卫（status 必须是 retry_available），等价于
+       * 「主观题作业永远不能重做」。填空题改 AI 评阅后正好落进这个分支，
+       * 学生答错了就再也拿不到重做按钮 —— 这是改造前填空题（规则判分）有的能力。
+       * 所以这里补齐：沿用同一条 submission，attempt_number + 1 追加作答记录，
+       * 只允许重做上一轮仍判错的题，评完再按差额结算金币。
+       */
+      let subId;
+      let attemptNumber = 1;
+
       if (existingSubmission) {
-        return res.status(400).json({ error: '主观题只能提交一次' });
+        // 重做范围：只认「上一轮仍判错」的题（每题只取最近一轮结果）。
+        // 少了这道校验，学生可以只重做会做的题来抬总分。
+        const wrongIds = new Set(db.prepare(`
+          SELECT qa.question_bank_id FROM question_answers qa
+          WHERE qa.submission_id = ? AND qa.is_correct = 0
+            AND qa.attempt_number = (
+              SELECT MAX(qa2.attempt_number) FROM question_answers qa2
+              WHERE qa2.submission_id = qa.submission_id AND qa2.question_bank_id = qa.question_bank_id
+            )
+        `).all(existingSubmission.id).map((r) => r.question_bank_id));
+
+        const submittedIds = [...new Set(answers.map((a) => parseInt(a.question_id, 10)).filter(Number.isInteger))];
+        if (submittedIds.length === 0) {
+          return res.status(400).json({ error: '请提交有效的答案' });
+        }
+        const illegalIds = submittedIds.filter((id) => !wrongIds.has(id));
+        if (illegalIds.length > 0) {
+          return res.status(400).json({ error: '只能重做上次答错的题目' });
+        }
+        const notDone = [...wrongIds].filter((id) => !submittedIds.includes(id));
+        if (notDone.length > 0) {
+          return res.status(400).json({ error: '请完成全部错题的重做后再提交' });
+        }
+
+        attemptNumber = (Number(existingSubmission.attempt_count) || 1) + 1;
+        // total_score 置空：重做期间还没评完，沿用上一轮的分数会被学生看成「白改了」
+        db.prepare(`
+          UPDATE submissions
+          SET answers = ?, attachments = ?, status = 'submitted', review_status = 'pending',
+              total_score = NULL, attempt_count = ?, submitted_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(JSON.stringify(answers), JSON.stringify(req.body.attachments || []), attemptNumber, existingSubmission.id);
+        subId = existingSubmission.id;
+      } else {
+        const result = db.prepare(`
+          INSERT INTO submissions (assignment_id, user_id, answers, attachments, status, total_max_score, review_status)
+          VALUES (?, ?, ?, ?, 'submitted', 100, 'pending')
+        `).run(req.params.id, req.user.userId, JSON.stringify(answers), JSON.stringify(req.body.attachments || []));
+        subId = result.lastInsertRowid;
       }
 
       /**
@@ -1989,47 +2013,48 @@ for (let i = 0; i < questions.length; i++) {
       // 多选题前端可能给数组，直接绑到 SQLite 会崩，统一转成字符串
       const answerToText = (v) => (Array.isArray(v) ? v.join(',') : (v === undefined || v === null ? '' : String(v)));
 
-      const result = db.prepare(`
-        INSERT INTO submissions (assignment_id, user_id, answers, attachments, status, total_max_score, review_status)
-        VALUES (?, ?, ?, ?, 'submitted', 100, 'pending')
-      `).run(req.params.id, req.user.userId, JSON.stringify(answers), JSON.stringify(req.body.attachments || []));
-
-      const newSubId = result.lastInsertRowid;
-
-      // 客观题：判分结果一次写全，reviewed_at 也写上——表示这题已判完、不需要 AI
+      // 规则判的题：判分结果一次写全，reviewed_at 也写上——表示这题已判完、不需要 AI
+      // 注意列顺序：submission_id, attempt_number, question_bank_id, …
+      // （参数顺序与列顺序一一对应，写反了会把「第几轮」当成题号存进去）
       const insertGraded = db.prepare(`
         INSERT INTO question_answers
-          (submission_id, question_bank_id, attempt_number, student_answer, image_url, is_correct, score, max_score, duration_ms, answered_at, reviewed_at)
-        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          (submission_id, attempt_number, question_bank_id, student_answer, image_url, is_correct, score, max_score, duration_ms, answered_at, reviewed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `);
-      // 主观题：只落作答内容（含手写照片），等 AI 评阅
+      /**
+       * 等 AI 评的题：只落作答内容（含手写照片）。
+       *
+       * is_correct / score / max_score 显式写 NULL —— 表定义是 DEFAULT 0，
+       * 省略这三列的话「还没评」会变成「判错」：老师端统计正确率、
+       * 学生端重做入口、错题本，全都会把待评阅的题算成做错。
+       * NULL 能让「还没评」和「评过是错」在数据上区分得开。
+       */
       const insertPending = db.prepare(`
         INSERT INTO question_answers
-          (submission_id, question_bank_id, attempt_number, student_answer, image_url, duration_ms, answered_at)
-        VALUES (?, ?, 1, ?, ?, ?, CURRENT_TIMESTAMP)
+          (submission_id, attempt_number, question_bank_id, student_answer, image_url, is_correct, score, max_score, duration_ms, answered_at)
+        VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, CURRENT_TIMESTAMP)
       `);
 
       /**
-       * 客观题的判分结果边写库边攒起来，随提交响应一起下发。
+       * 规则判好的题的判分结果边写库边攒起来，随提交响应一起下发。
        *
-       * 混合作业提交后还要等 AI 评主观题，原先这里固定回 results: []，
+       * 这份作业提交后还要等 AI 评其余题，原先这里固定回 results: []，
        * 于是学生在等待期间点开答题详情看到的是一片空白——「我填的答案哪去了」，
        * 很容易被当成「系统说我这题没作答」。
-       * 客观题（含填空题）在提交这一刻就已经判完了，没有任何理由再压着不给看。
        */
       const gradedResults = [];
 
       for (const ans of answers) {
         const q = objectiveQs.find((x) => x.id === Number(ans.question_id));
         if (!q) {
-          insertPending.run(newSubId, ans.question_id, answerToText(ans.answer), ans.image_url || '', durationOf(ans.question_id));
+          insertPending.run(subId, attemptNumber, ans.question_id, answerToText(ans.answer), ans.image_url || '', durationOf(ans.question_id));
           continue;
         }
 
         const isCorrect = isAnswerCorrect(q.type, ans.answer, q.answer);
         const userText = answerToText(ans.answer);
         insertGraded.run(
-          newSubId, q.id, userText, ans.image_url || '',
+          subId, attemptNumber, q.id, userText, ans.image_url || '',
           isCorrect ? 1 : 0, isCorrect ? perQuestionMax : 0, perQuestionMax, durationOf(q.id)
         );
 
@@ -2037,6 +2062,8 @@ for (let i = 0; i < questions.length; i++) {
         gradedResults.push({
           question_id: q.id,
           question_content: q.content,
+          // 前端据此决定把「正确答案」还是「参考答案」摆出来（填空题已改 AI 评阅）
+          type: q.type,
           user_answer: userText,
           correct_answer: q.answer,
           is_correct: isCorrect,
@@ -2066,21 +2093,22 @@ for (let i = 0; i < questions.length; i++) {
       }
 
       setImmediate(async () => {
-        await reviewSubjectiveAssignment(newSubId, req.params.id, req.user.userId);
+        await reviewSubjectiveAssignment(subId, req.params.id, req.user.userId);
       });
 
       res.json({
         success: true,
         message: '已提交，等待AI评阅',
-        submission_id: newSubId,
+        submission_id: subId,
         // 字段集必须和上面的纯客观题分支保持一致。原先这里只回三个字段，
         // 前端结果弹窗读不到 total_max_score，直接渲染成「总分 0/ undefined」，
         // 刷新一次拿到数据库里的 100 才正常。
         // 未评出来的分先按 0 占位，并显式带上 review_status='pending'：
         // 前端靠它区分「还没评完」和「评完是 0 分」，否则会把占位 0
         // 当成真实分数展示给学生。
-        // 注意 total_score 仍是 0（主观题没评完，总分不成立），
-        // 但客观题的逐题判分照常下发，学生不用干等 AI 才知道填空题对不对。
+        // 注意 total_score 仍是 0（AI 题没评完，总分不成立），
+        // 但规则判好的题、以及这次重做的题号，都会照常下发逐题结果，
+        // 学生不用干等 AI 才知道自己填的对不对。
         results: gradedResults,
         review_status: 'pending',
         total_score: 0,
@@ -2250,7 +2278,14 @@ router.get('/:id/statistics', authenticateToken, authorizeRole('teacher', 'admin
         const prev = latest.get(r.submission_id);
         if (!prev || r.attempt_number > prev.attempt_number) latest.set(r.submission_id, r);
       }
-      const counted = [...latest.values()];
+      /**
+       * 只统计「已判出对错」的作答。
+       *
+       * is_correct 为 NULL 表示这题还在等 AI 评阅（提交时写的是 NULL，见 POST /:id/submit）。
+       * 把它算进分母的话，老师在 AI 评完之前看统计，会看到「这题全班都答错了」——
+       * 明明只是还没评。空值既不算对也不算错，直接排除。
+       */
+      const counted = [...latest.values()].filter((r) => r.is_correct !== null && r.is_correct !== undefined);
       const totalAns = counted.length;
       if (totalAns === 0) return base;
 
@@ -2447,34 +2482,12 @@ function registerPaperSubmission({ assignmentId, assignment, studentId, results,
     `);
     for (const row of rows) {
       insertQA.run(submissionId, row.question_id, row.student_answer, row.is_correct, row.score, perQuestionMax);
-      // 个人题库：纸质作答同样沉淀，source 标记为 paper
-      upsertPersonalBank({
-        userId: studentId, questionId: row.question_id, assignmentId: parseInt(assignmentId),
+      // 个人题库 + 知识点掌握度：纸质登记与线上提交同源，
+      // 否则住校生在「学习数据」里看不到任何薄弱知识点
+      studyStats.recordQuestionResult({
+        userId: studentId, questionBankId: row.question_id, assignmentId: parseInt(assignmentId),
         assignmentType: assignment.assignment_type, answer: row.student_answer, isCorrect: !!row.is_correct, source: 'paper'
       });
-      // 知识点掌握度：纸质登记与线上提交同源，否则住校生在「学习数据」里看不到任何薄弱知识点
-      const qKp = qMap[row.question_id]?.knowledge_point;
-      if (qKp) {
-        const today = getChinaDate();
-        const kpExisting = db.prepare(
-          'SELECT id FROM knowledge_point_stats WHERE user_id = ? AND knowledge_point = ? AND date = ?'
-        ).get(studentId, qKp, today);
-        if (kpExisting) {
-          // 已存在：本次作答累加（correct_attempts + is_correct 表示本次是否答对）
-          db.prepare(`UPDATE knowledge_point_stats
-            SET total_attempts = total_attempts + 1,
-                correct_attempts = correct_attempts + ?,
-                accuracy = ROUND(CAST(correct_attempts + ? AS REAL) / (total_attempts + 1) * 100, 2)
-            WHERE id = ?`)
-            .run(row.is_correct, row.is_correct, kpExisting.id);
-        } else {
-          // 首次：本次作答已计入初始值，不再累加
-          db.prepare(`INSERT INTO knowledge_point_stats
-            (user_id, knowledge_point, date, total_attempts, correct_attempts, accuracy)
-            VALUES (?, ?, ?, 1, ?, ?)`)
-            .run(studentId, qKp, today, row.is_correct, row.is_correct ? 100 : 0);
-        }
-      }
       if (!row.is_correct) {
         const q = qMap[row.question_id];
         writeWrongQuestion({
@@ -2745,28 +2758,9 @@ router.post('/wrong/retry', authenticateToken, (req, res) => {
         `).run(req.user.userId, wq.id, wq.question_id, String(it.answer || ''),
           isCorrect ? 1 : 0, durationMs, subjective ? 'self_check' : 'redo');
 
-        // 知识点掌握度同步更新，保证重做也能反映在「学习数据」里
-        if (q.knowledge_point) {
-          const today = getChinaDate();
-          const ex = db.prepare(
-            'SELECT id FROM knowledge_point_stats WHERE user_id = ? AND knowledge_point = ? AND date = ?'
-          ).get(req.user.userId, q.knowledge_point, today);
-          if (ex) {
-            db.prepare(`UPDATE knowledge_point_stats
-              SET total_attempts = total_attempts + 1, correct_attempts = correct_attempts + ?,
-                  accuracy = ROUND(CAST(correct_attempts + ? AS REAL) / (total_attempts + 1) * 100, 2)
-              WHERE id = ?`).run(isCorrect ? 1 : 0, isCorrect ? 1 : 0, ex.id);
-          } else {
-            db.prepare(`INSERT INTO knowledge_point_stats
-              (user_id, knowledge_point, date, total_attempts, correct_attempts, accuracy)
-              VALUES (?, ?, ?, 1, ?, ?)`)
-              .run(req.user.userId, q.knowledge_point, today, isCorrect ? 1 : 0, isCorrect ? 100 : 0);
-          }
-        }
-
-        // 个人题库同步
-        upsertPersonalBank({
-          userId: req.user.userId, questionId: wq.question_id, assignmentId: null,
+        // 个人题库 + 知识点掌握度同步更新，保证重做也能反映在「学习数据」里
+        studyStats.recordQuestionResult({
+          userId: req.user.userId, questionBankId: wq.question_id, assignmentId: null,
           assignmentType: null, answer: it.answer, isCorrect, source: 'wrong_retry',
         });
 
