@@ -244,7 +244,16 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
     const next: Record<number, { correct: boolean; score?: number }> = {};
     const rec: Record<number, { answer: string; comment: string; source?: string }> = {};
     for (const r of myPaper.results) {
-      next[r.question_id] = { correct: r.is_correct, score: (!r.is_correct && r.score > 0) ? r.score : undefined };
+      /**
+       * grade_source === 'failed' = AI 没评出来、等老师人工批的题。
+       * 它的 is_correct 是后端兜底的 false，**不代表学生做错了**。
+       * 原来直接预填成「错」，老师没逐题点一遍就直接保存 → 学生白丢一分，
+       * 而且界面上没有任何提示说「这题我没判」。现在这类题不预填对错，
+       * 留成「待核对」，保存前会被拦下来要求逐题确认。
+       */
+      if (r.grade_source !== 'failed') {
+        next[r.question_id] = { correct: r.is_correct, score: (!r.is_correct && r.score > 0) ? r.score : undefined };
+      }
       rec[r.question_id] = { answer: r.recognized_answer || '', comment: r.comment || '', source: r.grade_source };
     }
     setMarks(next);
@@ -268,14 +277,22 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
   };
 
   const buildResults = () => questions.map(q => {
-    const m = marks[q.id] || { correct: true };
+    // 未判定的题在保存时已被拦下，这里兜底 false 只是为了让类型完整
+    const m = marks[q.id];
     return {
       question_id: q.id,
-      is_correct: m.correct,
+      is_correct: m ? m.correct : false,
       // 仅主观题且判错时，允许给出本题的部分分（0-100，按本题占比折算）
-      score: (!m.correct && isSubjective(q.type) && typeof m.score === 'number') ? m.score : undefined,
+      score: (m && !m.correct && isSubjective(q.type) && typeof m.score === 'number') ? m.score : undefined,
     };
   });
+
+  /**
+   * 还没判定的题：AI 没识别到、或者识别到了但判分失败（grade_source='failed'）。
+   * 这些题**不能**默认按「错」登记 —— 老师一个都没点就保存，学生直接白丢分，
+   * 而且事后完全看不出来。所以保存前一律拦下来，要求逐题确认。
+   */
+  const unmarkedList = questions.filter(q => !marks[q.id]);
 
   const unregistered = students.filter(s => !registeredIds.has(s.id));
   // 全班已上传的照片总数，用于在列表底部给个总数
@@ -313,10 +330,13 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
       const nextMarks: Record<number, { correct: boolean; score?: number }> = {};
       const rec: Record<number, { answer: string; comment: string; source?: string }> = {};
       p.results.forEach((r: any) => {
-        nextMarks[r.question_id] = {
-          correct: !!r.is_correct,
-          score: (!r.is_correct && r.score > 0) ? r.score : undefined,
-        };
+        // 同上：待人工批的题不预填对错，等老师自己判
+        if (r.grade_source !== 'failed') {
+          nextMarks[r.question_id] = {
+            correct: !!r.is_correct,
+            score: (!r.is_correct && r.score > 0) ? r.score : undefined,
+          };
+        }
         rec[r.question_id] = { answer: r.recognized_answer || '', comment: r.comment || '', source: r.grade_source };
       });
       setMarks(nextMarks);
@@ -326,6 +346,11 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
 
   const handleSave = async (andNext: boolean) => {
     if (!currentStudent) { message.warning('请先在左侧选择学生'); return; }
+    // 待人工确认的题不允许带着默认判定登记（否则未点即判错，学生白丢分）
+    if (unmarkedList.length > 0) {
+      message.warning(`还有 ${unmarkedList.length} 道题没有判定对错（AI 未识别或待人工批改），请逐题选择「对 / 错」后再登记`);
+      return;
+    }
     // 已经登记过的学生再点保存 = 更正成绩（老师追加照片重新识别后用）。
     // 学生端自己提交走的是另一个接口，不经过这里，所以这里放开覆盖是安全的。
     const isOverwrite = registeredIds.has(currentStudent.id);
@@ -738,7 +763,9 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
               <Empty description="该作业没有题目" />
             ) : (
               questions.map((q, i) => {
-                const m = marks[q.id] || { correct: true };
+                // 没有 mark = 还没判定。原来这里兜底成 { correct: true }，
+                // 于是「AI 没识别到」的题会被当成做对了登记，界面毫无提示。
+                const m = marks[q.id];
                 return (
                   <div key={q.id} style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
@@ -747,10 +774,11 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                       <span style={{ flex: 1, color: '#555', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {q.content}
                       </span>
+                      {!m && <Tag color="warning">待人工判定</Tag>}
                       <Space size={4}>
                         <Button
                           size="small"
-                          type={m.correct ? 'primary' : 'default'}
+                          type={m?.correct ? 'primary' : 'default'}
                           icon={<CheckOutlined />}
                           onClick={() => setMark(q.id, true)}
                         >
@@ -758,8 +786,8 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                         </Button>
                         <Button
                           size="small"
-                          danger={m.correct ? false : true}
-                          type={!m.correct ? 'primary' : 'default'}
+                          danger={m && !m.correct}
+                          type={m && !m.correct ? 'primary' : 'default'}
                           icon={<CloseOutlined />}
                           onClick={() => setMark(q.id, false, isSubjective(q.type) ? 50 : undefined)}
                         >
@@ -777,7 +805,12 @@ const PaperRegister: React.FC<PaperRegisterProps> = ({ assignmentId, title, open
                         </span>
                       )}
                     </div>
-                    {!m.correct && isSubjective(q.type) && (
+                    {!m && isSubjective(q.type) && (
+                      <div style={{ marginTop: 6, fontSize: 12, color: '#fa8c16' }}>
+                        这题还没有判定：请先点「对」或「错」，再填部分分。
+                      </div>
+                    )}
+                    {m && !m.correct && isSubjective(q.type) && (
                       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#888' }}>
                         部分分（本题按百分比计）：
                         <InputNumber

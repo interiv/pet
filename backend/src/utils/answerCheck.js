@@ -82,6 +82,35 @@ function countFillBlankSlots(content) {
 }
 
 /**
+ * 填空题「逐空命中率」：给规则兜底判分用（AI 不可用/评阅失败时的退路）。
+ *
+ * 【为什么要多这一层】前端 joinFillBlankAnswers 会把没填的空整段丢掉，
+ * 学生「第一空填了、第三空填了、第二空空着」提交上来是「甲,丙」两段，
+ * 标准答案是「甲,乙,丙」三段。段数不等 → 严格比对恒为错 → 这道题直接 0 分，
+ * 明明答对的两个空也一并作废。规则判不出等价写法，但**数得出填对了几空**，
+ * 所以兜底判分按命中率给部分分，而不是「非全对即 0」。
+ *
+ * 命中判定：按位置比对（保持空位顺序），同时允许顺序无关的兜底匹配
+ * ——学生把两个空写反了也算填对，避免规则比 AI 还苛刻。
+ *
+ * @returns {{matched:number, total:number}} total 为 0 表示标准答案没录，不参与判定
+ */
+function fillBlankMatchRatio(studentAnswer, correctAnswer) {
+  const std = normalizeFillBlank(correctAnswer);
+  if (std.length === 0) return { matched: 0, total: 0 };
+  const list = normalizeFillBlank(studentAnswer);
+
+  // 位置对齐：学生填了第 i 段且与标准答案第 i 段相同
+  let matched = 0;
+  const used = new Set();
+  for (const seg of list) {
+    const idx = std.indexOf(seg);
+    if (idx >= 0 && !used.has(idx)) { used.add(idx); matched += 1; }
+  }
+  return { matched, total: std.length };
+}
+
+/**
  * 判断单题作答是否正确
  * @param {string} type  题目类型：choice_single / choice_multi / judgment / fill_blank
  * @param {*} studentAnswer 学生作答
@@ -96,6 +125,9 @@ function isAnswerCorrect(type, studentAnswer, correctAnswer) {
     // 作业里这条路径只在「AI 没配置 / 单题评阅失败」时被调用（兜底），
     // 平时由 services/subjectiveReview.js 判分。规则判不出「北京 上海 = 北京」的等价写法，
     // 所以它只适合当退路，不适合当主口径。
+    // 口径保持严格（空数一致 + 逐空相等）：这是「答对才给奖励」的判定，
+    // 部分分由 fillBlankMatchRatio 单独算、只给兜底判分用，这里放宽会凭空让
+    // BOSS 战等玩法变简单。部分分那条路见上。
     const list = normalizeFillBlank(sa);
     const std = normalizeFillBlank(ca);
     // 标准答案为空一律判错：题库没录答案却让学生「做对」，会污染正确率统计
@@ -139,5 +171,6 @@ module.exports = {
   normalizeJudgment,
   normalizeMulti,
   normalizeFillBlank,
+  fillBlankMatchRatio,
   countFillBlankSlots,
 };

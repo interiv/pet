@@ -17,7 +17,7 @@ const { requireFeature } = require('../middleware/featureFlags');
 const { chatCompletion } = require('../services/aiClient');
 const scanSvc = require('../services/paperScanService');
 const { reviewOneQuestion } = require('../services/subjectiveReview');
-const { OBJECTIVE_TYPES, isAnswerCorrect, countFillBlankSlots } = require('../utils/answerCheck');
+const { OBJECTIVE_TYPES, isAnswerCorrect, countFillBlankSlots, fillBlankMatchRatio } = require('../utils/answerCheck');
 
 const router = express.Router();
 
@@ -252,6 +252,15 @@ router.post('/:id/paper-scan/batches/:batchId/images', authenticateToken, author
 
 /** 上传某张照片的文件内容（单张，multipart） */
 router.post('/:id/paper-scan/batches/:batchId/images/:imageId/file', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, loadBatch, paperUpOff, (req, res) => {
+  /**
+   * 【为什么这里必须自己 try/catch，而不是交给 Express 的错误中间件】
+   * multer 的回调是它自己调的，**不在 Express 的 next(err) 链上**：
+   * 回调里同步抛出的异常（SQLITE_BUSY、磁盘满、字段超长…）会一路冒泡成
+   * uncaughtException。配上 processGuard「未捕获异常即退出」的策略，
+   * 一次并发上传打满数据库就会让整个服务重启，而这一请求既没有响应也没有记录：
+   * 前端一直转圈，日志里只有一条 FATAL。
+   * 自己兜住才能回 500 + 保住已落盘的文件不被孤儿化。
+   */
   uploadImage(req, res, (err) => {
     if (err) {
       const msg = err.code === 'LIMIT_FILE_SIZE'
@@ -264,22 +273,29 @@ router.post('/:id/paper-scan/batches/:batchId/images/:imageId/file', authenticat
     if (!file) return res.status(400).json({ error: '没有收到文件' });
 
     const imageId = parseInt(req.params.imageId, 10);
-    const image = db.prepare('SELECT * FROM paper_scan_images WHERE id = ? AND batch_id = ?').get(imageId, req.batch.id);
-    if (!image) {
-      // 记录不存在时两个文件都要清掉，只删原图会留下一个没主的缩略图
-      [file, thumb].forEach((f) => { if (f) { try { fs.unlinkSync(f.path); } catch (e) { /* ignore */ } } });
-      return res.status(404).json({ error: '照片记录不存在' });
-    }
+    try {
+      const image = db.prepare('SELECT * FROM paper_scan_images WHERE id = ? AND batch_id = ?').get(imageId, req.batch.id);
+      if (!image) {
+        // 记录不存在时两个文件都要清掉，只删原图会留下一个没主的缩略图
+        [file, thumb].forEach((f) => { if (f) { try { fs.unlinkSync(f.path); } catch (e) { /* ignore */ } } });
+        return res.status(404).json({ error: '照片记录不存在' });
+      }
 
-    scanSvc.markUploaded(imageId, {
-      filePath: file.filename,
-      fileName: file.originalname,
-      fileSize: file.size,
-      mimeType: file.mimetype,
-      // 缩略图是可选字段：前端生成失败时传不上来，网格会回退去拉原图
-      thumbPath: thumb ? thumb.filename : '',
-      thumbSize: thumb ? thumb.size : 0,
-    });
+      scanSvc.markUploaded(imageId, {
+        filePath: file.filename,
+        fileName: file.originalname,
+        fileSize: file.size,
+        mimeType: file.mimetype,
+        // 缩略图是可选字段：前端生成失败时传不上来，网格会回退去拉原图
+        thumbPath: thumb ? thumb.filename : '',
+        thumbSize: thumb ? thumb.size : 0,
+      });
+    } catch (e) {
+      console.error('[paper-scan] 照片入库失败 image=' + imageId + ':', e && e.stack ? e.stack : e);
+      // 文件已经落盘了，删掉重来比留一个没入库的孤儿文件干净
+      [file, thumb].forEach((f) => { if (f) { try { fs.unlinkSync(f.path); } catch (e2) { /* ignore */ } } });
+      return res.status(500).json({ error: '照片保存失败，请重试' });
+    }
     res.json({ image_id: imageId, batch: scanSvc.toPublicBatch(scanSvc.getBatch(req.batch.id)) });
   });
 });
@@ -310,7 +326,7 @@ router.get('/:id/paper-scan/batches/:batchId/images/:imageId/file', authenticate
     return res.status(404).json({ error: '照片文件已丢失，请重新上传' });
   }
 
-  res.type(image.mime_type || 'image/jpeg');
+  res.type(imageMimeOf(image.file_path));
   // 内容不变可缓存；文件名带时间戳+随机数，内容变了 URL 也会变
   res.set('Cache-Control', 'private, max-age=86400');
   res.sendFile(abs);
@@ -341,10 +357,25 @@ router.get('/:id/paper-scan/batches/:batchId/images/:imageId/thumb', authenticat
     return res.status(404).json({ error: '照片文件已丢失，请重新上传' });
   }
 
-  res.type(hasThumb ? 'image/jpeg' : (image.mime_type || 'image/jpeg'));
+  res.type(imageMimeOf(name));
   res.set('Cache-Control', 'private, max-age=86400');
   res.sendFile(abs);
 });
+
+/**
+ * 读原图/缩略图时用的 Content-Type。
+ *
+ * 不再直接信任客户端给的 mime_type（存库时是 req 上报的原始值）：
+ * 一张 .jpg 被报成 text/html 就会带着可执行类型被浏览器渲染。
+ * 这里改成按**文件扩展名**白名单映射（扩展名由上传时的 fileFilter 校验过），
+ * 认不出来一律当 jpeg——最坏只是渲染失败，不会变成 XSS。
+ */
+const MIME_BY_EXT = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.webp': 'image/webp', '.gif': 'image/gif',
+};
+const imageMimeOf = (filePath) =>
+  MIME_BY_EXT[(path.extname(String(filePath || '')).toLowerCase())] || 'image/jpeg';
 
 /** 删掉单张照片（同时删服务器上的文件） */
 router.delete('/:id/paper-scan/batches/:batchId/images/:imageId', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, loadBatch, (req, res) => {
@@ -378,7 +409,7 @@ const { getChinaDate } = require('../config/timezone');
  *   - 按组调用：一份卷子的几张照片一起给模型，既能合并识别，
  *     又能在每组完成后立刻更新真实进度，中途还能取消。
  */
-async function runScanBatch(batchId, userId) {
+async function runScanBatch(batchId, userId, opts = {}) {
   const batch = scanSvc.getBatch(batchId);
   if (!batch) throw new Error('批次不存在');
 
@@ -399,7 +430,18 @@ async function runScanBatch(batchId, userId) {
 
   const config = getAIConfig();
   if (!isAIConfigured(config)) throw new Error('AI 配置未完成，请联系管理员');
-  const visionModel = (config.ai_vision_model && String(config.ai_vision_model).trim()) || config.ai_model;
+  /**
+   * 纸质卷识别必须有真正的视觉模型。
+   *
+   * 原来这里是 `ai_vision_model || ai_model`：只配了文本模型时，
+   * 这个识别流程照样把整组照片塞进请求发出去，纯文本模型必然拒收（400），
+   * 每一组都失败，最后表现为「一组都没识别出来 + 一屏 400 日志」，
+   * 老师完全看不出是自己少配了一个模型。现在直接说人话。
+   */
+  const visionModel = String(config.ai_vision_model || '').trim();
+  if (!visionModel) {
+    throw new Error('纸质卷识别需要能看图的模型：请在系统设置里填写「视觉模型」（ai_vision_model）后再试');
+  }
 
   const students = db.prepare(
     `SELECT id, username, real_name FROM users WHERE class_id = ? AND role = 'student' AND status = 'active'`
@@ -411,7 +453,37 @@ async function runScanBatch(batchId, userId) {
     if (!groupMap.has(g)) groupMap.set(g, []);
     groupMap.get(g).push(img);
   }
-  const groups = [...groupMap.entries()].sort((a, b) => a[0] - b[0]);
+  let groups = [...groupMap.entries()].sort((a, b) => a[0] - b[0]);
+
+  /**
+   * 续跑：只识别「还没成功」的组。
+   *
+   * 原来 runScanBatch 每次都从全量图片重建 groupMap，resume 接口注释写着
+   * 「只识别还没成功的组」，但代码里根本没有这个跳过逻辑 —— 取消之后点续跑，
+   * 已识别过的组会**再调一遍 AI**（重复扣费），最后 markScanDone 又用新的
+   * papers 整体覆盖 result，已识别部分连同老师已经改过的判分一起被冲掉。
+   *
+   * 判定「已成功」：上一轮 result 里存在这一组、且它没有 error。
+   * 带 error 的组要重跑（老师可能已经补传了照片）。
+   *
+   * 注意：不能靠 `batch.scan_status === 'cancelled'` 判断——路由为了防双跑
+   * 会先把状态置成 running（见 start/resume 里的 tryMarkScanRunning），
+   * 这里的 batch 已经是 running 了，所以由调用方用 opts.resume 显式告知。
+   */
+  const prevResult = (() => {
+    try { return JSON.parse(batch.result || '{}') || {}; } catch (e) { return {}; }
+  })();
+  const resuming = !!opts.resume || batch.scan_status === 'cancelled';
+  const prevPapers = resuming && Array.isArray(prevResult.papers) ? prevResult.papers : [];
+  const doneGroups = new Set(
+    prevPapers.filter((p) => p && !p.error && Array.isArray(p.results) && p.results.length > 0)
+      .map((p) => p.group_no)
+  );
+  const totalGroups = groups.length;
+  if (resuming && doneGroups.size > 0) {
+    groups = groups.filter(([g]) => !doneGroups.has(g));
+    console.log(`[paper-scan] 批次 ${batchId} 续跑：跳过已识别的 ${doneGroups.size} 组，只跑剩下 ${groups.length} 组`);
+  }
 
   const tLabel = (t) => ({ choice_single: '单选题', choice_multi: '多选题', judgment: '判断题', fill_blank: '填空题', essay: '简答/主观题', composition: '作文题' }[t] || t);
 
@@ -465,10 +537,26 @@ async function runScanBatch(batchId, userId) {
   const maxRow = db.prepare("SELECT value FROM settings WHERE key = 'max_tokens_per_generation'").get();
   const maxTokens = parseInt(maxRow && maxRow.value) || 18000;
 
-  scanSvc.markScanRunning(batchId, visionModel);
+  // 续跑时进度从「已识别的组数」接着走，否则一续跑进度条就退回 0%
+  let scanned = doneGroups.size;
 
-  const papers = [];
-  let scanned = 0;
+  /**
+   * 抢占识别名额。路由已经抢过一次（opts.locked），这里只作为二次保险：
+   * 万一有人绕过路由直接调本函数，双跑照样被挡住。
+   */
+  if (!opts.locked && !scanSvc.tryMarkScanRunning(batchId, visionModel)) {
+    throw new Error('识别已在进行中');
+  }
+
+  /**
+   * 路由占位（locked）时只能拿上一轮的 batch.model 占位——它那时还没校验出本轮的
+   * visionModel。这里补写一次，避免识别运行中、或中途失败/取消时 model 列是空或旧模型名。
+   * 非 locked 路径上面那次 tryMarkScanRunning 已经写了当前模型，不必重复写。
+   */
+  if (opts.locked) scanSvc.saveScanModel(batchId, visionModel);
+
+  // papers 从上一轮结果起步：续跑时已识别的组要保留，不能被新结果整体覆盖
+  const papers = prevPapers.slice();
   let cancelled = false;
   const usageSum = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   const startAll = Date.now();
@@ -489,7 +577,7 @@ async function runScanBatch(batchId, userId) {
     if (dataUrls.length === 0) {
       console.warn('[paper-scan] 第' + groupNo + '组图片全部读不到，跳过');
       scanned += 1;
-      scanSvc.reportProgress(batchId, scanned, groups.length);
+      scanSvc.reportProgress(batchId, scanned, totalGroups);
       continue;
     }
 
@@ -523,7 +611,31 @@ async function runScanBatch(batchId, userId) {
       usageSum.total_tokens += u.total_tokens || 0;
 
       const one = parsePapers(reply.content || '')[0];
-      if (one) {
+      /**
+       * 识别不出内容 / 识别出的题号一个都对不上，都必须像「调用失败」一样
+       * 把这一组**显式**标出来。
+       *
+       * 原来这里是 `if (one) { ... if (results.length > 0) { push } }`：
+       * 条件不满足就整组凭空消失 —— 既没有 paper 也没有 error，
+       * 而 scanned 照样 +1、进度条照样走到 100%。老师看到的是
+       * 「识别完成、一份结果都没有」，日志里连一行警告都没有。
+       * 模型重编号 question_id 恰好就会命中这条静默丢弃的路径。
+       */
+      const rawName = String((one && one.student_name) || '').trim();
+      const matched = matchStudent(rawName, students);
+      const paperBase = {
+        group_no: groupNo,
+        image_ids: groupImages.map((g) => g.id),
+        student_id: matched ? matched.id : null,
+        student_name: matched ? (matched.real_name || matched.username) : rawName,
+        raw_name: rawName,
+        matched: !!matched,
+      };
+
+      if (!one) {
+        // 调用成功但内容解析不出来：多半是被 max_tokens 截断或模型没按格式返回
+        papers.push({ ...paperBase, results: [], error: 'AI 回复里没有可识别的结果（可能被截断），请重试或手动登记' });
+      } else {
         const qIds = new Set(questions.map((q) => q.id));
         /**
          * AI 这一步**只负责读出学生写了什么**，不判分：
@@ -535,27 +647,27 @@ async function runScanBatch(batchId, userId) {
             question_id: parseInt(r.question_id, 10),
             recognized_answer: String(r.recognized_answer == null ? '' : r.recognized_answer),
           }));
-        const results = await gradeRecognized(recognized, questions, {
-          config,
-          timeoutMs,
-          usageSum,
-          subject: assignment.subject || '',
-        });
-        if (results.length > 0) {
-          const rawName = String(one.student_name || '').trim();
-          const matched = matchStudent(rawName, students);
+        if (recognized.length === 0) {
           papers.push({
-            group_no: groupNo,
-            image_ids: groupImages.map((g) => g.id),
-            student_id: matched ? matched.id : null,
-            student_name: matched ? (matched.real_name || matched.username) : rawName,
-            raw_name: rawName,
-            matched: !!matched,
-            results,
+            ...paperBase, results: [],
+            error: '识别结果里没有与题号匹配的作答（模型可能重编了题号），请手动登记',
           });
-          scanSvc.attachStudentToGroup(batchId, groupNo, matched ? matched.id : null, rawName);
+        } else {
+          const results = await gradeRecognized(recognized, questions, {
+            config,
+            timeoutMs,
+            usageSum,
+            subject: assignment.subject || '',
+          });
+          if (results.length === 0) {
+            papers.push({ ...paperBase, results: [], error: '识别到的作答没有一道能判分，请手动登记' });
+          } else {
+            papers.push({ ...paperBase, results });
+          }
         }
       }
+      // 姓名对上了就落库（识别失败也不丢归属），下次打开直接显示是谁的卷子
+      if (matched) scanSvc.attachStudentToGroup(batchId, groupNo, matched.id, rawName);
     } catch (e) {
       // 单组失败不影响其它组，该组留空由老师手动指派
       console.error('[paper-scan] 第' + groupNo + '组识别失败:', e.message);
@@ -567,7 +679,7 @@ async function runScanBatch(batchId, userId) {
     }
 
     scanned += 1;
-    scanSvc.reportProgress(batchId, scanned, groups.length);
+    scanSvc.reportProgress(batchId, scanned, totalGroups);
   }
 
   try {
@@ -579,14 +691,39 @@ async function runScanBatch(batchId, userId) {
     }
   } catch (e) { /* 统计失败不影响结果 */ }
 
+  /**
+   * 上一轮结果与本轮结果按 group_no 去重合并。
+   *
+   * 续跑时 papers 已从 prevPapers 起步，合并是幂等的；非续跑时（例如 failed 批次
+   * 重新 start，result 没被清空）papers 只有本轮新组，直接写回会把上一轮已识别的
+   * 结果整体冲掉。两个分支都走它，口径统一。
+   */
+  const mergePapers = (prev, cur) => {
+    const out = [];
+    const seen = new Set();
+    for (const p of [...prev, ...cur]) {
+      if (!p || seen.has(p.group_no)) continue;
+      seen.add(p.group_no);
+      out.push(p);
+    }
+    return out.sort((a, b) => a.group_no - b.group_no);
+  };
+
   if (cancelled) {
-    // 取消不是回滚：已识别的部分保留，老师可以先登记这部分
+    // 取消不是回滚：这一轮新识别出的部分必须立刻落盘（markScanDone 不会执行，
+    // markScanCancelled 也不碰 result），否则老师点完取消，已识别的组只存在于
+    // 内存里，刷新即丢——下一次续跑会把它们全部重跑一遍（重复计费）。
+    // 【原来这里是 if (prevPapers.length > 0)】只覆盖了「续跑途中再取消」，
+    // 首次运行中途取消时 prevPapers 为空，本轮结果照样全丢。
+    const merged = mergePapers(prevPapers, papers);
+    if (merged.length > 0) scanSvc.saveScanPapers(batchId, merged, visionModel);
     scanSvc.markScanCancelled(batchId, scanned);
-    return { status: 'cancelled', scanned_groups: scanned, total_groups: groups.length };
+    return { status: 'cancelled', scanned_groups: scanned, total_groups: totalGroups };
   }
 
-  scanSvc.markScanDone(batchId, { papers, model: visionModel }, visionModel);
-  return { status: 'done', papers: papers.length, total_groups: groups.length };
+  const merged = mergePapers(prevPapers, papers);
+  scanSvc.markScanDone(batchId, { papers: merged, model: visionModel }, visionModel);
+  return { status: 'done', papers: merged.length, total_groups: totalGroups };
 }
 
 /**
@@ -621,11 +758,32 @@ function normalizeChoiceAnswer(q, raw) {
   try { opts = JSON.parse(q.options || '[]'); } catch (e) { return s; }
   if (!Array.isArray(opts) || opts.length === 0) return s;
 
+  /**
+   * 【为什么带否定词就放弃反查】
+   * 「包含」匹配最典型的翻车现场：学生写「我不选北京」，答案选项里有「北京」，
+   * 于是被判成选了 B —— 一道做错的选择题被判对，且没有任何提示。
+   * 老师还很难看出问题在哪：卷面上明明写着「不」。
+   * 所以只在**没有否定/评价性措辞**时才允许按内容反查，
+   * 拿不准就原样交给规则判（判错比判对安全：分低了老师会来问，分高了不会）。
+   */
+  if (/(不|没|无|非|未|错|排除|除了)/.test(s)) return s;
+
+  // 先做严格相等匹配：「北京」这种只写一个选项内容的，绝大多数都能直接对上
+  const texts = opts.map((o) => String(o == null ? '' : o).trim());
+  const eq = [];
+  texts.forEach((text, k) => {
+    if (text && s === text && !eq.includes(OPTION_LETTERS[k])) eq.push(OPTION_LETTERS[k]);
+  });
+  if (eq.length > 0) return eq.join('');
+
   // 学生答的是选项内容（整段包含该选项），反查是第几个选项。
   // 只做「包含」单向匹配：反向包含会在学生只写了个字时误命中多个选项。
+  // 另外要求答段长度不超过最长选项 + 分隔符余量：写成一整句话的作答
+  // （「我认为是北京因为…」）同样不该被反查命中。
+  const maxLen = Math.max(...texts.map((t) => t.length));
+  if (s.replace(/[\s,、，;；]/g, '').length > maxLen + 4) return s;
   const hit = [];
-  opts.forEach((o, k) => {
-    const text = String(o == null ? '' : o).trim();
+  texts.forEach((text, k) => {
     if (text && s.includes(text) && !hit.includes(OPTION_LETTERS[k])) hit.push(OPTION_LETTERS[k]);
   });
   return hit.length ? hit.join('') : s;
@@ -657,12 +815,17 @@ async function gradeRecognized(recognized, questions, ctx) {
   for (const r of recognized) {
     const q = byId.get(r.question_id);
     if (!q) continue;
+    const qStart = Date.now();
     const studentAnswer = String(r.recognized_answer == null ? '' : r.recognized_answer);
 
     if (OBJECTIVE_TYPES.has(q.type)) {
-      // AI 用约定的占位符表示「卷面没写」和「写了看不清」，这两种都不能算学生做对
-      const blank = /^\((未作答|未识别)\)$/.test(studentAnswer.trim());
-      const ok = !blank && isAnswerCorrect(q.type, normalizeChoiceAnswer(q, studentAnswer), q.answer);
+      // AI 用约定的占位符表示「卷面没写」和「写了看不清」，这两种都不能算学生做对。
+      // 半角/全角括号、带不带空格都要认：模型输出这两种写法都很常见，
+      // 只匹配半角的话全角就会被当成一个实打实的答案去比对，评语也会误导老师。
+      const blank = /^[（(]\s*(未作答|未识别|空白|看不清)\s*[)）]$/.test(studentAnswer.trim());
+      // 判断题不查选项表（它本来就没有选项），否则「√/×」这类写法会被判成乱选
+      const ruleAnswer = (q.type === 'judgment') ? studentAnswer : normalizeChoiceAnswer(q, studentAnswer);
+      const ok = !blank && isAnswerCorrect(q.type, ruleAnswer, q.answer);
       out.push({
         question_id: q.id,
         recognized_answer: studentAnswer,
@@ -703,19 +866,30 @@ async function gradeRecognized(recognized, questions, ctx) {
        * 一次调用失败就把学生做过的题记 0 分是最伤人的，所以填空题退回规则比对，
        * 与在线提交时 ruleFallbackGrade 是同一个退路。
        * 简答/作文没有唯一答案，兜不出确定结果，只能标出来交老师人工批——也不写兜底分。
+       *
+       * 填空题按「逐空命中率」给分而不是非全对即 0：纸质卷漏填一空很常见，
+       * 严格比对下这一题必然 0 分，答对的那几空也一起作废。
        */
-      const fb = q.type === 'fill_blank' ? isAnswerCorrect('fill_blank', studentAnswer, q.answer) : null;
+      const fb = q.type === 'fill_blank' ? fillBlankMatchRatio(studentAnswer, q.answer) : null;
+      const fbFull = fb && fb.total > 0 && fb.matched === fb.total;
+      const fbScore = fb && fb.total > 0 ? Math.round((fb.matched / fb.total) * 100) : 0;
       out.push({
         question_id: q.id,
         recognized_answer: studentAnswer,
-        is_correct: !!fb,
-        score: fb ? 100 : 0,
+        is_correct: !!fbFull,
+        score: fb ? fbScore : 0,
         comment: fb === null
           ? 'AI 评阅失败，请老师人工批改'
-          : 'AI 评阅失败，已改为按参考答案自动比对，请老师确认',
+          : (fbFull
+            ? 'AI 评阅失败，已改为按参考答案自动比对，请老师确认'
+            : `AI 评阅失败，按参考答案自动比对：${fb.matched}/${fb.total} 空正确，请老师确认`),
         grade_source: fb === null ? 'failed' : 'fallback',
       });
     }
+    // 组内主观题是串行调 AI 的，一份 20 题的作文卷最坏要等 20 × ai_timeout。
+    // 逐题打一行耗时：卡住时能立刻看出是「某一题慢」还是「整体都慢」，
+    // 而不是对着一个不动的进度条猜是不是服务挂了。
+    console.log(`[paper-scan] 第 ${q.id} 题（${q.type}）判分耗时 ${Date.now() - qStart}ms`);
   }
 
   return out;
@@ -763,9 +937,6 @@ function matchStudent(rawName, students) {
  */
 router.post('/:id/paper-scan/batches/:batchId/start', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, loadBatch, aiOff, aiJudgeOff, (req, res) => {
   const batch = req.batch;
-  if (batch.scan_status === 'running') {
-    return res.status(409).json({ error: '识别正在进行中' });
-  }
   const uploaded = scanSvc.countImages(batch.id);
   if (uploaded === 0) {
     return res.status(400).json({ error: '请先上传照片' });
@@ -783,12 +954,25 @@ router.post('/:id/paper-scan/batches/:batchId/start', authenticateToken, authori
     if (batch.registered_at) scanSvc.markRegistered(batch.id, true);
   }
 
+  /**
+   * 校验全部通过之后**原子地**占住识别名额。
+   *
+   * 只靠上面那次 `scan_status === 'running'` 的检查是不够的：检查与真正开跑之间
+   * 隔着 res.json + setImmediate，双击「开始识别」或开两个标签页就能各跑一遍，
+   * 代价是双倍 AI 费用、token_usage 双记一份、两份结果互相覆盖。
+   * 抢不到名额的直接 409，一个批次永远只有一次识别在跑。
+   */
+  if (!scanSvc.tryMarkScanRunning(batch.id, batch.model || '')) {
+    return res.status(409).json({ error: '识别正在进行中' });
+  }
+
   res.json({ message: '已开始识别，可关闭弹窗，稍后回来看结果', batch: scanSvc.toPublicBatch(scanSvc.getBatch(batch.id)) });
 
   // 后台执行，不占用连接
   setImmediate(async () => {
     try {
-      await runScanBatch(batch.id, req.user.userId);
+      // locked：名额已经在路由里抢到了，runScanBatch 不要再去抢一次
+      await runScanBatch(batch.id, req.user.userId, { locked: true });
     } catch (e) {
       // 这里必须打出来：否则后台失败在日志里完全看不见，
       // 表现为「识别瞬间结束、0 组结果」，极难排查。
@@ -815,14 +999,18 @@ router.post('/:id/paper-scan/batches/:batchId/cancel', authenticateToken, author
 /** 续跑：只识别还没成功的组，已识别的结果保留 */
 router.post('/:id/paper-scan/batches/:batchId/resume', authenticateToken, authorizeRole('teacher', 'admin'), requireAssignmentOwner, loadBatch, aiOff, aiJudgeOff, (req, res) => {
   const batch = req.batch;
-  if (batch.scan_status === 'running') return res.status(409).json({ error: '识别正在进行中' });
   const uploaded = scanSvc.countImages(batch.id);
   if (uploaded === 0) return res.status(400).json({ error: '请先上传照片' });
+
+  // 与 start 一样：校验之后原子占位，堵住「检查通过 → 真正开跑」之间的窗口
+  if (!scanSvc.tryMarkScanRunning(batch.id, batch.model || '')) {
+    return res.status(409).json({ error: '识别正在进行中' });
+  }
 
   res.json({ message: '已开始续跑', batch: scanSvc.toPublicBatch(scanSvc.getBatch(batch.id)) });
   setImmediate(async () => {
     try {
-      await runScanBatch(batch.id, req.user.userId);
+      await runScanBatch(batch.id, req.user.userId, { locked: true, resume: true });
     } catch (e) {
       console.error('[paper-scan] 续跑失败:', e.message);
       scanSvc.markScanFailed(batch.id, e.message || '识别失败');

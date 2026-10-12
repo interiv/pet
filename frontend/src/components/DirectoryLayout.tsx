@@ -7,6 +7,23 @@ import { useAuthStore } from '../store/authStore';
 const { Header, Content, Footer } = Layout;
 
 /**
+ * 把强调色压暗一档，用来生成渐变的收尾色。
+ *
+ * accent 是一个十六进制色值（#667eea），顶栏要的是
+ * 「从强调色到更深一档」的渐变；没有这个函数就只能写死渐变，
+ * 于是 accent 这个 props 名义上管顶栏、实际只作用于页脚那一个链接，
+ * 四页传什么都不生效。
+ */
+function darken(hex: string, ratio = 0.25): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  if (!m) return hex;
+  const num = parseInt(m[1], 16);
+  const ch = [(num >> 16) & 255, (num >> 8) & 255, num & 255]
+    .map((c) => Math.max(0, Math.min(255, Math.round(c * (1 - ratio)))));
+  return `#${ch.map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/**
  * 首页统计卡片点进去的几个「名录页」（学校 / 班级 / 教师 / 学生）共用外壳。
  *
  * 抽出来是因为这四页要的东西完全一致：同一个顶栏配色、同一个返回首页入口、
@@ -31,7 +48,9 @@ const DirectoryLayout: React.FC<DirectoryLayoutProps> = ({
     <Layout style={{ minHeight: '100vh', background: '#f0f2f5' }}>
       <Header style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        // 顶栏真的按 accent 走渐变（accent → 压暗一档），
+        // 否则这个 props 只作用于页脚那个「返回首页」链接，注释与实现对不上
+        background: `linear-gradient(135deg, ${accent} 0%, ${darken(accent)} 100%)`,
         boxShadow: '0 2px 8px rgba(0,0,0,0.15)', zIndex: 100,
         padding: '0 12px', height: 56, position: 'sticky', top: 0,
       }}>

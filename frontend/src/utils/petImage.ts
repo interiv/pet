@@ -38,9 +38,10 @@ export function getThumbUrl(imageUrl: string | null | undefined): string {
 
 /** 元素（属性）配色，首页图鉴与班级宠物卡片用同一套 */
 export const elementColors: Record<string, string> = {
-  '火': '#ff4d4f', '水': '#1890ff', '风': '#52c41a', '土': '#d48806',
+  '火': '#ff4d4f', '水': '#1890ff', '风': '#52c41a', '草': '#52c41a', '土': '#d48806',
   '光': '#faad14', '暗': '#722ed1', '火系': '#ff4d4f', '水系': '#1890ff',
-  '风系': '#52c41a', '土系': '#d48806', '光系': '#faad14', '暗系': '#722ed1',
+  '风系': '#52c41a', '草系': '#52c41a', '土系': '#d48806',
+  '光系': '#faad14', '暗系': '#722ed1',
   fire: '#ff4d4f', water: '#1890ff', grass: '#52c41a', wind: '#52c41a',
   earth: '#d48806', light: '#faad14', dark: '#722ed1',
 };
@@ -57,6 +58,18 @@ export const elementLabels: Record<string, string> = {
 export function elementColor(elementType?: string): string {
   if (!elementType) return '#667eea';
   return elementColors[elementLabels[elementType] || elementType] || '#667eea';
+}
+
+/**
+ * 取属性的中文标签。
+ *
+ * element_type 存的是英文键（fire/water/grass…），直接打到界面上很怪。
+ * elementColor() 内部已经翻过一次中文，但那只影响颜色；
+ * 文案要单独翻一遍，两处共用同一张 elementLabels 表，改一处不会漏另一处。
+ */
+export function elementLabel(elementType?: string): string {
+  if (!elementType) return '';
+  return elementLabels[elementType] || elementType;
 }
 
 /**

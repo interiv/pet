@@ -18,6 +18,7 @@ const { genTaskManager } = require('../services/genTaskManager');
 const { requireFeature, isFeatureEnabled } = require('../middleware/featureFlags');
 // 个人题库 + 知识点掌握度：规则判分与 AI 评阅共用同一套落地逻辑
 const studyStats = require('../services/studyStats');
+const { personalBankAvailable } = studyStats;
 
 /**
  * 功能开关守卫：
@@ -1406,9 +1407,13 @@ router.get('/:id/retry-questions', authenticateToken, (req, res) => {
     const assignment = db.prepare('SELECT * FROM assignments WHERE id = ?').get(req.params.id);
     if (!assignment) return res.status(404).json({ error: '作业不存在' });
 
-    const submission = db.prepare('SELECT id, status, attempt_count FROM submissions WHERE assignment_id = ? AND user_id = ?')
+    const submission = db.prepare('SELECT id, status, review_status, attempt_count FROM submissions WHERE assignment_id = ? AND user_id = ?')
       .get(req.params.id, req.user.userId);
-    if (!submission || submission.status !== 'retry_available') {
+    // 与 POST /:id/submit 的守卫保持同一口径：AI 评阅有题失败、停在
+    // review_status='pending' 等老师人工批的提交，同样允许重做，
+    // 否则这里会先于 submit 把学生的重做入口堵死。
+    if (!submission
+      || (submission.status !== 'retry_available' && submission.review_status !== 'pending')) {
       return res.status(400).json({ error: '当前无法重做错题' });
     }
 
@@ -1500,8 +1505,19 @@ router.post('/:id/submit', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: '无法提交此作业' });
     }
 
-    const existingSubmission = db.prepare('SELECT id, status, attempt_count FROM submissions WHERE assignment_id = ? AND user_id = ?').get(req.params.id, req.user.userId);
-    if (existingSubmission && existingSubmission.status !== 'retry_available') {
+    const existingSubmission = db.prepare('SELECT id, status, review_status, attempt_count FROM submissions WHERE assignment_id = ? AND user_id = ?').get(req.params.id, req.user.userId);
+    /**
+     * 重做守卫。
+     *
+     * 除了 status === 'retry_available'，还要放行 review_status === 'pending'：
+     * AI 评阅有题失败时（services/subjectiveReview.js）只会把 review_status 置回
+     * pending 等老师人工批，status 仍停在 'submitted' —— 原来这道门永远不开，
+     * 学生既等不到成绩也拿不到重做入口，只能老师手工改库。
+     * 次数上限那道校验（max_attempts）仍然照常生效，不会变成无限重做。
+     */
+    if (existingSubmission
+      && existingSubmission.status !== 'retry_available'
+      && existingSubmission.review_status !== 'pending') {
       return res.status(400).json({ error: '已经提交过作业' });
     }
 

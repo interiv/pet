@@ -98,4 +98,4 @@ function recordQuestionResult({ userId, questionBankId, assignmentId, assignment
   recordKnowledgePoint({ userId, questionBankId, isCorrect });
 }
 
-module.exports = { upsertPersonalBank, recordKnowledgePoint, recordQuestionResult };
+module.exports = { personalBankAvailable, upsertPersonalBank, recordKnowledgePoint, recordQuestionResult };

@@ -15,7 +15,7 @@ import { classroomQuizAPI, questionBankAPI, itemAPI, equipmentAPI, adminAPI, age
 import { pollAiTask, AI_TASK_URLS } from '../utils/aiTask';
 import { readPendingQuizGen, writePendingQuizGen, clearPendingQuizGen } from '../utils/quizTaskResume';
 import RewardLogDrawer from './RewardLogDrawer';
-import { normalizeQuestionType } from '../utils/questionTypes';
+import { normalizeQuestionType, isObjectiveType } from '../utils/questionTypes';
 import { useAuthStore } from '../store/authStore';
 import { getPetThumbUrl } from '../utils/petImage';
 import { getMySubject, SUBJECT_OPTIONS } from '../utils/subjects';
@@ -823,9 +823,12 @@ const ClassroomQuiz: React.FC = () => {
 
       const coursewareCount = questions.filter((q: any) => q.courseware_html).length;
       // 客观题（选择/多选/判断，且有标准答案）能在控制台点选项直接判对分，
-      // 告诉老师有多少道可以省掉 AI 判分那一轮等待
+      // 告诉老师有多少道可以省掉 AI 判分那一轮等待。
+      // 题型口径统一走 utils/questionTypes 的 isObjectiveType：
+      // 这已经是同一份题型数组的第三处硬编码，再加题型时漏改一处，
+      // 这个「省掉 AI 判分」的数字就会算错。
       const objectiveCount = questions.filter(
-        (q: any) => ['choice_single', 'choice_multi', 'judgment'].includes(q.question_type) && String(q.answer_text || '').trim()
+        (q: any) => isObjectiveType(q.question_type) && String(q.answer_text || '').trim()
       ).length;
       message.success(
         [

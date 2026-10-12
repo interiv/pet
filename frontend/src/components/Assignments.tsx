@@ -2084,9 +2084,11 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
             </div>
             <div style={{ color: '#666', marginBottom: 6, lineHeight: 1.6 }}>{r.question_content}</div>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-              <span>你的答案：<span style={{ color: level === 'wrong' ? '#ff4d4f' : level === 'pending' ? '#666' : '#52c41a', fontWeight: 600, fontSize: 14 }}>{String(r.user_answer ?? '(未作答)')}</span></span>
+              <span>你的答案：<span style={{ color: level === 'wrong' ? '#ff4d4f' : level === 'pending' ? '#666' : '#52c41a', fontWeight: 600, fontSize: 14 }}>{r.user_answer == null || r.user_answer === '' ? '(未作答)' : answerDisplayText(r.user_answer, r.type)}</span></span>
               {r.correct_answer && level !== 'correct' && (
-                <span>{isFillBlankType(r.type) ? '参考答案' : '正确答案'}：<span style={{ color: '#52c41a', fontWeight: 600, fontSize: 14 }}>{String(r.correct_answer)}</span></span>
+                // 判断题标准答案库里存的是 true/false，直接 String() 会把裸 true 打在界面上，
+                // 与上一行的「你的答案」口径不一致（那边已翻成「正确」）。
+                <span>{isFillBlankType(r.type) ? '参考答案' : '正确答案'}：<span style={{ color: '#52c41a', fontWeight: 600, fontSize: 14 }}>{answerDisplayText(r.correct_answer, r.type)}</span></span>
               )}
             </div>
           </div>
@@ -3190,7 +3192,10 @@ const Assignments: React.FC<AssignmentsProps> = ({ onNavigate }) => {
                         <div style={{ marginTop: 4, paddingLeft: 24 }}>
                           {/* 填空/简答的答案可以是整句话，Tag 自带的 nowrap 会把它拉成超宽单行 */}
                           <Tag color="green" style={LONG_TEXT_TAG_STYLE}>{answerLabel(q.type)}：{answerDisplayText(q.answer, q.type)}</Tag>
-                          {q.type === 'judgment' && (q.answer === 'true' ? '（正确）' : '（错误）')}
+                          {/* 判断题原来在这后面又补了一段「（正确）/（错误）」，
+                              而 answerDisplayText 已经把 true/false 翻成中文了 ——
+                              结果渲染成「答案：正确（正确）」。
+                              展示口径统一交给 answerDisplayText，这里不再重复拼。 */}
                         </div>
                       )}
                       {q.explanation && (

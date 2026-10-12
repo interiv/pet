@@ -44,7 +44,7 @@ const { getAIConfig, isAIConfigured } = require('../config/ai');
 const { chatCompletion } = require('./aiClient');
 const { getPrompt, fillTemplate } = require('../config/prompts');
 const { grantReward } = require('./rewards');
-const { isAnswerCorrect, countFillBlankSlots } = require('../utils/answerCheck');
+const { countFillBlankSlots, fillBlankMatchRatio } = require('../utils/answerCheck');
 const studyStats = require('./studyStats');
 
 /**
@@ -158,10 +158,31 @@ async function reviewOneQuestion(qa, config, timeoutMs, subject, onUsage) {
     }
   }
 
-  // 有图时必须用视觉模型，否则多数模型会拒收 image_url
+  // 有图时必须用视觉模型，否则多数模型会拒收 image_url（直接 400）。
+  //
+  // 【这里原来写的是 `(hasImage || vision) && vision ? vision : config.ai_model`】
+  // 布尔上它恒等于 `vision ? vision : ai_model`，hasImage 被整个短路掉了：
+  // 于是「配了图、但没配视觉模型」时会拿着图片去打文本模型 —— 必然 400，
+  // 而这条路径的 catch 又不给兜底分，于是这道题永久停在「待评阅」，
+  // 学生既拿不到分也拿不到重做入口，只能老师手工改库。
+  //
+  // 现在按「有没有图」决定：配了视觉模型就用它；只有图没模型则把图片降级掉，
+  // 退回纯文字评阅，至少能评出个结果（识别文字由前端/识别阶段给出）。
+  //
+  // 【但「只有照片、没有文字」时不能降级】学生的全部作答就在那张照片里，
+  // 把图片丢掉再评，等于让模型对着一份空答案打分——结果是静默的 0 分：
+  // 没有失败标记、不进人工批队列，学生和老师都看不出这道题其实没被评过。
+  // 改造前（图片直发文本模型）至少会 400 失败、留待人工批。所以这种题
+  // 直接抛错，走调用方的失败分支（markQuestionFailed → 等老师人工批）。
   const vision = String(config.ai_vision_model || '').trim();
-  const hasImage = content.length > 1;
-  const model = (hasImage || vision) && vision ? vision : config.ai_model;
+  if (content.length > 1 && !vision) {
+    if (!hasTextAnswer) {
+      throw new Error('有手写作答照片，但系统未配置视觉模型（ai_vision_model），无法评阅本题');
+    }
+    console.warn(`[主观题评阅] 第 ${qa.question_bank_id} 题有作答照片，但系统未配置视觉模型（ai_vision_model），已降级为纯文字评阅`);
+    content.length = 1; // 只保留 text 块
+  }
+  const model = (content.length > 1 && vision) ? vision : config.ai_model;
 
   // 统一走 aiClient：多模态 content 数组会在客户端按所选协议自动转换块类型
   // （chat 用 image_url，responses 用 input_image）
@@ -234,7 +255,7 @@ async function reviewSubmission(submissionId, assignmentId, userId, opts = {}) {
    */
   const rows = db.prepare(`
     SELECT qa.id, qa.question_bank_id, qa.student_answer, qa.image_url, qa.reviewed_at,
-           qa.score, qa.is_correct,
+           qa.score, qa.max_score, qa.is_correct,
            qb.type AS question_type,
            qb.content AS question_content, qb.answer AS reference_answer,
            qb.explanation, qb.analysis
@@ -284,13 +305,21 @@ async function reviewSubmission(submissionId, assignmentId, userId, opts = {}) {
      * 直接 `scoreSum += qa.score` 会把「50 分满分题得 42.5 分」当成 42.5 分制，
      * 同一份作业里两种量纲相加，总分会凭空低一截（实测 85 分算成了 64 分）。
      * 所以这里要先按本题满分还原回百分制再累加。
+     *
+     * 【为什么必须真的 SELECT 出 max_score】这条 SQL 原来漏查了 qa.max_score，
+     * 于是下面的还原恒等于 `score / perQuestionMax * 100`：
+     *   - 新写入的行（score 已按 100/N 折算）还原正确，纯属巧合；
+     *   - 改造之前写入的老行（score 是 0~100 百分制、max_score 恒为 100）会被放大 N 倍，
+     *     一份 3 题作业的单题 85 分还原成 255，总分直接冲破 100。
+     * 老数据是真实存在的（见 git show 4ad641d~1：当时写死的是 max_score = 100），
+     * 所以这里按库里那一行的 max_score 还原，两种量纲都能算对。
+     * max_score 缺失/为 0 的极端脏数据：它当年存的就是百分制，直接当百分制用。
      */
     if (qa.reviewed_at) {
       done += 1;
-      const restored = (qa.max_score || perQuestionMax) > 0
-        ? (qa.score / (qa.max_score || perQuestionMax)) * 100
-        : 0;
-      scoreSum += restored;
+      const raw = Number(qa.score) || 0;
+      const rowMax = Number(qa.max_score);
+      scoreSum += rowMax > 0 ? (raw / rowMax) * 100 : raw;
       // 进度回调也要走，否则续跑时前端进度条不动
       if (opts.onProgress) opts.onProgress({ done, total: rows.length, questionId: qa.question_bank_id, skipped: true });
       continue;
@@ -431,10 +460,28 @@ function recordGradedResult({ submission, userId, assignmentId, qa, isCorrect })
  */
 function ruleFallbackGrade(qa, perQuestionMax) {
   if (String(qa.question_type || '').trim() !== 'fill_blank') return null;
+  /**
+   * 只有手写照片、没有文字答案时，规则比对面对的是一份空答案 —— 必然判 0，
+   * 而学生确实写了（只是我们读不到）。这种题不兜底：返回 null 让调用方
+   * 按「评阅失败」处理（markQuestionFailed → 老师人工批）。
+   * 两条兜底路径都受益：AI 未配置（!aiReady）分支与单题 catch 分支。
+   */
+  if (!String(qa.student_answer || '').trim() && qa.image_url) return null;
   const hasStd = String(qa.reference_answer || '').trim().length > 0;
   if (!hasStd) return null;
-  const correct = isAnswerCorrect('fill_blank', qa.student_answer, qa.reference_answer);
-  return { score: correct ? perQuestionMax : 0, isCorrect: correct };
+  /**
+   * 按「逐空命中率」给分，而不是「非全对即 0」。
+   *
+   * 漏填中间的空时，前端会把空段丢掉，段数必然对不上，
+   * 严格比对只能判 0 分 —— 明明答对的那两空也一起作废，
+   * 而这已经是「AI 挂了」之后给学生的最后一个结果了。
+   * 命中率是规则判分能做到的最大让步：填对几空给几空的分。
+   */
+  const { matched, total } = fillBlankMatchRatio(qa.student_answer, qa.reference_answer);
+  if (total === 0) return null;
+  const correct = matched >= total;
+  const score = correct ? perQuestionMax : Math.round((matched / total) * perQuestionMax * 100) / 100;
+  return { score, isCorrect: correct };
 }
 
 /** 把兜底判分结果写库，reviewed_at 照常写 —— 否则这题会被反复当成「待评」重试 */

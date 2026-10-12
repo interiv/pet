@@ -309,9 +309,24 @@ function refreshBatchCounters(batchId) {
 
 // ===== 识别状态 =====
 
-function markScanRunning(batchId, model) {
-  db.prepare("UPDATE paper_scan_batches SET scan_status = 'running', scan_started_at = ?, scanned_groups = 0, error = NULL, model = ?, updated_at = ? WHERE id = ?")
-    .run(nowIso(), model || '', nowIso(), batchId);
+/**
+ * 抢占识别名额（CAS）：只有把 scan_status 从「非 running」改成 running 的那次调用才算抢到。
+ *
+ * 【为什么不能只是 check-then-set】路由里的
+ * `if (scan_status === 'running') return 409` 与真正开跑之间隔着
+ * res.json + setImmediate，两次点击 / 两个标签页都能在这个窗口里同时通过检查，
+ * 于是同一个批次跑两遍：AI 费用翻倍、token_usage 双记一份、
+ * 两份结果互相覆盖（后写的那份赢），老师还看不出任何异常。
+ * SQLite 的 UPDATE ... WHERE scan_status <> 'running' 本身就是原子的，
+ * 谁先谁拿，后来的直接拿到 false。
+ *
+ * @returns {boolean} true=抢到（调用方负责跑），false=已有人在跑
+ */
+function tryMarkScanRunning(batchId, model) {
+  const info = db.prepare(
+    "UPDATE paper_scan_batches SET scan_status = 'running', scan_started_at = ?, scanned_groups = 0, error = NULL, model = ?, updated_at = ? WHERE id = ? AND scan_status <> 'running'"
+  ).run(nowIso(), model || '', nowIso(), batchId);
+  return info.changes > 0;
 }
 
 /**
@@ -328,6 +343,30 @@ function reportProgress(batchId, scannedGroups, totalGroups) {
 function markScanDone(batchId, result, model) {
   db.prepare("UPDATE paper_scan_batches SET scan_status = 'done', result = ?, model = ?, error = NULL, scan_finished_at = ?, updated_at = ? WHERE id = ?")
     .run(JSON.stringify(result || {}), model || '', nowIso(), nowIso(), batchId);
+}
+
+/**
+ * 只把识别结果写回去，**不动 scan_status**。
+ *
+ * 取消识别时用：此时这一轮新跑出来的部分必须立刻落盘（否则老师点了取消，
+ * 这轮的结果全丢），但 scan_status 必须仍然是 cancelled —— 用 markScanDone
+ * 写会把状态改成 done，前端于是以为「已经识别完成」，续跑按钮直接消失。
+ */
+function saveScanPapers(batchId, papers, model) {
+  db.prepare("UPDATE paper_scan_batches SET result = ?, model = ?, updated_at = ? WHERE id = ?")
+    .run(JSON.stringify({ papers: Array.isArray(papers) ? papers : [] }), model || '', nowIso(), batchId);
+}
+
+/**
+ * 只更新批次上记录的识别模型，不动 result / scan_status。
+ *
+ * 用在「名额已被路由原子占位（locked）」的续跑/重跑场景：路由占位时只能拿上一轮的
+ * batch.model 填，本轮的 visionModel 是之后才校验出来的。不补写的话，识别运行中
+ * 或中途失败/取消时，批次详情里显示的模型是空或者上一轮的旧模型。
+ */
+function saveScanModel(batchId, model) {
+  db.prepare("UPDATE paper_scan_batches SET model = ?, updated_at = ? WHERE id = ?")
+    .run(model || '', nowIso(), batchId);
 }
 
 function markScanFailed(batchId, error) {
@@ -404,7 +443,9 @@ function updateGroupResults(batchId, groupNo, results) {
     if (r.is_correct !== undefined) cur.is_correct = Boolean(r.is_correct);
     if (r.score !== undefined) cur.score = r.score;
     if (r.comment !== undefined) cur.comment = String(r.comment).slice(0, 500);
-    if (r.student_answer !== undefined) cur.student_answer = String(r.student_answer).slice(0, 2000);
+    // 注意：不要再支持 r.student_answer —— 学生作答统一存 recognized_answer
+    // （识别阶段转写出来的文本），前端也从 recognized_answer 取值，
+    // 写一份没人读的 student_answer 只会在结果 JSON 里留下误导性的同义字段。
   });
 
   db.prepare('UPDATE paper_scan_batches SET result = ?, updated_at = ? WHERE id = ?')
@@ -422,7 +463,7 @@ module.exports = {
   /** 单人登记：按学生找未完成批次 / 标记已登记 / 各学生进度汇总 */
   findStudentBatch, markRegistered, studentProgressMap,
   addImagePlaceholder, markUploaded, regroup, reorder, deleteImage, refreshBatchCounters,
-  markScanRunning, reportProgress, markScanDone, markScanFailed,
+  tryMarkScanRunning, reportProgress, markScanDone, markScanFailed, saveScanPapers, saveScanModel,
   attachStudentToGroup, imageAbsolutePath,
   /** 人工修正：把某组指给某个学生（持久化，刷新不丢） */
   assignStudent,

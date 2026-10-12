@@ -45,7 +45,8 @@ const StatBar: React.FC<{ icon: React.ReactNode; label: string; value: number; c
  *   1. 老师/本班学生 — 打开就是「我班所有宠物现在什么状态」，能直接看出谁需要照顾；
  *   2. 访客 — 不登录也能看到班级养宠成果，主人名由后端脱敏成「张*」。
  *
- * 金币按当前需求对访客可见（后续若要收口，改后端一行即可，前端不用动）。
+ * 金币只对本班成员/管理员可见：后端对访客把 gold、total_gold 一律置为 null，
+ * 前端据此不渲染（与 backend/src/routes/public.js 的隐私红线一致）。
  */
 const ClassPetsPage: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
@@ -54,6 +55,7 @@ const ClassPetsPage: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [cls, setCls] = useState<any>(null);
   const [pets, setPets] = useState<any[]>([]);
   const [stats, setStats] = useState<any>({});
@@ -67,6 +69,7 @@ const ClassPetsPage: React.FC = () => {
     if (!slug) return;
     (async () => {
       setLoading(true);
+      setLoadError('');
       try {
         const res = await classAPI.getPetsBySlug(slug);
         setCls(res.data.class);
@@ -74,7 +77,18 @@ const ClassPetsPage: React.FC = () => {
         setStats(res.data.stats || {});
         setIsMember(Boolean(res.data.is_member));
       } catch (e: any) {
-        if (e?.response?.status === 404) setNotFound(true);
+        /**
+         * 只有 404 才是「班级不存在」。500、超时、断网同样会落进 catch，
+         * 原来一律被兜底成 notFound → 页面显示「班级不存在或未公开」，
+         * 于是服务重启、数据库锁、网络抖一下都被说成「班级没了」，
+         * 老师刷新一百次也没用，连重试的念头都不会有。
+         * 现在区分开：真 404 才算找不到，其余当作加载失败并给出重试。
+         */
+        if (e?.response?.status === 404) {
+          setNotFound(true);
+        } else {
+          setLoadError(e?.response?.data?.error || e?.message || '加载失败，请检查网络后重试');
+        }
       } finally {
         setLoading(false);
       }
@@ -111,13 +125,28 @@ const ClassPetsPage: React.FC = () => {
     );
   }
 
-  if (notFound || !cls) {
+  if (notFound) {
     return (
       <Result
         status="404"
         title="班级不存在或未公开"
         subTitle="该班级链接可能已失效，或班主任尚未把班级设为公开"
         extra={<Button type="primary" onClick={() => navigate('/')}>返回首页</Button>}
+      />
+    );
+  }
+
+  // 加载失败（500 / 超时 / 断网）：与「班级不存在」严格分开，给得出下一步动作
+  if (loadError || !cls) {
+    return (
+      <Result
+        status="warning"
+        title="加载失败"
+        subTitle={loadError || '班级信息未加载成功'}
+        extra={[
+          <Button key="retry" type="primary" onClick={() => window.location.reload()}>重试</Button>,
+          <Button key="home" onClick={() => navigate('/')}>返回首页</Button>,
+        ]}
       />
     );
   }
@@ -171,7 +200,8 @@ const ClassPetsPage: React.FC = () => {
               { title: '宠物数量', value: stats.pet_count || 0, color: '#722ed1' },
               { title: '平均等级', value: stats.avg_level || 0, color: '#1890ff' },
               { title: '累计积分', value: stats.total_exp || 0, color: '#fa8c16' },
-              { title: '金币合计', value: stats.total_gold || 0, color: '#faad14' },
+              // 金币只对班级成员下发（后端对访客给 null），访客不渲染这一格
+              ...(stats.total_gold == null ? [] : [{ title: '金币合计', value: stats.total_gold, color: '#faad14' }]),
             ].map((it) => (
               <Col xs={12} sm={8} md={3} key={it.title}>
                 <Statistic title={it.title} value={it.value} valueStyle={{ color: it.color, fontSize: 20, fontWeight: 'bold' }} />
@@ -302,13 +332,16 @@ const ClassPetsPage: React.FC = () => {
                           </span>
                         </Tooltip>
                       </Col>
-                      <Col>
-                        <Tooltip title="主人金币">
-                          <span style={{ fontSize: 12, color: '#faad14', whiteSpace: 'nowrap' }}>
-                            <GoldOutlined /> {p.gold ?? 0}
-                          </span>
-                        </Tooltip>
-                      </Col>
+                      {/* 访客看不到金币（后端给 null），整格不渲染而不是显示 0 */}
+                      {p.gold != null && (
+                        <Col>
+                          <Tooltip title="主人金币">
+                            <span style={{ fontSize: 12, color: '#faad14', whiteSpace: 'nowrap' }}>
+                              <GoldOutlined /> {p.gold}
+                            </span>
+                          </Tooltip>
+                        </Col>
+                      )}
                     </Row>
 
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 10px' }}>

@@ -149,7 +149,7 @@ router.get('/by-slug/:slug/pets', optionalAuth, (req, res) => {
                 COALESCE(c.is_public, 1) AS is_public,
                 s.name AS school_name, s.theme_color AS school_theme,
                 (SELECT COUNT(*) FROM users u WHERE u.class_id = c.id AND u.role = 'student') AS student_count,
-                (SELECT GROUP_CONCAT(COALESCE(u2.real_name, u2.username))
+                (SELECT GROUP_CONCAT(COALESCE(u2.real_name, u2.username), char(31))
                    FROM class_teachers ct2 JOIN users u2 ON u2.id = ct2.teacher_id
                   WHERE ct2.class_id = c.id AND ct2.role = 'head_teacher') AS head_teacher_names
          FROM classes c
@@ -204,6 +204,13 @@ router.get('/by-slug/:slug/pets', optionalAuth, (req, res) => {
         ),
         owner_name: isMember ? p.owner_name : maskOwnerName(p.owner_name),
         owner_username: isMember ? p.owner_username : null,
+        /**
+         * 金币对访客隐藏：主人名已经脱敏成「张*」了，再把每个学生的金币余额
+         * 摆在免登录页上，等于公开「谁家孩子有多少钱」。
+         * 与 public.js 的隐私红线保持一致（那边的 total_gold 已摘掉）。
+         * 非成员一律给 null，前端据此不渲染。
+         */
+        gold: isMember ? (Number(p.gold) || 0) : null,
       }));
 
     // 顶部汇总：老师最关心的是「全班养得怎么样 + 有几只需要照顾」
@@ -216,7 +223,8 @@ router.get('/by-slug/:slug/pets', optionalAuth, (req, res) => {
           : 0,
       max_level: pets.reduce((m, p) => Math.max(m, p.level || 0), 0),
       total_exp: pets.reduce((s, p) => s + (p.total_exp || 0), 0),
-      total_gold: pets.reduce((s, p) => s + (p.gold || 0), 0),
+      // 同样只对成员给：访客看到的是「这个班养得怎么样」，不是「这个班有多少钱」
+      total_gold: isMember ? pets.reduce((s, p) => s + (p.gold || 0), 0) : null,
       unconscious_count: pets.filter((p) => p.status === 'unconscious').length,
       // 体力/健康低于 30 视为「需要照顾」，与前端宠物面板的告警阈值保持一致
       need_care_count: pets.filter(
@@ -235,7 +243,11 @@ router.get('/by-slug/:slug/pets', optionalAuth, (req, res) => {
         school_theme: cls.school_theme,
         student_count: cls.student_count || 0,
         head_teacher_names: cls.head_teacher_names
-          ? String(cls.head_teacher_names).split(',').filter(Boolean)
+          // 用 ASCII 单元分隔符（char(31)）而不是默认逗号：
+          // 老师姓名里本来就可能有逗号（「张,三」这种少见但合法的姓名），
+          // 按逗号拆会把一个人劈成两半，页面上多出一位根本不存在的班主任。
+          // 与 routes/public.js 的班级广场同一口径。
+          ? String(cls.head_teacher_names).split('\u001f').filter(Boolean)
           : [],
       },
       is_member: isMember,

@@ -113,7 +113,7 @@ router.get('/classes', (req, res) => {
              JOIN pet_species ps ON ps.id = p.species_id
            WHERE u.class_id = c.id AND u.role = 'student'
            ORDER BY p.level DESC, p.exp DESC LIMIT 1) AS top_pet_species,
-        (SELECT GROUP_CONCAT(COALESCE(u2.real_name, u2.username))
+        (SELECT GROUP_CONCAT(COALESCE(u2.real_name, u2.username), char(31))
            FROM class_teachers ct2 JOIN users u2 ON u2.id = ct2.teacher_id
           WHERE ct2.class_id = c.id AND ct2.role = 'head_teacher') AS head_teacher_names
       FROM classes c
@@ -122,7 +122,17 @@ router.get('/classes', (req, res) => {
       ORDER BY pet_count DESC, c.grade ASC, c.name ASC`
       )
       .all();
-    res.json({ classes });
+    // 班主任名用 ASCII 单元分隔符拼接（见 SQL 里的 char(31)），
+    // 不能按默认逗号拆：姓名里出现逗号时会被劈成两个人。
+    // 与 routes/classes.js 的班级宠物页同一口径。
+    res.json({
+      classes: classes.map((c) => ({
+        ...c,
+        head_teacher_names: c.head_teacher_names
+          ? String(c.head_teacher_names).split('\u001f').filter(Boolean)
+          : [],
+      })),
+    });
   } catch (error) {
     console.error('获取公开班级广场失败:', error);
     res.status(500).json({ error: '获取班级广场失败' });
@@ -202,8 +212,11 @@ router.get('/students-overview', (req, res) => {
         (SELECT COUNT(*) FROM classes) AS class_count,
         (SELECT COUNT(*) FROM schools) AS school_count,
         (SELECT COALESCE(ROUND(AVG(p.level), 1), 0) FROM pets p JOIN users u ON u.id = p.user_id WHERE ${studentWhere}) AS avg_level,
-        (SELECT COALESCE(MAX(p.level), 0) FROM pets p JOIN users u ON u.id = p.user_id WHERE ${studentWhere}) AS max_level,
-        (SELECT COALESCE(SUM(u.gold), 0) FROM users u WHERE ${studentWhere}) AS total_gold`
+        (SELECT COALESCE(MAX(p.level), 0) FROM pets p JOIN users u ON u.id = p.user_id WHERE ${studentWhere}) AS max_level
+        -- 这里原来还查了 SUM(u.gold) AS total_gold，与本文件开头
+        -- 「金币一律不出公开接口」的自述红线直接冲突：
+        -- /api/public 全部免登录，访客能据此算出全校学生的金币总量。
+        -- 要看金币请登录后看自己或本班（/api/classes/by-slug/:slug/pets 仅成员可见）。`
       )
       .get();
 

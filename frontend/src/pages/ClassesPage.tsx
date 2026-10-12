@@ -58,7 +58,7 @@ const ClassesPage: React.FC = () => {
   }), { students: 0, pets: 0 }), [classes]);
 
   return (
-    <DirectoryLayout title="班级广场" subtitle={`${classes.length} 个公开班级`} loading={loading}>
+    <DirectoryLayout title="班级广场" accent="#722ed1" subtitle={`${classes.length} 个公开班级`} loading={loading}>
       <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
         {[
           { title: '班级', value: classes.length, color: '#52c41a' },
@@ -111,7 +111,11 @@ const ClassesPage: React.FC = () => {
                   </div>
                   <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 10 }}>
                     {c.school_name || '未归属学校'}
-                    {c.head_teacher_names ? ` · 班主任 ${c.head_teacher_names}` : ''}
+                    {/* 后端已把班主任名拆成数组（用 char(31) 分隔，姓名里的逗号不会被误拆），
+                        这里统一用「、」连接；兼容早期版本返回的整串 */}
+                    {c.head_teacher_names?.length
+                      ? ` · 班主任 ${(Array.isArray(c.head_teacher_names) ? c.head_teacher_names : [c.head_teacher_names]).join('、')}`
+                      : ''}
                   </div>
 
                   <Space size={[12, 6]} wrap>

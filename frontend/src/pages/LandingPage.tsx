@@ -10,7 +10,7 @@ import {
 import { adminAPI, petAPI, leaderboardAPI, schoolAPI, classAPI, publicAPI } from '../utils/api';
 import { useAuthStore } from '../store/authStore';
 import { flagEnabled } from '../utils/featureFlags';
-import { getSpeciesImage, elementColors } from '../utils/petImage';
+import { getSpeciesImage, elementColor, elementLabel } from '../utils/petImage';
 
 const { Header, Content, Footer } = Layout;
 const { Title, Paragraph, Text } = Typography;
@@ -400,7 +400,9 @@ const LandingPage: React.FC = () => {
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4, gap: 4 }}>
                         <Text strong style={{ fontSize: isMobile ? 13 : 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sp.name}</Text>
-                        {sp.element_type && <Tag color={elementColors[sp.element_type] || '#667eea'} style={{ margin: 0, fontSize: isMobile ? 11 : 12, padding: '0 4px', lineHeight: isMobile ? '18px' : '20px' }}>{sp.element_type}</Tag>}
+                        {/* 标签文案走 elementLabel：库里存的是英文键（fire/grass…），
+                            直接显出来像是没做完的界面；颜色走 elementColor，与其他页面同一套 */}
+                        {sp.element_type && <Tag color={elementColor(sp.element_type)} style={{ margin: 0, fontSize: isMobile ? 11 : 12, padding: '0 4px', lineHeight: isMobile ? '18px' : '20px' }}>{elementLabel(sp.element_type)}</Tag>}
                       </div>
                       {sp.description && !isMobile && <Paragraph ellipsis={{ rows: 2 }} style={{ color: '#8c8c8c', fontSize: 12, margin: 0 }}>{sp.description}</Paragraph>}
                     </Card>

@@ -62,7 +62,7 @@ const SchoolsPage: React.FC = () => {
   };
 
   return (
-    <DirectoryLayout title="学校一览" subtitle={`共 ${schools.length} 所学校`} loading={loading}>
+    <DirectoryLayout title="学校一览" accent="#1890ff" subtitle={`共 ${schools.length} 所学校`} loading={loading}>
       <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
         {[
           { title: '学校', value: schools.length, color: '#667eea' },

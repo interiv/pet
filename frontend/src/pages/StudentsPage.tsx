@@ -66,7 +66,7 @@ const StudentsPage: React.FC = () => {
   }, [classes, keyword]);
 
   return (
-    <DirectoryLayout title="学生风采" subtitle={`${totals.student_count || 0} 名在校学生`} loading={loading}>
+    <DirectoryLayout title="学生风采" accent="#52c41a" subtitle={`${totals.student_count || 0} 名在校学生`} loading={loading}>
       <Alert
         type="info"
         showIcon
@@ -82,7 +82,8 @@ const StudentsPage: React.FC = () => {
           { title: '领养率', value: totals.adoption_rate || 0, suffix: '%', color: '#52c41a' },
           { title: '平均等级', value: totals.avg_level || 0, color: '#1890ff' },
           { title: '最高等级', value: totals.max_level || 0, color: '#fa8c16' },
-          { title: '金币存量', value: totals.total_gold || 0, color: '#faad14' },
+          // 「金币存量」已移除：这个页面是免登录的公开页，
+          // 后端不再下发 total_gold（否则等于公开全校学生的金币总量）。
         ].map((it) => (
           <Col xs={12} sm={8} md={4} key={it.title}>
             <Card style={{ borderRadius: 10, textAlign: 'center', borderTop: `3px solid ${it.color}` }} styles={{ body: { padding: '14px 8px' } }}>

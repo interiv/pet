@@ -42,7 +42,7 @@ const TeachersPage: React.FC = () => {
   }, [teachers, keyword]);
 
   return (
-    <DirectoryLayout title="教师团队" subtitle={`${teachers.length} 位在职教师`} loading={loading}>
+    <DirectoryLayout title="教师团队" accent="#fa8c16" subtitle={`${teachers.length} 位在职教师`} loading={loading}>
       <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
         {[
           { title: '在职教师', value: totals.teacher_count || 0, color: '#fa8c16' },
